@@ -14,6 +14,7 @@ import { SettingsRenderer } from "./platform/SettingsRenderer";
 import { DeclarativeSurface } from "./platform/DeclarativeSurface";
 import { hasTrustedNativeSurface, TrustedNativeSurface } from "./platform/TrustedNativeSurface";
 import { ToolApprovalDialog } from "./platform/ToolApprovalDialog";
+import { LoginPage } from "./LoginPage";
 
 type Page = "overview" | "plugins" | "approvals" | "settings" | `plugin:${string}`;
 type PendingApproval = { tool: ToolContribution; approvalId: string };
@@ -78,6 +79,8 @@ function AuthRequiredPage() {
 }
 
 export function App() {
+  if (window.location.pathname === "/login") return <LoginPage />;
+
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [activePluginIds, setActivePluginIds] = useState<Set<string>>(new Set());
   const [tools, setTools] = useState<ToolContribution[]>([]);
