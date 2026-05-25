@@ -40,6 +40,10 @@ plugins/
 
 `apps/runtime-bridge` is a separate adapter for MCP-style access. It should reuse the same runtime tool registry, permission engine and audit layer as the web shell and `agent-ai`.
 
+## Roadmap
+
+See the official [RDAC roadmap](docs/RDAC.md).
+
 ## Status
 
 Foundation branch in progress: `foundation/runtime-platform`.

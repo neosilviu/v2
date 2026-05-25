@@ -1,5 +1,15 @@
 # v2 repository working conventions
 
+## RDAC gate
+
+- Follow the official roadmap in `docs/RDAC.md`.
+- Faza 0 — Immediate Correction Gate must stay green before new platform or plugin features are added.
+- Do not expose installed plugins, active plugins, runtime tools, runtime providers, workspace settings or workspace layout to anonymous browser requests just because the request origin is CORS-allowed.
+- Marketplace installation must use validated runtime releases backed by ZIP/R2 package metadata and `@v2/plugin-installer`; do not install by copying a catalog manifest alone.
+- Do not automatically grant sensitive or dangerous capabilities during install, activation or marketplace flows.
+- Keep D1 migrations incremental. Do not rewrite existing migration history, apply remote migrations from local work, or change assigned D1 identifiers.
+- Keep PR descriptions current with the real HEAD, validation status and remaining Faza 0 work.
+
 ## Architecture
 
 - The platform must work with no optional plugins installed.
@@ -25,6 +35,7 @@
 - Use `pnpm typecheck` for code validation.
 - Use `pnpm build:analyze` to report bundle size, worker size, source metrics and dependency boundaries.
 - Use `pnpm guard:architecture` as the strict platform/plugin dependency check after existing foundation violations are refactored.
+- For Faza 0 work, also run `pnpm --filter @v2/web build` after each commit-sized change.
 
 ## Planned plugins
 
