@@ -1,22 +1,39 @@
 import { useEffect, useRef, useState } from "react";
 import type { PluginBundle, PluginManifest } from "@v2/plugin-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { activatePlugin, approveInstall, deactivatePlugin, grantCapabilities, loadActivePlugins, loadInstalledPlugins, uploadPlugin } from "../api";
+import { activatePlugin, approveInstall, deactivatePlugin, grantCapabilities, installMarketplacePlugin, loadActivePlugins, loadInstalledPlugins, loadMarketplacePlugins, uploadPlugin, type MarketplacePlugin } from "../api";
 
 export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, onChanged }: { plugins: PluginManifest[]; activePluginIds: Set<string>; onChanged: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [plugins, setPlugins] = useState(initialPlugins);
   const [active, setActive] = useState(activePluginIds);
+  const [marketplace, setMarketplace] = useState<MarketplacePlugin[]>([]);
   const [pendingBundle, setPendingBundle] = useState<PluginBundle | null>(null);
-  const [uploadState, setUploadState] = useState("Upload a ZIP containing plugin.json");
+  const [uploadState, setUploadState] = useState("Official plugins start uninstalled. Install them from Marketplace when this workspace needs them.");
+  const workspaceInstalled = [
+    ...marketplace.filter((item) => item.installed).map((item) => item.manifest),
+    ...plugins.filter((plugin) => !marketplace.some((item) => item.manifest.id === plugin.id)),
+  ];
   useEffect(() => { setPlugins(initialPlugins); }, [initialPlugins]);
   useEffect(() => { setActive(activePluginIds); }, [activePluginIds]);
-  useEffect(() => { void Promise.all([loadInstalledPlugins(), loadActivePlugins()]).then(([installed, activeIds]) => { setPlugins(installed); setActive(new Set(activeIds)); }).catch(() => undefined); }, []);
+  useEffect(() => { void Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadMarketplacePlugins()]).then(([installed, activeIds, available]) => { setPlugins(installed); setActive(new Set(activeIds)); setMarketplace(available); }).catch(() => undefined); }, []);
   const refresh = async () => {
-    const [installed, activeIds] = await Promise.all([loadInstalledPlugins(), loadActivePlugins()]);
+    const [installed, activeIds, available] = await Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadMarketplacePlugins()]);
     setPlugins(installed);
     setActive(new Set(activeIds));
+    setMarketplace(available);
     onChanged();
+  };
+  const install = async (item: MarketplacePlugin) => {
+    setUploadState(`Installing ${item.manifest.name} from Marketplace...`);
+    try {
+      const installed = await installMarketplacePlugin(item.manifest.id);
+      if (installed.manifest.capabilities.length) await grantCapabilities(installed.manifest.id, installed.manifest.capabilities.map((capability) => capability.id));
+      await refresh();
+      setUploadState(`${installed.manifest.name} installed and active in workspace/default`);
+    } catch {
+      setUploadState("Marketplace install failed. Platform admin access may be required.");
+    }
   };
   const toggle = async (plugin: PluginManifest) => {
     const wasActive = active.has(plugin.id);
@@ -52,7 +69,13 @@ export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, o
     <div className="surface-header"><div><small>core</small><h2>Plugin Manager</h2></div><Button onClick={() => inputRef.current?.click()}>Upload ZIP</Button></div>
     <p>{uploadState}</p><input ref={inputRef} className="hidden-file" type="file" accept=".zip,application/zip" onChange={(event) => void upload(event.target.files?.[0])} />
     {pendingBundle ? <div className="approval-inline"><p>{pendingBundle.manifest.capabilities.length} requested capabilities</p><Button onClick={() => void approve()}>Approve & Install</Button></div> : null}
-    <div className="plugin-list">{plugins.length ? plugins.map((plugin) => <div className="plugin-row" key={plugin.id}>
+    <div className="section-title"><h2>Marketplace</h2><Badge>{marketplace.length}</Badge></div>
+    <div className="plugin-list">{marketplace.length ? marketplace.map((item) => <div className="plugin-row" key={item.manifest.id}>
+      <div><strong>{item.manifest.name}</strong><small>{item.category} · {item.manifest.data.mode} storage · {item.demoAvailable ? "demo pack available" : "no demo seed"}</small></div>
+      <div className="plugin-actions"><Badge>{item.installed ? item.active ? "active" : "installed" : "available"}</Badge>{item.installed ? null : <Button onClick={() => void install(item)}>Install</Button>}</div>
+    </div>) : <p>No Marketplace plugins are available.</p>}</div>
+    <div className="section-title"><h2>Installed in workspace</h2><Badge>{workspaceInstalled.length}</Badge></div>
+    <div className="plugin-list">{workspaceInstalled.length ? workspaceInstalled.map((plugin) => <div className="plugin-row" key={plugin.id}>
       <div><strong>{plugin.name}</strong><small>{plugin.id} · {plugin.version}</small></div>
       <div className="plugin-actions"><Badge>{active.has(plugin.id) ? "active" : "inactive"}</Badge><Button onClick={() => void toggle(plugin)}>{active.has(plugin.id) ? "Deactivate" : "Activate"}</Button></div>
     </div>) : <p>No feature plugins installed.</p>}</div>

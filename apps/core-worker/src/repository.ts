@@ -8,6 +8,13 @@ export type PluginWorkspaceState = {
   updatedAt: string;
 };
 
+export type CatalogPlugin = {
+  manifest: PluginManifest;
+  category: string;
+  demoAvailable: boolean;
+  source: string;
+};
+
 export type SandboxSurfaceAsset = {
   pluginId: string;
   surfaceId: string;
@@ -72,6 +79,16 @@ export class CoreRepository {
     return row ? pluginManifestSchema.parse(JSON.parse(row.manifest_json)) : undefined;
   }
 
+  async catalogPlugins(): Promise<CatalogPlugin[]> {
+    const rows = await this.db.prepare("SELECT manifest_json, category, demo_available, source FROM plugin_catalog ORDER BY name").all<{ manifest_json: string; category: string; demo_available: number; source: string }>();
+    return rows.results.map((row) => ({ manifest: pluginManifestSchema.parse(JSON.parse(row.manifest_json)), category: row.category, demoAvailable: row.demo_available === 1, source: row.source }));
+  }
+
+  async catalogPlugin(pluginId: string): Promise<CatalogPlugin | undefined> {
+    const row = await this.db.prepare("SELECT manifest_json, category, demo_available, source FROM plugin_catalog WHERE plugin_id = ?").bind(pluginId).first<{ manifest_json: string; category: string; demo_available: number; source: string }>();
+    return row ? { manifest: pluginManifestSchema.parse(JSON.parse(row.manifest_json)), category: row.category, demoAvailable: row.demo_available === 1, source: row.source } : undefined;
+  }
+
   async resolveSandboxSurface(workspaceId: string, surfaceId: string): Promise<SandboxSurfaceAsset | undefined> {
     const rows = await this.db.prepare(`SELECT p.id AS plugin_id, p.manifest_json, p.package_object_key
       FROM installed_plugins p
@@ -110,6 +127,11 @@ export class CoreRepository {
   async activePlugins(workspaceId: string): Promise<string[]> {
     const rows = await this.db.prepare("SELECT plugin_id FROM workspace_plugins WHERE workspace_id = ? AND active = 1").bind(workspaceId).all<{ plugin_id: string }>();
     return rows.results.map((row) => row.plugin_id);
+  }
+
+  async workspacePlugins(workspaceId: string): Promise<PluginWorkspaceState[]> {
+    const rows = await this.db.prepare("SELECT workspace_id, plugin_id, active, updated_at FROM workspace_plugins WHERE workspace_id = ?").bind(workspaceId).all<{ workspace_id: string; plugin_id: string; active: number; updated_at: string }>();
+    return rows.results.map((row) => ({ workspaceId: row.workspace_id, pluginId: row.plugin_id, active: row.active === 1, updatedAt: row.updated_at }));
   }
 
   async declaredCapabilities(pluginId: string): Promise<string[]> {
