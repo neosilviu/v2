@@ -9,3 +9,6 @@ dist
 !.env.example
 .DS_Store
 coverage
+reports/*.json
+reports/*.md
+reports/worker-dry-runs/
