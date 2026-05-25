@@ -1,14 +1,29 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ToolApproval } from "@v2/rpc-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { approveToolApproval, denyToolApproval, loadPendingToolApprovals } from "../api";
+import { approveToolApproval, denyToolApproval, loadCoreSession, loadPendingToolApprovals } from "../api";
 
 export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
   const [approvals, setApprovals] = useState<ToolApproval[]>([]);
-  const [status, setStatus] = useState("Platform admin access required to load approvals");
+  const [status, setStatus] = useState("Checking platform admin access...");
+  const [isAdmin, setIsAdmin] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  useEffect(() => {
+    void loadCoreSession().then((session) => {
+      setIsAdmin(session.isAdmin);
+      setStatus(session.isAdmin ? "Ready to load pending approvals" : "Sign in as a platform admin to manage approvals");
+    }).catch(() => {
+      setIsAdmin(false);
+      setStatus("Core session could not be checked");
+    });
+  }, []);
+
   const refresh = async () => {
+    if (!isAdmin) {
+      setStatus("Platform admin access required to load approvals");
+      return;
+    }
     try {
       const pending = await loadPendingToolApprovals();
       setApprovals(pending);
@@ -36,7 +51,7 @@ export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
   return <SurfaceCard className="approvals-panel">
     <div className="surface-header">
       <div><small>core policy</small><h2>Approvals</h2></div>
-      <Button onClick={() => void refresh()}>Refresh</Button>
+      <Button disabled={!isAdmin} onClick={() => void refresh()}>Refresh</Button>
     </div>
     <p>{status}</p>
     <div className="approval-list">

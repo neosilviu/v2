@@ -27,6 +27,10 @@ function requireShellRead(c: CoreContext): Response | undefined {
 }
 async function runtimeFor(repo: CoreRepository) { const runtime = new RuntimeKernel(); for (const manifest of await repo.installed()) await runtime.registerPlugin(manifest); return runtime; }
 app.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
+app.get("/session", (c) => {
+  const user = c.get("user");
+  return c.json({ authenticated: Boolean(user), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
+});
 app.get("/runtime/plugins", async (c) => { const denied = requireShellRead(c); if (denied) return denied; return c.json({ plugins: await new CoreRepository(c.env.CORE_DB).installed() }); });
 app.get("/runtime/tools", async (c) => { const denied = requireShellRead(c); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const active = new Set(await repo.activePlugins(c.req.query("workspaceId") ?? defaultWorkspaceId)); return c.json({ tools: runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.tools) }); });
 app.get("/runtime/providers", async (c) => { const denied = requireShellRead(c); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const active = new Set(await repo.activePlugins(c.req.query("workspaceId") ?? defaultWorkspaceId)); return c.json({ providers: runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.providers) }); });
