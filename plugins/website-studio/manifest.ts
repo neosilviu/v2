@@ -13,9 +13,7 @@ export const websiteStudioManifest = definePlugin({
     { id: "website.context.share", description: "Share approved page context with Agent AI", risk: "safe" }
   ],
   contributes: {
-    surfaces: [
-      { id: "website-studio.editor", title: "Website Studio", zone: "workspace.main", kind: "page" }
-    ],
+    surfaces: [{ id: "website-studio.editor", title: "Website Studio", zone: "workspace.main", kind: "page" }],
     tools: [
       { id: "website.listPages", title: "List pages", permissions: ["website.pages.read"], risk: "safe", exposure: ["agent-ai", "mcp", "command"] },
       { id: "website.updateSection", title: "Update section", permissions: ["website.pages.write"], risk: "reversible", exposure: ["agent-ai", "mcp", "command"] },
