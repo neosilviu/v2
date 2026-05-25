@@ -2,5 +2,7 @@
   "name": "v2-plugin-ai-providers",
   "main": "server/app.ts",
   "compatibility_date": "2026-05-25",
-  "ai": { "binding": "AI" }
+  "ai": { "binding": "AI" },
+  "services": [{ "binding": "AUTH", "service": "v2-auth-worker" }],
+  "vars": { "APP_ORIGIN": "http://localhost:5173", "TRUSTED_ORIGINS": "" }
 }
