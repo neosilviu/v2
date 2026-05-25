@@ -2,6 +2,6 @@
   "name": "v2-core-worker",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-25",
-  "d1_databases": [{ "binding": "CORE_DB", "database_name": "v2-core", "database_id": "REPLACE_WITH_CORE_D1_ID" }],
+  "d1_databases": [{ "binding": "CORE_DB", "database_name": "v2-core", "database_id": "ebf88733-8e41-4b2e-9956-c5a51b644d49" }],
   "r2_buckets": [{ "binding": "PLUGIN_PACKAGES", "bucket_name": "v2-plugin-packages" }]
 }
