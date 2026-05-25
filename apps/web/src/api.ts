@@ -6,7 +6,11 @@ const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 const workspaceId = "default";
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${coreUrl}${path}`, { headers: { "content-type": "application/json" }, ...init });
+  const response = await fetch(`${coreUrl}${path}`, {
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    ...init,
+  });
   if (!response.ok) throw new Error(`Core request failed: ${response.status}`);
   return response.json() as Promise<T>;
 }
@@ -32,7 +36,7 @@ export async function loadRuntimeTools(): Promise<ToolContribution[]> {
 export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }> {
   const body = new FormData();
   body.append("file", file);
-  const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body });
+  const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body, credentials: "include" });
   if (!response.ok && response.status !== 202) throw new Error(`Plugin upload failed: ${response.status}`);
   return response.json() as Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }>;
 }
