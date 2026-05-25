@@ -6,6 +6,7 @@
   "exports": {
     ".": "./manifest.ts",
     "./manifest": "./manifest.ts",
+    "./ui/AgentSurface": "./ui/AgentSurface.tsx",
     "./server/repository": "./server/repository.ts",
     "./server/app": "./server/app.ts",
     "./server/db/schema": "./server/db/schema.ts"
@@ -17,10 +18,12 @@
     "@v2/plugin-sdk": "workspace:*",
     "@v2/provider-contracts": "workspace:*",
     "drizzle-orm": "catalog:",
-    "hono": "catalog:"
+    "hono": "catalog:",
+    "react": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
+    "@types/react": "catalog:",
     "typescript": "catalog:",
     "wrangler": "catalog:"
   }
