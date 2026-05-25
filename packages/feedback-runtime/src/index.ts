@@ -20,16 +20,11 @@ export function failure(
 
 export function errorResponse(error: unknown, requestId?: string): { error: AppError } {
   if (error instanceof AppFailure) {
-    return { error: { ...error.payload, requestId: error.payload.requestId ?? requestId } };
+    const id = error.payload.requestId ?? requestId;
+    return { error: id ? { ...error.payload, requestId: id } : error.payload };
   }
-  return {
-    error: {
-      code: "internal_error",
-      message: "An unexpected error occurred.",
-      requestId,
-      retryable: false,
-    },
-  };
+  const payload = { code: "internal_error" as const, message: "An unexpected error occurred.", retryable: false };
+  return { error: requestId ? { ...payload, requestId } : payload };
 }
 
 export function notification(
@@ -38,15 +33,15 @@ export function notification(
   message?: string,
   source = "platform",
 ): Notification {
-  return notificationSchema.parse({
+  const payload = {
     id: crypto.randomUUID(),
     level,
     title,
-    message,
     source,
     dismissible: true,
     createdAt: new Date().toISOString(),
-  });
+  };
+  return notificationSchema.parse(message ? { ...payload, message } : payload);
 }
 
 export class NotificationQueue {
