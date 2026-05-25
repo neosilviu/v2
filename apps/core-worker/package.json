@@ -12,5 +12,5 @@
     "@v2/runtime": "workspace:*",
     "hono": "catalog:"
   },
-  "devDependencies": { "typescript": "catalog:" }
+  "devDependencies": { "typescript": "catalog:", "wrangler": "catalog:" }
 }

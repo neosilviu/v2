@@ -5,5 +5,5 @@
   "type": "module",
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev", "build": "tsc --noEmit -p tsconfig.json" },
   "dependencies": { "@v2/rpc-contracts": "workspace:*", "hono": "catalog:" },
-  "devDependencies": { "typescript": "catalog:" }
+  "devDependencies": { "typescript": "catalog:", "wrangler": "catalog:" }
 }
