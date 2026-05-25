@@ -49,7 +49,7 @@ fs.writeFileSync(file, `${statements.join("\n")}\n`);
 try {
   run(["d1", "migrations", "apply", database, "--local"]);
   run(["d1", "execute", database, "--local", "--file", file]);
-  console.log(`Synced ${rows.length} Marketplace plugins into ${database}.`);
+  console.log(`Seeded ${rows.length} Marketplace catalog identities into ${database}. Publish ZIP releases through Core before installing from Marketplace.`);
 } finally {
   fs.rmSync(file, { force: true });
 }

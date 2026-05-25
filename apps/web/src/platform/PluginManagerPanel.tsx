@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PluginBundle, PluginManifest } from "@v2/plugin-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { activatePlugin, approveInstall, deactivatePlugin, grantCapabilities, installMarketplacePlugin, loadActivePlugins, loadInstalledPlugins, loadMarketplacePlugins, uploadPlugin, type MarketplacePlugin } from "../api";
+import { activatePlugin, approveInstall, deactivatePlugin, installMarketplacePlugin, loadActivePlugins, loadInstalledPlugins, loadMarketplacePlugins, uploadPlugin, type MarketplacePlugin } from "../api";
 
 export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, onChanged }: { plugins: PluginManifest[]; activePluginIds: Set<string>; onChanged: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -9,6 +9,7 @@ export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, o
   const [active, setActive] = useState(activePluginIds);
   const [marketplace, setMarketplace] = useState<MarketplacePlugin[]>([]);
   const [pendingBundle, setPendingBundle] = useState<PluginBundle | null>(null);
+  const [pendingMarketplaceId, setPendingMarketplaceId] = useState<string | null>(null);
   const [uploadState, setUploadState] = useState("Official plugins start uninstalled. Install them from Marketplace when this workspace needs them.");
   const workspaceInstalled = [
     ...marketplace.filter((item) => item.installed).map((item) => item.manifest),
@@ -27,10 +28,15 @@ export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, o
   const install = async (item: MarketplacePlugin) => {
     setUploadState(`Installing ${item.manifest.name} from Marketplace...`);
     try {
-      const installed = await installMarketplacePlugin(item.manifest.id);
-      if (installed.manifest.capabilities.length) await grantCapabilities(installed.manifest.id, installed.manifest.capabilities.map((capability) => capability.id));
+      const result = await installMarketplacePlugin(item.manifest.id);
+      if (result.status === "approval-required") {
+        setPendingBundle(result.bundle);
+        setPendingMarketplaceId(item.manifest.id);
+        setUploadState(`Approval required for ${result.bundle.manifest.name}`);
+        return;
+      }
       await refresh();
-      setUploadState(`${installed.manifest.name} installed and active in workspace/default`);
+      setUploadState(`${result.plugin.manifest.name} installed and active in workspace/default`);
     } catch {
       setUploadState("Marketplace install failed. Platform admin access may be required.");
     }
@@ -40,10 +46,7 @@ export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, o
     setUploadState(`${wasActive ? "Deactivating" : "Activating"} ${plugin.name}...`);
     try {
       if (wasActive) await deactivatePlugin(plugin.id);
-      else {
-        await activatePlugin(plugin.id);
-        if (plugin.capabilities.length) await grantCapabilities(plugin.id, plugin.capabilities.map((capability) => capability.id));
-      }
+      else await activatePlugin(plugin.id);
       await refresh();
       setUploadState(`${plugin.name} is ${wasActive ? "inactive" : "active"} in workspace/default`);
     } catch {
@@ -55,15 +58,20 @@ export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, o
     setUploadState(`Uploading ${file.name}…`);
     try {
       const result = await uploadPlugin(file);
-      if (result.status === "approval-required" && result.bundle) { setPendingBundle(result.bundle); setUploadState(`Approval required for ${result.bundle.manifest.name}`); return; }
+      if (result.status === "approval-required" && result.bundle) { setPendingBundle(result.bundle); setPendingMarketplaceId(null); setUploadState(`Approval required for ${result.bundle.manifest.name}`); return; }
       setUploadState(`Installed ${result.manifest?.name ?? file.name}`); await refresh();
     } catch { setUploadState("Upload failed. Core worker unavailable or package invalid."); }
   };
   const approve = async () => {
     if (!pendingBundle) return;
-    const manifest = await approveInstall(pendingBundle);
-    if (manifest.capabilities.length) await grantCapabilities(manifest.id, manifest.capabilities.map((capability) => capability.id));
-    setPendingBundle(null); setUploadState(`Installed and activated ${manifest.name}`); await refresh();
+    if (pendingMarketplaceId) {
+      const result = await installMarketplacePlugin(pendingMarketplaceId, true);
+      if (result.status === "installed") setUploadState(`Installed and activated ${result.plugin.manifest.name}`);
+    } else {
+      const manifest = await approveInstall(pendingBundle);
+      setUploadState(`Installed and activated ${manifest.name}`);
+    }
+    setPendingBundle(null); setPendingMarketplaceId(null); await refresh();
   };
   return <SurfaceCard className="manager-panel">
     <div className="surface-header"><div><small>core</small><h2>Plugin Manager</h2></div><Button onClick={() => inputRef.current?.click()}>Upload ZIP</Button></div>

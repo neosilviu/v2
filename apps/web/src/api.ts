@@ -16,11 +16,14 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> { const res
 export type CoreSession = { authenticated: boolean; isAdmin: boolean; user: { id: string; email: string; name: string | null } | null };
 export type MarketplacePlugin = {
   manifest: PluginManifest;
-  category: "ai" | "design" | "site" | "commerce";
+  category: string;
   demoAvailable: boolean;
   installed: boolean;
   active: boolean;
 };
+export type PluginInstallResult =
+  | { status: "installed"; plugin: MarketplacePlugin }
+  | { status: "approval-required"; bundle: PluginBundle; sensitiveCapabilities: string[] };
 export async function loadCoreSession(): Promise<CoreSession> { return json<CoreSession>("/session"); }
 export function runtimeSurfaceUrl(surfaceId: string): string { return `${coreUrl}/runtime/ui/surfaces/${encodeURIComponent(surfaceId)}?workspaceId=${encodeURIComponent(workspaceId)}`; }
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(`/workspaces/${workspaceId}/layout`)).layout; }
@@ -37,7 +40,21 @@ export async function approveToolApproval(approvalId: string): Promise<ToolAppro
 export async function denyToolApproval(approvalId: string): Promise<ToolApproval> { return decideToolApproval(approvalId, "denied"); }
 export async function loadInstalledPlugins(): Promise<PluginManifest[]> { return (await json<{ plugins: PluginManifest[] }>("/plugins/installed")).plugins; }
 export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> { return (await json<{ plugins: MarketplacePlugin[] }>(`/marketplace/plugins?workspaceId=${workspaceId}`)).plugins; }
-export async function installMarketplacePlugin(pluginId: string): Promise<MarketplacePlugin> { return (await json<{ status: string; plugin: MarketplacePlugin }>(`/marketplace/plugins/${encodeURIComponent(pluginId)}/install?workspaceId=${workspaceId}`, { method: "POST" })).plugin; }
+export async function installMarketplacePlugin(pluginId: string, approved = false): Promise<PluginInstallResult> {
+  return json<PluginInstallResult>(`/marketplace/plugins/${encodeURIComponent(pluginId)}/install?workspaceId=${workspaceId}`, approved ? { method: "POST", body: JSON.stringify({ approved: true }) } : { method: "POST" });
+}
+export async function publishMarketplaceRelease(pluginId: string, file: File, fields?: { category?: string; source?: string; status?: "draft" | "published" | "deprecated"; demoAvailable?: boolean }): Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }> {
+  const body = new FormData();
+  body.append("file", file);
+  if (fields?.category) body.append("category", fields.category);
+  if (fields?.source) body.append("source", fields.source);
+  if (fields?.status) body.append("status", fields.status);
+  if (fields?.demoAvailable !== undefined) body.append("demoAvailable", String(fields.demoAvailable));
+  const response = await fetch(`${coreUrl}/marketplace/plugins/${encodeURIComponent(pluginId)}/releases`, { method: "POST", body, credentials: "include" });
+  if (response.status === 401) throw new CoreAuthRequiredError();
+  if (!response.ok) throw new Error(`Marketplace release publish failed: ${response.status}`);
+  return response.json() as Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }>;
+}
 export async function loadRuntimeTools(): Promise<ToolContribution[]> { return (await json<{ tools: ToolContribution[] }>(`/runtime/tools?workspaceId=${workspaceId}`)).tools; }
 export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body, credentials: "include" }); if (!response.ok && response.status !== 202) throw new Error(`Plugin upload failed: ${response.status}`); return response.json() as Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }>; }
 export async function approveInstall(bundle: PluginBundle): Promise<PluginManifest> { return (await json<{ status: string; manifest: PluginManifest }>("/plugins/install", { method: "POST", body: JSON.stringify({ workspaceId, bundle, approved: true }) })).manifest; }

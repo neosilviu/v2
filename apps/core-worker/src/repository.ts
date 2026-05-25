@@ -15,6 +15,21 @@ export type CatalogPlugin = {
   source: string;
 };
 
+export type CatalogRelease = {
+  id: string;
+  pluginId: string;
+  version: string;
+  manifest: PluginManifest;
+  packageObjectKey: string;
+  sha256: string;
+  sizeBytes: number;
+  format: "zip";
+  workerIsolation: PluginBundle["worker"]["isolation"];
+  uiMode: PluginBundle["ui"]["mode"];
+  status: "draft" | "published" | "deprecated";
+  source: string;
+};
+
 export type SandboxSurfaceAsset = {
   pluginId: string;
   surfaceId: string;
@@ -87,6 +102,93 @@ export class CoreRepository {
   async catalogPlugin(pluginId: string): Promise<CatalogPlugin | undefined> {
     const row = await this.db.prepare("SELECT manifest_json, category, demo_available, source FROM plugin_catalog WHERE plugin_id = ?").bind(pluginId).first<{ manifest_json: string; category: string; demo_available: number; source: string }>();
     return row ? { manifest: pluginManifestSchema.parse(JSON.parse(row.manifest_json)), category: row.category, demoAvailable: row.demo_available === 1, source: row.source } : undefined;
+  }
+
+  async publishCatalogRelease(bundle: PluginBundle, options: { category: string; demoAvailable: boolean; source: string; status?: CatalogRelease["status"] }): Promise<CatalogRelease> {
+    const releaseId = `${bundle.manifest.id}@${bundle.manifest.version}:${bundle.package.sha256}`;
+    const status = options.status ?? "published";
+    await this.db.batch([
+      this.db.prepare(`INSERT INTO plugin_catalog (plugin_id, name, version, manifest_json, category, demo_available, source, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(plugin_id) DO UPDATE SET
+          name = excluded.name,
+          version = excluded.version,
+          manifest_json = excluded.manifest_json,
+          category = excluded.category,
+          demo_available = excluded.demo_available,
+          source = excluded.source,
+          updated_at = CURRENT_TIMESTAMP`)
+        .bind(bundle.manifest.id, bundle.manifest.name, bundle.manifest.version, JSON.stringify(bundle.manifest), options.category, options.demoAvailable ? 1 : 0, options.source),
+      this.db.prepare(`INSERT INTO plugin_catalog_releases
+        (id, plugin_id, version, manifest_json, package_object_key, sha256, size_bytes, format, worker_isolation, ui_mode, status, source, published_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'published' THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
+        ON CONFLICT(plugin_id, version, sha256) DO UPDATE SET
+          manifest_json = excluded.manifest_json,
+          package_object_key = excluded.package_object_key,
+          size_bytes = excluded.size_bytes,
+          format = excluded.format,
+          worker_isolation = excluded.worker_isolation,
+          ui_mode = excluded.ui_mode,
+          status = excluded.status,
+          source = excluded.source,
+          published_at = CASE WHEN excluded.status = 'published' THEN COALESCE(plugin_catalog_releases.published_at, CURRENT_TIMESTAMP) ELSE plugin_catalog_releases.published_at END,
+          updated_at = CURRENT_TIMESTAMP`)
+        .bind(releaseId, bundle.manifest.id, bundle.manifest.version, JSON.stringify(bundle.manifest), bundle.package.objectKey, bundle.package.sha256, bundle.package.sizeBytes, bundle.package.format, bundle.worker.isolation, bundle.ui.mode, status, options.source, status),
+    ]);
+    const release = await this.publishedCatalogRelease(bundle.manifest.id);
+    if (status === "published" && release) return release;
+    return {
+      id: releaseId,
+      pluginId: bundle.manifest.id,
+      version: bundle.manifest.version,
+      manifest: bundle.manifest,
+      packageObjectKey: bundle.package.objectKey,
+      sha256: bundle.package.sha256,
+      sizeBytes: bundle.package.sizeBytes,
+      format: bundle.package.format,
+      workerIsolation: bundle.worker.isolation,
+      uiMode: bundle.ui.mode,
+      status,
+      source: options.source,
+    };
+  }
+
+  async publishedCatalogRelease(pluginId: string): Promise<CatalogRelease | undefined> {
+    const row = await this.db.prepare(`SELECT id, plugin_id, version, manifest_json, package_object_key, sha256, size_bytes, format, worker_isolation, ui_mode, status, source
+      FROM plugin_catalog_releases
+      WHERE plugin_id = ? AND status = 'published'
+      ORDER BY published_at DESC, created_at DESC
+      LIMIT 1`)
+      .bind(pluginId)
+      .first<{ id: string; plugin_id: string; version: string; manifest_json: string; package_object_key: string; sha256: string; size_bytes: number; format: "zip"; worker_isolation: PluginBundle["worker"]["isolation"]; ui_mode: PluginBundle["ui"]["mode"]; status: CatalogRelease["status"]; source: string }>();
+    return row ? {
+      id: row.id,
+      pluginId: row.plugin_id,
+      version: row.version,
+      manifest: pluginManifestSchema.parse(JSON.parse(row.manifest_json)),
+      packageObjectKey: row.package_object_key,
+      sha256: row.sha256,
+      sizeBytes: row.size_bytes,
+      format: row.format,
+      workerIsolation: row.worker_isolation,
+      uiMode: row.ui_mode,
+      status: row.status,
+      source: row.source,
+    } : undefined;
+  }
+
+  releaseBundle(release: CatalogRelease): PluginBundle {
+    return {
+      manifest: release.manifest,
+      worker: { isolation: release.workerIsolation },
+      ui: { mode: release.uiMode },
+      package: {
+        format: release.format,
+        sha256: release.sha256,
+        sizeBytes: release.sizeBytes,
+        objectKey: release.packageObjectKey,
+      },
+    };
   }
 
   async resolveSandboxSurface(workspaceId: string, surfaceId: string): Promise<SandboxSurfaceAsset | undefined> {

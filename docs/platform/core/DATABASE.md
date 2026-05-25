@@ -8,6 +8,7 @@ Core stores only generic platform control-plane data:
 
 - workspaces;
 - installed plugin manifest state;
+- Marketplace catalog identity records and installable release metadata for validated ZIP/R2 bundles;
 - historical plugin ZIP package metadata, keyed by plugin, version and digest for audit and future rollback;
 - declared capabilities and per-workspace grants;
 - plugin activation state;

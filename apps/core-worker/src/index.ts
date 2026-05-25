@@ -20,6 +20,15 @@ app.onError((error, c) => { const validation = error instanceof Error && error.n
 function requireRead(c: CoreContext): Response | undefined { return c.get("internal") || c.get("user") ? undefined : c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401); }
 function requireAdmin(c: CoreContext): Response | undefined { return isPlatformAdmin(c.env, c.get("user")) ? undefined : c.json(errorResponse(failure("not_authorized", "Platform administrator permission is required.")), 403); }
 async function runtimeFor(repo: CoreRepository) { const runtime = new RuntimeKernel(); for (const manifest of await repo.installed()) await runtime.registerPlugin(manifest); return runtime; }
+async function readApproved(c: CoreContext): Promise<boolean> {
+  if (!c.req.header("content-type")?.includes("application/json")) return false;
+  try {
+    const body = await c.req.json() as { approved?: unknown };
+    return body.approved === true;
+  } catch {
+    return false;
+  }
+}
 app.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
 app.get("/session", (c) => {
   const user = c.get("user");
@@ -45,6 +54,30 @@ app.get("/marketplace/plugins", async (c) => {
   const catalog = await repo.catalogPlugins();
   return c.json({ plugins: catalog.map((item) => ({ ...item, installed: installed.has(item.manifest.id), active: active.has(item.manifest.id) })) });
 });
+app.post("/marketplace/plugins/:pluginId/releases", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const form = await c.req.formData();
+  const file = form.get("file");
+  if (!(file instanceof File) || !file.name.toLowerCase().endsWith(".zip")) return c.json(errorResponse(failure("validation_failed", "A ZIP plugin package is required.")), 400);
+  if (file.size > 20 * 1024 * 1024) return c.json(errorResponse(failure("validation_failed", "Plugin package exceeds 20 MB.")), 413);
+  const bytes = await file.arrayBuffer();
+  const key = `marketplace/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
+  const assessment = await unpackPluginZip(bytes, key);
+  if (assessment.bundle.manifest.id !== c.req.param("pluginId")) return c.json(errorResponse(failure("validation_failed", "Release plugin id does not match the Marketplace path.")), 400);
+  await c.env.PLUGIN_PACKAGES.put(key, bytes, { customMetadata: { pluginId: assessment.bundle.manifest.id, version: assessment.bundle.manifest.version, sha256: assessment.bundle.package.sha256 } });
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const requestedStatus = form.get("status");
+  const status = requestedStatus === "draft" || requestedStatus === "deprecated" ? requestedStatus : "published";
+  const release = await repo.publishCatalogRelease(assessment.bundle, {
+    category: String(form.get("category") ?? "private"),
+    demoAvailable: form.get("demoAvailable") === "true",
+    source: String(form.get("source") ?? "private"),
+    status,
+  });
+  await repo.audit(null, "marketplace.release.publish", { pluginId: release.pluginId, version: release.version, releaseId: release.id, status: release.status }, c.get("user")?.id);
+  return c.json({ status: release.status, release, bundle: assessment.bundle, sensitiveCapabilities: assessment.sensitiveCapabilities }, 201);
+});
 app.post("/marketplace/plugins/:pluginId/install", async (c) => {
   const denied = requireAdmin(c);
   if (denied) return denied;
@@ -52,11 +85,15 @@ app.post("/marketplace/plugins/:pluginId/install", async (c) => {
   const repo = new CoreRepository(c.env.CORE_DB);
   const plugin = await repo.catalogPlugin(c.req.param("pluginId"));
   if (!plugin) return c.json(errorResponse(failure("not_found", "Marketplace plugin is not available.")), 404);
+  const release = await repo.publishedCatalogRelease(plugin.manifest.id);
+  if (!release) return c.json(errorResponse(failure("not_found", "Marketplace plugin has no published runtime release.")), 404);
+  const assessment = assessPluginBundle(repo.releaseBundle(release));
+  if (assessment.requiresApproval && !await readApproved(c)) return c.json({ status: "approval-required", bundle: assessment.bundle, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202);
   await repo.ensureWorkspace(workspaceId);
-  await repo.installManifest(plugin.manifest);
-  await repo.activate(workspaceId, plugin.manifest.id);
-  await repo.audit(workspaceId, "marketplace.plugin.install", { pluginId: plugin.manifest.id, category: plugin.category }, c.get("user")?.id);
-  return c.json({ status: "installed", plugin: { ...plugin, installed: true, active: true } }, 201);
+  await repo.installManifest(assessment.bundle.manifest, assessment.bundle);
+  await repo.activate(workspaceId, assessment.bundle.manifest.id);
+  await repo.audit(workspaceId, "marketplace.plugin.install", { pluginId: assessment.bundle.manifest.id, category: plugin.category, releaseId: release.id }, c.get("user")?.id);
+  return c.json({ status: "installed", plugin: { ...plugin, manifest: assessment.bundle.manifest, installed: true, active: true } }, 201);
 });
 app.post("/plugins/upload", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const form = await c.req.formData(); const file = form.get("file"); if (!(file instanceof File) || !file.name.toLowerCase().endsWith(".zip")) return c.json(errorResponse(failure("validation_failed", "A ZIP plugin package is required.")), 400); if (file.size > 20 * 1024 * 1024) return c.json(errorResponse(failure("validation_failed", "Plugin package exceeds 20 MB.")), 413); const bytes = await file.arrayBuffer(); const key = `packages/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, "-")}`; const assessment = await unpackPluginZip(bytes, key); await c.env.PLUGIN_PACKAGES.put(key, bytes, { customMetadata: { pluginId: assessment.bundle.manifest.id, version: assessment.bundle.manifest.version, sha256: assessment.bundle.package.sha256 } }); const repo = new CoreRepository(c.env.CORE_DB); await repo.ensureWorkspace(defaultWorkspaceId); if (assessment.requiresApproval) { await repo.audit(defaultWorkspaceId, "plugin.install.approval_required", { pluginId: assessment.bundle.manifest.id }, c.get("user")?.id); return c.json({ status: "approval-required", bundle: assessment.bundle, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202); } await repo.installManifest(assessment.bundle.manifest, assessment.bundle); await repo.activate(defaultWorkspaceId, assessment.bundle.manifest.id); await repo.audit(defaultWorkspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id, source: "zip" }, c.get("user")?.id); return c.json({ status: "installed", manifest: assessment.bundle.manifest }, 201); });
 app.post("/plugins/install", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = pluginInstallRequestSchema.parse(await c.req.json()); const assessment = assessPluginBundle(request.bundle); if (assessment.requiresApproval && !request.approved) return c.json({ status: "approval-required", bundle: assessment.bundle, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202); const repo = new CoreRepository(c.env.CORE_DB); await repo.ensureWorkspace(request.workspaceId); await repo.installManifest(assessment.bundle.manifest, assessment.bundle); await repo.activate(request.workspaceId, assessment.bundle.manifest.id); await repo.audit(request.workspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id }, c.get("user")?.id); return c.json({ status: "installed", manifest: assessment.bundle.manifest }, 201); });
