@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { providerConnectionOperationSchema, providerConnectionTestSchema } from "@v2/agent-contracts/provider-operations";
+import { errorResponse, failure } from "@v2/feedback-runtime";
 import type { ProviderContribution } from "@v2/plugin-contracts";
 import type { AgentAiEnv } from "./env";
 
@@ -20,22 +21,26 @@ export function createProviderRoutes() {
           body,
         })
       : await env.PROVIDER_RUNTIME.fetch(url, { method: "POST" });
-    const payload = await response.json().catch(() => ({ error: "Provider runtime returned an invalid response" }));
+    const payload = await response.json().catch(() => errorResponse(failure("dependency_unavailable", "Provider runtime returned an invalid response.", { retryable: true })));
     return { ok: response.ok, payload };
   }
   routes.post("/:providerId/detect-models", async (c) => {
     const request = providerConnectionOperationSchema.parse(await c.req.json());
     const providerId = c.req.param("providerId");
-    if (!await available(c.env, request.workspaceId, providerId)) return c.json({ error: "Provider not available in workspace" }, 404);
+    if (!await available(c.env, request.workspaceId, providerId)) {
+      return c.json(errorResponse(failure("not_found", "Provider is not available in this workspace.")), 404);
+    }
     const result = await callProvider(c.env, `/connections/${encodeURIComponent(request.connectionId)}/detect-models`);
-    return result.ok ? c.json(result.payload) : c.json({ error: "Provider runtime rejected the operation" }, 502);
+    return result.ok ? c.json(result.payload) : c.json(errorResponse(failure("dependency_unavailable", "Provider runtime rejected the operation.", { retryable: true })), 502);
   });
   routes.post("/:providerId/test", async (c) => {
     const request = providerConnectionTestSchema.parse(await c.req.json());
     const providerId = c.req.param("providerId");
-    if (!await available(c.env, request.workspaceId, providerId)) return c.json({ error: "Provider not available in workspace" }, 404);
+    if (!await available(c.env, request.workspaceId, providerId)) {
+      return c.json(errorResponse(failure("not_found", "Provider is not available in this workspace.")), 404);
+    }
     const result = await callProvider(c.env, `/connections/${encodeURIComponent(request.connectionId)}/test`, JSON.stringify({ modelId: request.modelId }));
-    return result.ok ? c.json(result.payload) : c.json({ error: "Provider runtime rejected the operation" }, 502);
+    return result.ok ? c.json(result.payload) : c.json(errorResponse(failure("dependency_unavailable", "Provider runtime rejected the operation.", { retryable: true })), 502);
   });
   return routes;
 }
