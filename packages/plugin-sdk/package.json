@@ -1,0 +1,10 @@
+{
+  "name": "@v2/plugin-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "dependencies": { "@v2/plugin-contracts": "workspace:*" },
+  "devDependencies": { "typescript": "catalog:" }
+}

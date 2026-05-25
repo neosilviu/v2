@@ -1,0 +1,9 @@
+{
+  "name": "@v2/auth-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev", "build": "tsc --noEmit -p tsconfig.json" },
+  "dependencies": { "hono": "catalog:" },
+  "devDependencies": { "typescript": "catalog:" }
+}

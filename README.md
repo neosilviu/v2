@@ -11,23 +11,22 @@ AI-native runtime platform built around a minimal core, isolated authentication,
 - **AI-native**: `agent-ai` supports channels, providers, tools and approvals.
 - **Plugin packages**: built-in and ZIP-installed plugins can contribute UI and logic with explicit capabilities.
 
-## Planned workspace structure
+## Current foundation
 
 ```text
 apps/
-  core-worker/    Platform control plane and native plugin manager
-  auth-worker/    Better Auth service boundary
-  web/            Compact configurable shell UI
+  core-worker/       Platform control plane and native plugin manager
+  auth-worker/       Better Auth service boundary
+  runtime-bridge/    MCP/runtime gateway for ChatGPT, Codex and external clients
+  web/               Compact configurable shell UI
 packages/
-  plugin-contracts/
-  plugin-sdk/
-  rpc-contracts/
-  shared/
-  ui-kit/
-  ui-runtime/
+  plugin-contracts/  Plugin manifest and contribution schemas
+  plugin-sdk/        Declarative helpers for plugins
+  runtime/           Registry, event bus and runtime kernel
+  ui-runtime/        Runtime shell state, zones and placements
 plugins/
-  agent-ai/
-  theme-studio/
+  agent-ai/          Built-in AI orchestration plugin
+  theme-studio/      Built-in theme/settings plugin
 ```
 
 ## Storage ownership
@@ -37,6 +36,10 @@ plugins/
 - Lightweight plugins can use platform or namespaced storage through controlled APIs.
 - Large plugins can request dedicated bindings/resources.
 
+## Runtime bridge
+
+`apps/runtime-bridge` is a separate adapter for MCP-style access. It should reuse the same runtime tool registry, permission engine and audit layer as the web shell and `agent-ai`.
+
 ## Status
 
-Foundation bootstrap in progress.
+Foundation branch in progress: `foundation/runtime-platform`.
