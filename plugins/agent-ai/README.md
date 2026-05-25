@@ -22,9 +22,7 @@ The plugin exposes controlled `/knowledge/search` and `/knowledge/page-context` 
 
 ## Database ownership and migrations
 
-`server/db/schema.ts` is the structural source of truth. Generate future schema migrations using `pnpm --filter @v2/plugin-agent-ai db:generate`. The existing `0002_provider_connections.sql` is an intentional reviewed data transition from legacy provider-binding rows to connection references.
-
-`0003_tool_call_approvals.sql` updates the pre-existing `agent_tool_calls` table for the Core approval flow. Drizzle generation was attempted for this schema change, but the current migration folder does not contain Drizzle metadata for the existing hand-written `0001`/`0002` history, so Drizzle emitted a new full baseline instead of an incremental migration. The reviewed SQL migration rebuilds only `agent_tool_calls` and carries forward prior `approval_status`/`output_json` values.
+`server/db/schema.ts` is the structural source of truth. Generate schema migrations using `pnpm --filter @v2/plugin-agent-ai db:generate`. Agent AI currently uses a Drizzle-generated baseline migration with metadata so future changes can be generated incrementally.
 
 ## Remaining work
 

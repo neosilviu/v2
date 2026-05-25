@@ -17,7 +17,7 @@ Do not maintain new table or index definitions manually in both TypeScript and S
 
 ## Manual data migrations
 
-A reviewed SQL migration remains appropriate when transforming existing records, backfilling values or removing legacy semantics. For example, the Agent AI migration that maps prior provider-binding states to `connectionId` is a data transition required for an existing branch history; future structural changes must be generated from `schema.ts`.
+A reviewed SQL migration remains appropriate when transforming existing records, backfilling values or removing legacy semantics. Keep those migrations narrow and document why generation alone was not sufficient.
 
 ## Ownership
 
