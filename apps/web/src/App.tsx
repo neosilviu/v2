@@ -4,7 +4,7 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { decideToolApproval, executeTool, loadInstalledPlugins, loadLayout, loadRuntimeTools, runtimeSurfaceUrl, saveLayout } from "./api";
+import { decideToolApproval, executeTool, loadActivePlugins, loadInstalledPlugins, loadLayout, loadRuntimeTools, runtimeSurfaceUrl, saveLayout } from "./api";
 import { composeShell, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { CommandPalette } from "./platform/CommandPalette";
@@ -30,26 +30,30 @@ function UserMenu() {
   const [open, setOpen] = useState(false);
   return <div className="user-menu">
     <button className="user-button" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-      <span className="avatar">A</span><span>Admin</span>
+      <span className="avatar">W</span><span>Default</span>
     </button>
     {open ? <div className="user-popover">
-      <strong>Workspace admin</strong>
+      <strong>Current workspace</strong>
       <small>workspace/default</small>
-      <button type="button">Account settings</button>
-      <button type="button">Sign out</button>
+      <small>Core auth controls are provided by the auth service.</small>
     </div> : null}
   </div>;
 }
 
-function OverviewPage({ plugins, tools, surfaces }: { plugins: PluginManifest[]; tools: ToolContribution[]; surfaces: SurfaceContribution[] }) {
+function OverviewPage({ plugins, activePluginIds, tools, surfaces, onOpenPlugins }: { plugins: PluginManifest[]; activePluginIds: Set<string>; tools: ToolContribution[]; surfaces: SurfaceContribution[]; onOpenPlugins: () => void }) {
   return <>
     <div className="metric-grid">
-      <SurfaceCard><small>installed</small><h2>{plugins.length} plugins</h2><p>{plugins.filter((plugin) => plugin.builtIn).length} trusted native packages</p></SurfaceCard>
+      <SurfaceCard><small>workspace active</small><h2>{activePluginIds.size} plugins</h2><p>{plugins.length} installed in Core registry</p></SurfaceCard>
       <SurfaceCard><small>runtime</small><h2>{tools.length} tools</h2><p>{tools.filter((tool) => tool.risk === "sensitive" || tool.risk === "dangerous").length} approval-gated tools</p></SurfaceCard>
       <SurfaceCard><small>surfaces</small><h2>{surfaces.length} mounted</h2><p>Native and isolated UI contributions</p></SurfaceCard>
     </div>
     <div className="section-title"><h2>Workspace</h2><Badge>{surfaces.length}</Badge></div>
-    <div className="cards">{surfaces.length ? surfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <SurfaceCard><small>workspace</small><h2>No workspace surfaces</h2><p>Activate a plugin to mount native pages here.</p></SurfaceCard>}</div>
+    <div className="cards">{surfaces.length ? surfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <SurfaceCard>
+      <small>core registry</small>
+      <h2>{plugins.length ? "No active workspace surfaces" : "No plugins installed locally"}</h2>
+      <p>{plugins.length ? "Activate a plugin that contributes workspace UI to mount native pages here." : "Core returned an empty plugin registry for workspace/default."}</p>
+      <div className="actions"><Button onClick={onOpenPlugins}>Open Plugin Manager</Button></div>
+    </SurfaceCard>}</div>
   </>;
 }
 
@@ -65,6 +69,7 @@ function PluginPage({ plugin, surfaces }: { plugin: PluginManifest; surfaces: Su
 
 export function App() {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
+  const [activePluginIds, setActivePluginIds] = useState<Set<string>>(new Set());
   const [tools, setTools] = useState<ToolContribution[]>([]);
   const [shell, setShell] = useState<ShellState>(emptyShell);
   const [activePage, setActivePage] = useState<Page>("overview");
@@ -76,9 +81,11 @@ export function App() {
   const dismiss = (id: string) => setNotifications((current) => current.filter((item) => item.id !== id));
 
   useEffect(() => {
-    void Promise.all([loadInstalledPlugins(), loadRuntimeTools(), loadLayout()]).then(([installed, runtimeTools, layout]) => {
-      const composed = composeShell(installed);
+    void Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadRuntimeTools(), loadLayout()]).then(([installed, activeIds, runtimeTools, layout]) => {
+      const active = new Set(activeIds);
+      const composed = composeShell(installed.filter((plugin) => active.has(plugin.id)));
       setPlugins(installed);
+      setActivePluginIds(active);
       setTools(runtimeTools);
       setShell(layout ? { ...composed, zones: layout.zones, placements: layout.placements } : composed);
     }).catch(() => {
@@ -91,9 +98,10 @@ export function App() {
   const workspaceSurfaces = useMemo(() => surfacesInZone(shell, "workspace.main"), [shell]);
   const appearanceSurfaces = useMemo(() => surfacesInZone(shell, "settings.appearance"), [shell]);
   const integrationSurfaces = useMemo(() => surfacesInZone(shell, "settings.integrations"), [shell]);
-  const settings = plugins.flatMap((plugin) => plugin.contributes.settings);
+  const activePlugins = useMemo(() => plugins.filter((plugin) => activePluginIds.has(plugin.id)), [activePluginIds, plugins]);
+  const settings = useMemo(() => activePlugins.flatMap((plugin) => plugin.contributes.settings.map((setting) => ({ pluginId: plugin.id, setting }))), [activePlugins]);
   const pluginId = activePage.startsWith("plugin:") ? activePage.slice(7) : null;
-  const selectedPlugin = plugins.find((plugin) => plugin.id === pluginId) ?? null;
+  const selectedPlugin = activePlugins.find((plugin) => plugin.id === pluginId) ?? null;
   const selectedPluginSurfaces = selectedPlugin ? shell.surfaces.filter((surface) => surface.id.startsWith(`${selectedPlugin.id}.`)) : [];
   const title = selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : "Dashboard");
   const subtitle = selectedPlugin ? "Native plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Platform layout, appearance and integration settings" : "Runtime overview and active workspace";
@@ -140,8 +148,11 @@ export function App() {
   const refreshPlugins = async () => {
     try {
       const installed = await loadInstalledPlugins();
+      const activeIds = await loadActivePlugins();
+      const active = new Set(activeIds);
       setPlugins(installed);
-      setShell(composeShell(installed));
+      setActivePluginIds(active);
+      setShell(composeShell(installed.filter((plugin) => active.has(plugin.id))));
       setTools(await loadRuntimeTools());
       emit(notification("success", "Plugins refreshed", "Runtime contributions have been reloaded."));
     } catch {
@@ -154,7 +165,6 @@ export function App() {
       <header className="topbar">
         <button className="brand" type="button" onClick={() => setActivePage("overview")}><strong>v2</strong><Badge>runtime</Badge></button>
         <button className="search" type="button" onClick={() => setPaletteOpen(true)}>Search commands or tools</button>
-        <Button>Deploy</Button>
         <UserMenu />
       </header>
       <aside className="sidebar">
@@ -164,22 +174,22 @@ export function App() {
         <button className={activePage === "approvals" ? "nav active" : "nav"} onClick={() => setActivePage("approvals")}>Approvals</button>
         <button className={activePage === "settings" ? "nav active" : "nav"} onClick={() => setActivePage("settings")}>Settings</button>
         <div className="sidebar-label">APPS</div>
-        {plugins.length ? plugins.map((plugin) => <button key={plugin.id} className={activePage === `plugin:${plugin.id}` ? "nav active" : "nav"} onClick={() => setActivePage(`plugin:${plugin.id}`)}>{plugin.name}</button>) : <p className="message">No installed plugins</p>}
-        <div className="sidebar-account"><span className="avatar">A</span><div><strong>Admin</strong><small>workspace/default</small></div></div>
+        {activePlugins.length ? activePlugins.map((plugin) => <button key={plugin.id} className={activePage === `plugin:${plugin.id}` ? "nav active" : "nav"} onClick={() => setActivePage(`plugin:${plugin.id}`)}>{plugin.name}</button>) : <p className="message">No active plugins</p>}
+        <div className="sidebar-account"><span className="avatar">W</span><div><strong>Default</strong><small>workspace/default</small></div></div>
       </aside>
       <main className="workspace">
         <div className="workspace-header">
           <div><h1>{title}</h1><p>{subtitle}</p></div>
           <div className="header-actions"><Badge>workspace/default</Badge><Button onClick={persistLayout}>Save layout</Button></div>
         </div>
-        {activePage === "overview" ? <OverviewPage plugins={plugins} tools={tools} surfaces={workspaceSurfaces} /> : null}
-        {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} onChanged={() => void refreshPlugins()} /></div> : null}
+        {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} onOpenPlugins={() => setActivePage("plugins")} /> : null}
+        {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} onChanged={() => void refreshPlugins()} /></div> : null}
         {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
-        {activePage === "settings" ? <div className="cards"><RuntimeShellEditor state={shell} onChange={setShell} /><SettingsRenderer settings={settings} />{appearanceSurfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />)}{integrationSurfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />)}</div> : null}
+        {activePage === "settings" ? <div className="cards"><RuntimeShellEditor state={shell} onChange={setShell} /><SettingsRenderer sections={settings} />{appearanceSurfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />)}{integrationSurfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />)}</div> : null}
         {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
       </main>
       <aside className="assistant">{assistant.length ? assistant.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <div className="message">No assistant plugin surface installed.</div>}</aside>
-      <footer className="statusbar"><span>{notice}</span><span>{plugins.length} installed plugins</span><span>MCP bridge ready</span></footer>
+      <footer className="statusbar"><span>{notice}</span><span>{activePluginIds.size}/{plugins.length} plugins active</span><span>Core workspace/default</span></footer>
     </div>
     <NotificationCenter notifications={notifications} onDismiss={dismiss} />
     <CommandPalette tools={tools} open={paletteOpen} onClose={() => setPaletteOpen(false)} onExecute={(tool) => void runTool(tool)} />
