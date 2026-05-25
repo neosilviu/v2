@@ -26,17 +26,15 @@ export const agentProviderBindings = sqliteTable("agent_provider_bindings", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull(),
   contributionId: text("contribution_id").notNull(),
+  connectionId: text("connection_id"),
   title: text("title").notNull(),
   model: text("model").notNull(),
-  status: text("status", { enum: ["configured", "missing-secret", "disabled"] }).notNull(),
-  secretRef: text("secret_ref"),
-  configurationJson: text("configuration_json"),
-  detectedModelsJson: text("detected_models_json"),
-  detectedAt: text("detected_at"),
+  status: text("status", { enum: ["configured", "unavailable", "disabled"] }).notNull().default("unavailable"),
   createdAt: text("created_at").notNull().default(now),
   updatedAt: text("updated_at").notNull().default(now),
 }, (table) => [
   index("agent_provider_bindings_workspace_idx").on(table.workspaceId),
+  index("agent_provider_bindings_connection_idx").on(table.connectionId),
   uniqueIndex("agent_provider_binding_name_idx").on(table.workspaceId, table.title),
 ]);
 
