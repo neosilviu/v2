@@ -8,6 +8,13 @@ export type PluginWorkspaceState = {
   updatedAt: string;
 };
 
+export type SandboxSurfaceAsset = {
+  pluginId: string;
+  surfaceId: string;
+  objectKey: string;
+  entry: string;
+};
+
 export class CoreRepository {
   constructor(private readonly db: D1Database) {}
 
@@ -63,6 +70,22 @@ export class CoreRepository {
   async installedById(pluginId: string): Promise<PluginManifest | undefined> {
     const row = await this.db.prepare("SELECT manifest_json FROM installed_plugins WHERE id = ?").bind(pluginId).first<{ manifest_json: string }>();
     return row ? pluginManifestSchema.parse(JSON.parse(row.manifest_json)) : undefined;
+  }
+
+  async resolveSandboxSurface(workspaceId: string, surfaceId: string): Promise<SandboxSurfaceAsset | undefined> {
+    const rows = await this.db.prepare(`SELECT p.id AS plugin_id, p.manifest_json, p.package_object_key
+      FROM installed_plugins p
+      INNER JOIN workspace_plugins w ON w.plugin_id = p.id
+      WHERE w.workspace_id = ? AND w.active = 1 AND p.package_object_key IS NOT NULL`)
+      .bind(workspaceId).all<{ plugin_id: string; manifest_json: string; package_object_key: string }>();
+    for (const row of rows.results) {
+      const manifest = pluginManifestSchema.parse(JSON.parse(row.manifest_json));
+      const surface = manifest.contributes.surfaces.find((item) => item.id === surfaceId);
+      if (surface?.renderer.mode === "sandbox-frame") {
+        return { pluginId: row.plugin_id, surfaceId, objectKey: row.package_object_key, entry: surface.renderer.entry };
+      }
+    }
+    return undefined;
   }
 
   async setActive(workspaceId: string, pluginId: string, active: boolean): Promise<PluginWorkspaceState | undefined> {
