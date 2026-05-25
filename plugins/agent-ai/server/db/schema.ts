@@ -1,4 +1,7 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { index, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+const now = sql`CURRENT_TIMESTAMP`;
 
 export const agentChannels = sqliteTable("agent_channels", {
   id: text("id").primaryKey(),
@@ -6,8 +9,8 @@ export const agentChannels = sqliteTable("agent_channels", {
   title: text("title").notNull(),
   providerBindingId: text("provider_binding_id"),
   systemPrompt: text("system_prompt"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
 }, (table) => [index("agent_channels_workspace_idx").on(table.workspaceId)]);
 
 export const agentMessages = sqliteTable("agent_messages", {
@@ -16,7 +19,7 @@ export const agentMessages = sqliteTable("agent_messages", {
   role: text("role", { enum: ["user", "assistant", "tool", "system"] }).notNull(),
   content: text("content").notNull(),
   metadataJson: text("metadata_json"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().default(now),
 }, (table) => [index("agent_messages_channel_idx").on(table.channelId, table.createdAt)]);
 
 export const agentProviderBindings = sqliteTable("agent_provider_bindings", {
@@ -30,8 +33,8 @@ export const agentProviderBindings = sqliteTable("agent_provider_bindings", {
   configurationJson: text("configuration_json"),
   detectedModelsJson: text("detected_models_json"),
   detectedAt: text("detected_at"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
 }, (table) => [
   index("agent_provider_bindings_workspace_idx").on(table.workspaceId),
   uniqueIndex("agent_provider_binding_name_idx").on(table.workspaceId, table.title),
@@ -45,7 +48,7 @@ export const agentRuns = sqliteTable("agent_runs", {
   inputMessageId: text("input_message_id").references(() => agentMessages.id),
   outputMessageId: text("output_message_id").references(() => agentMessages.id),
   error: text("error"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().default(now),
   completedAt: text("completed_at"),
 }, (table) => [index("agent_runs_channel_idx").on(table.channelId, table.createdAt)]);
 
@@ -59,8 +62,8 @@ export const agentKnowledgeSources = sqliteTable("agent_knowledge_sources", {
   sourceUrl: text("source_url"),
   configurationJson: text("configuration_json"),
   lastSyncedAt: text("last_synced_at"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
 }, (table) => [index("agent_knowledge_sources_workspace_idx").on(table.workspaceId)]);
 
 export const agentToolCalls = sqliteTable("agent_tool_calls", {
@@ -70,7 +73,7 @@ export const agentToolCalls = sqliteTable("agent_tool_calls", {
   approvalStatus: text("approval_status", { enum: ["pending", "approved", "denied", "not-required"] }).notNull(),
   inputJson: text("input_json"),
   outputJson: text("output_json"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().default(now),
 }, (table) => [index("agent_tool_calls_run_idx").on(table.runId)]);
 
 export const agentResourceBindings = sqliteTable("agent_resource_bindings", {
@@ -79,7 +82,7 @@ export const agentResourceBindings = sqliteTable("agent_resource_bindings", {
   resourceType: text("resource_type", { enum: ["kv", "do", "r2", "vectorize", "ai-search"] }).notNull(),
   bindingName: text("binding_name").notNull(),
   purpose: text("purpose").notNull(),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().default(now),
 }, (table) => [uniqueIndex("agent_resource_binding_idx").on(table.workspaceId, table.resourceType, table.bindingName)]);
 
 export type AgentChannelRow = typeof agentChannels.$inferSelect;
