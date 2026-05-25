@@ -5,8 +5,13 @@ export type InstallAssessment = { bundle: PluginBundle; requiresApproval: boolea
 
 export function assessPluginBundle(input: unknown): InstallAssessment {
   const bundle = pluginBundleSchema.parse(input);
-  const sensitiveCapabilities = bundle.manifest.capabilities.filter((item) => item.risk === "sensitive" || item.risk === "dangerous").map((item) => item.id);
-  const requiresApproval = sensitiveCapabilities.length > 0 || bundle.manifest.data.mode === "dedicated" || bundle.worker.isolation === "platform-worker" || bundle.ui.mode === "module";
+  const sensitiveCapabilities = bundle.manifest.capabilities
+    .filter((item) => item.risk === "sensitive" || item.risk === "dangerous")
+    .map((item) => item.id);
+  const requiresApproval = sensitiveCapabilities.length > 0
+    || bundle.manifest.data.mode === "dedicated"
+    || bundle.worker.isolation === "platform-worker"
+    || bundle.ui.mode === "sandbox-frame";
   return { bundle, sensitiveCapabilities, requiresApproval };
 }
 
