@@ -22,22 +22,22 @@ export class AgentRepository {
     return { id, workspaceId, title, providerId, createdAt: new Date().toISOString() };
   }
 
-  async setChannelProvider(channelId: string, providerId: string | null) {
+  async setChannelProvider(channelId: string, providerId: string | null): Promise<void> {
     await this.db.prepare("UPDATE agent_channels SET provider_binding_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(providerId, channelId).run();
   }
 
   async listProviders(workspaceId: string): Promise<AgentProviderBinding[]> {
-    const rows = await this.db.prepare("SELECT id, workspace_id, contribution_id, title, model, status, created_at FROM agent_provider_bindings WHERE workspace_id = ? ORDER BY created_at")
-      .bind(workspaceId).all<{ id: string; workspace_id: string; contribution_id: string; title: string; model: string; status: AgentProviderBinding["status"]; created_at: string }>();
-    return rows.results.map((row) => ({ id: row.id, workspaceId: row.workspace_id, contributionId: row.contribution_id, title: row.title, model: row.model, status: row.status, createdAt: row.created_at }));
+    const rows = await this.db.prepare("SELECT id, workspace_id, contribution_id, connection_id, title, model, status, created_at FROM agent_provider_bindings WHERE workspace_id = ? ORDER BY created_at")
+      .bind(workspaceId).all<{ id: string; workspace_id: string; contribution_id: string; connection_id: string | null; title: string; model: string; status: AgentProviderBinding["status"]; created_at: string }>();
+    return rows.results.map((row) => ({ id: row.id, workspaceId: row.workspace_id, contributionId: row.contribution_id, connectionId: row.connection_id, title: row.title, model: row.model, status: row.status, createdAt: row.created_at }));
   }
 
-  async createProvider(workspaceId: string, contributionId: string, title: string, model: string): Promise<AgentProviderBinding> {
+  async createProvider(workspaceId: string, contributionId: string, connectionId: string, title: string, model: string): Promise<AgentProviderBinding> {
     const id = `${workspaceId}.${crypto.randomUUID()}`;
-    const status = "missing-secret" as const;
-    await this.db.prepare("INSERT INTO agent_provider_bindings (id, workspace_id, contribution_id, title, model, status) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(id, workspaceId, contributionId, title, model, status).run();
-    return { id, workspaceId, contributionId, title, model, status, createdAt: new Date().toISOString() };
+    const status = "unavailable" as const;
+    await this.db.prepare("INSERT INTO agent_provider_bindings (id, workspace_id, contribution_id, connection_id, title, model, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(id, workspaceId, contributionId, connectionId, title, model, status).run();
+    return { id, workspaceId, contributionId, connectionId, title, model, status, createdAt: new Date().toISOString() };
   }
 
   async listMessages(channelId: string): Promise<AgentMessage[]> {
