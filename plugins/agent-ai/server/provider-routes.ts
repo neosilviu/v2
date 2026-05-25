@@ -11,19 +11,28 @@ export function createProviderRoutes() {
     const payload = await response.json() as { providers: ProviderContribution[] };
     return payload.providers.some((provider) => provider.id === providerId);
   }
+  async function callProvider(env: AgentAiEnv, path: string, body?: string) {
+    const response = await env.PROVIDER_RUNTIME.fetch(`https://providers.internal${path}`, {
+      method: "POST",
+      headers: body ? { "content-type": "application/json" } : undefined,
+      body,
+    });
+    const payload = await response.json().catch(() => ({ error: "Provider runtime returned an invalid response" }));
+    return { ok: response.ok, payload };
+  }
   routes.post("/:providerId/detect-models", async (c) => {
     const request = providerConnectionOperationSchema.parse(await c.req.json());
     const providerId = c.req.param("providerId");
     if (!await available(c.env, request.workspaceId, providerId)) return c.json({ error: "Provider not available in workspace" }, 404);
-    return c.env.PROVIDER_RUNTIME.fetch(`https://providers.internal/connections/${encodeURIComponent(request.connectionId)}/detect-models`, { method: "POST" });
+    const result = await callProvider(c.env, `/connections/${encodeURIComponent(request.connectionId)}/detect-models`);
+    return result.ok ? c.json(result.payload) : c.json({ error: "Provider runtime rejected the operation" }, 502);
   });
   routes.post("/:providerId/test", async (c) => {
     const request = providerConnectionTestSchema.parse(await c.req.json());
     const providerId = c.req.param("providerId");
     if (!await available(c.env, request.workspaceId, providerId)) return c.json({ error: "Provider not available in workspace" }, 404);
-    return c.env.PROVIDER_RUNTIME.fetch(`https://providers.internal/connections/${encodeURIComponent(request.connectionId)}/test`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ modelId: request.modelId })
-    });
+    const result = await callProvider(c.env, `/connections/${encodeURIComponent(request.connectionId)}/test`, JSON.stringify({ modelId: request.modelId }));
+    return result.ok ? c.json(result.payload) : c.json({ error: "Provider runtime rejected the operation" }, 502);
   });
   return routes;
 }
