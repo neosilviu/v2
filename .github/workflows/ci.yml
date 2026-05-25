@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 jobs:
-  typecheck:
+  typecheck-and-analysis:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,3 +18,12 @@ jobs:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm typecheck
+      - run: pnpm --filter @v2/web build
+      - run: pnpm build:analyze
+      - name: Upload build analysis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-analysis-report
+          path: reports/
+          if-no-files-found: warn
