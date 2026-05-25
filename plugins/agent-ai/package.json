@@ -4,16 +4,16 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
+    ".": "./manifest.ts",
     "./manifest": "./manifest.ts",
     "./server/repository": "./server/repository.ts",
-    "./server/provider-runtime": "./server/provider-runtime.ts",
     "./server/app": "./server/app.ts",
     "./server/db/schema": "./server/db/schema.ts"
   },
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
   "dependencies": {
     "@v2/agent-contracts": "workspace:*",
+    "@v2/plugin-ai-providers": "workspace:*",
     "@v2/plugin-contracts": "workspace:*",
     "@v2/plugin-sdk": "workspace:*",
     "drizzle-orm": "catalog:",
@@ -21,7 +21,6 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
-    "typescript": "catalog:",
-    "wrangler": "catalog:"
+    "typescript": "catalog:"
   }
 }
