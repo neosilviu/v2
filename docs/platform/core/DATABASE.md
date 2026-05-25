@@ -13,6 +13,7 @@ Core stores only generic platform control-plane data:
 - declared capabilities and per-workspace grants;
 - plugin activation state;
 - generic scoped settings and configurable shell layouts;
+- explicit public delivery publications and access policies;
 - audit events.
 
 Core does not store Auth sessions or feature-domain records such as Agent AI messages, website pages, products or orders. Feature plugins own their own storage and migrations under `plugins/*`.

@@ -1,4 +1,4 @@
-import { pluginManifestSchema, type PluginBundle, type PluginManifest } from "@v2/plugin-contracts";
+import { pluginManifestSchema, type PluginBundle, type PluginManifest, type PublicContributionAccess, type PublicRouteContribution, type PublicSurfaceContribution, type PublicToolContribution } from "@v2/plugin-contracts";
 import type { SettingScope, WorkspaceLayout } from "@v2/rpc-contracts";
 
 export type PluginWorkspaceState = {
@@ -35,6 +35,27 @@ export type SandboxSurfaceAsset = {
   surfaceId: string;
   objectKey: string;
   entry: string;
+};
+
+export type PublicationKind = "route" | "surface" | "tool";
+export type PublicationStatus = "draft" | "published" | "disabled";
+export type PublicContribution = PublicRouteContribution | PublicSurfaceContribution | PublicToolContribution;
+export type WorkspacePublication = {
+  id: string;
+  workspaceId: string;
+  pluginId: string;
+  contributionKind: PublicationKind;
+  contributionId: string;
+  publicPath: string;
+  title: string;
+  status: PublicationStatus;
+  policyId: string | null;
+  access: PublicContributionAccess;
+};
+export type PublicDelivery = {
+  publication: WorkspacePublication;
+  manifest: PluginManifest;
+  contribution: PublicContribution;
 };
 
 export class CoreRepository {
@@ -188,6 +209,66 @@ export class CoreRepository {
         sizeBytes: release.sizeBytes,
         objectKey: release.packageObjectKey,
       },
+    };
+  }
+
+  findPublicContribution(manifest: PluginManifest, kind: PublicationKind, contributionId: string): PublicContribution | undefined {
+    if (kind === "route") return manifest.contributes.publicRoutes.find((item) => item.id === contributionId);
+    if (kind === "surface") return manifest.contributes.publicSurfaces.find((item) => item.id === contributionId);
+    return manifest.contributes.publicTools.find((item) => item.id === contributionId);
+  }
+
+  async publishWorkspaceContribution(input: { workspaceId: string; pluginId: string; contributionKind: PublicationKind; contributionId: string; publicPath?: string; title?: string; access?: PublicContributionAccess }): Promise<WorkspacePublication | undefined> {
+    const manifest = await this.installedById(input.pluginId);
+    if (!manifest) return undefined;
+    const active = await this.activePlugins(input.workspaceId);
+    if (!active.includes(input.pluginId)) return undefined;
+    const contribution = this.findPublicContribution(manifest, input.contributionKind, input.contributionId);
+    if (!contribution) return undefined;
+    const publicPath = input.publicPath ?? contribution.path;
+    const title = input.title ?? contribution.title;
+    const access = input.access ?? contribution.access;
+    const publicationId = `${input.workspaceId}:${input.pluginId}:${input.contributionKind}:${input.contributionId}`;
+    const policyId = `${publicationId}:policy`;
+    await this.db.batch([
+      this.db.prepare(`INSERT INTO public_access_policies (id, workspace_id, name, access, rules_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET name = excluded.name, access = excluded.access, rules_json = excluded.rules_json, updated_at = CURRENT_TIMESTAMP`)
+        .bind(policyId, input.workspaceId, `${title} public access`, access, JSON.stringify({ contributionId: input.contributionId, contributionKind: input.contributionKind })),
+      this.db.prepare(`INSERT INTO workspace_publications
+        (id, workspace_id, plugin_id, contribution_kind, contribution_id, public_path, title, status, policy_id, published_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'published', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+          public_path = excluded.public_path,
+          title = excluded.title,
+          status = 'published',
+          policy_id = excluded.policy_id,
+          published_at = COALESCE(workspace_publications.published_at, CURRENT_TIMESTAMP),
+          updated_at = CURRENT_TIMESTAMP`)
+        .bind(publicationId, input.workspaceId, input.pluginId, input.contributionKind, input.contributionId, publicPath, title, policyId),
+    ]);
+    await this.audit(input.workspaceId, "public.publication.publish", { pluginId: input.pluginId, contributionKind: input.contributionKind, contributionId: input.contributionId, publicPath });
+    return { id: publicationId, workspaceId: input.workspaceId, pluginId: input.pluginId, contributionKind: input.contributionKind, contributionId: input.contributionId, publicPath, title, status: "published", policyId, access };
+  }
+
+  async publicDelivery(workspaceId: string, publicPath: string): Promise<PublicDelivery | undefined> {
+    const row = await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.contribution_id, p.public_path, p.title, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, installed.manifest_json
+      FROM workspace_publications p
+      INNER JOIN workspace_plugins active ON active.workspace_id = p.workspace_id AND active.plugin_id = p.plugin_id AND active.active = 1
+      INNER JOIN installed_plugins installed ON installed.id = p.plugin_id
+      LEFT JOIN public_access_policies policy ON policy.id = p.policy_id
+      WHERE p.workspace_id = ? AND p.public_path = ? AND p.status = 'published'
+      LIMIT 1`)
+      .bind(workspaceId, publicPath)
+      .first<{ id: string; workspace_id: string; plugin_id: string; contribution_kind: PublicationKind; contribution_id: string; public_path: string; title: string; status: PublicationStatus; policy_id: string | null; access: PublicContributionAccess; manifest_json: string }>();
+    if (!row) return undefined;
+    const manifest = pluginManifestSchema.parse(JSON.parse(row.manifest_json));
+    const contribution = this.findPublicContribution(manifest, row.contribution_kind, row.contribution_id);
+    if (!contribution) return undefined;
+    return {
+      publication: { id: row.id, workspaceId: row.workspace_id, pluginId: row.plugin_id, contributionKind: row.contribution_kind, contributionId: row.contribution_id, publicPath: row.public_path, title: row.title, status: row.status, policyId: row.policy_id, access: row.access },
+      manifest,
+      contribution,
     };
   }
 

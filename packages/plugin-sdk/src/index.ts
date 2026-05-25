@@ -3,6 +3,9 @@ import {
   layoutSchema,
   pluginManifestSchema,
   providerSchema,
+  publicRouteContributionSchema,
+  publicSurfaceContributionSchema,
+  publicToolContributionSchema,
   surfaceSchema,
   toolSchema,
   zoneSchema,
@@ -11,6 +14,9 @@ import {
   type PluginManifest,
   type PluginManifestInput,
   type ProviderContribution,
+  type PublicRouteContribution,
+  type PublicSurfaceContribution,
+  type PublicToolContribution,
   type SurfaceContribution,
   type ToolContribution,
   type ZoneContribution,
@@ -23,3 +29,6 @@ export const defineChannel = (channel: unknown): ChannelContribution => channelS
 export const defineSurface = (surface: unknown): SurfaceContribution => surfaceSchema.parse(surface);
 export const defineZone = (zone: unknown): ZoneContribution => zoneSchema.parse(zone);
 export const defineLayout = (layout: unknown): LayoutContribution => layoutSchema.parse(layout);
+export const definePublicRoute = (route: unknown): PublicRouteContribution => publicRouteContributionSchema.parse(route);
+export const definePublicSurface = (surface: unknown): PublicSurfaceContribution => publicSurfaceContributionSchema.parse(surface);
+export const definePublicTool = (tool: unknown): PublicToolContribution => publicToolContributionSchema.parse(tool);
