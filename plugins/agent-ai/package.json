@@ -5,6 +5,9 @@
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "@v2/plugin-sdk": "workspace:*" },
+  "dependencies": {
+    "@v2/plugin-sdk": "workspace:*",
+    "drizzle-orm": "catalog:"
+  },
   "devDependencies": { "typescript": "catalog:" }
 }
