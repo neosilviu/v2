@@ -2,34 +2,25 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeBoundaries, readPackages } from "./build-analysis/boundaries.mjs";
+import { analyzeBundle } from "./build-analysis/bundle.mjs";
+import { formatBytes } from "./build-analysis/common.mjs";
 import { analyzeSource } from "./build-analysis/source.mjs";
-
+import { analyzeWorkers } from "./build-analysis/workers.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const reports = path.join(root, "reports");
 const strict = process.argv.includes("--strict");
 fs.mkdirSync(reports, { recursive: true });
-
-const packages = readPackages(root);
-const source = analyzeSource(root);
-const boundaries = analyzeBoundaries(root, packages);
-const report = {
-  generatedAt: new Date().toISOString(),
-  mode: strict ? "strict" : "report",
-  source,
-  boundaries,
-};
+const packages = readPackages(root), source = analyzeSource(root), boundaries = analyzeBoundaries(root, packages);
+const bundle = analyzeBundle(root), workers = analyzeWorkers(root, packages);
+const report = { generatedAt: new Date().toISOString(), mode: strict ? "strict" : "report", source, boundaries, bundle, workers };
 const historyFile = path.join(reports, "build-history.json");
 let history = [];
-if (fs.existsSync(historyFile)) {
-  try { history = JSON.parse(fs.readFileSync(historyFile, "utf8")); } catch { history = []; }
-}
-history = [{ generatedAt: report.generatedAt, codeLines: source.codeLines, findings: boundaries.findings.length }, ...history].slice(0, 20);
+if (fs.existsSync(historyFile)) { try { history = JSON.parse(fs.readFileSync(historyFile, "utf8")); } catch { history = []; } }
+history = [{ generatedAt: report.generatedAt, codeLines: source.codeLines, findings: boundaries.findings.length, bundleBytes: bundle.totalBytes }, ...history].slice(0, 20);
 fs.writeFileSync(historyFile, JSON.stringify(history, null, 2));
 fs.writeFileSync(path.join(reports, "build-analysis-report.json"), JSON.stringify({ ...report, history }, null, 2));
-
-const findings = boundaries.findings.map((finding) => `- ${finding.message} (${finding.location})`).join("\n") || "- none";
-const areas = Object.entries(source.areas).map(([area, metric]) => `| ${area} | ${metric.codeFiles} | ${metric.codeLines} |`).join("\n");
-const summary = `# v2 build analysis\n\n| Metric | Value |\n| --- | ---: |\n| Code files | ${source.codeFiles} |\n| Code lines | ${source.codeLines} |\n| Workspace packages | ${packages.length} |\n| Internal dependency edges | ${boundaries.edges.length} |\n| Platform/plugin findings | ${boundaries.findings.length} |\n\n## Platform/plugin findings\n\n${findings}\n\n## Source areas\n\n| Area | Code files | Code lines |\n| --- | ---: | ---: |\n${areas}\n`;
+const findings = boundaries.findings.map((item) => `- ${item.message} (${item.location})`).join("\n") || "- none";
+const summary = `# v2 build analysis\n\n| Metric | Value |\n| --- | ---: |\n| Code lines | ${source.codeLines} |\n| Packages | ${packages.length} |\n| Boundary findings | ${boundaries.findings.length} |\n| Web output | ${formatBytes(bundle.totalBytes)} |\n| Web JS gzip | ${formatBytes(bundle.gzipScriptsBytes)} |\n| Web JS brotli | ${formatBytes(bundle.brotliScriptsBytes)} |\n| Deployable apps | ${workers.length} |\n\n## Findings\n${findings}\n`;
 fs.writeFileSync(path.join(reports, "build-analysis-report.md"), summary);
 if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
 console.log(summary);
