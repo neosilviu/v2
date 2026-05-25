@@ -1,4 +1,5 @@
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
+import { passkey } from "@better-auth/passkey";
 import { betterAuth } from "better-auth";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./db/schema";
@@ -21,6 +22,7 @@ export type AuthConfig = {
   trustedOrigins: string[];
   production: boolean;
   github?: { clientId: string; clientSecret: string };
+  passkey: { rpID: string; rpName: string; origin: string };
 };
 
 export type AuthConfigResult = { ok: true; config: AuthConfig } | { ok: false; message: string };
@@ -31,6 +33,7 @@ function parseUrl(value: string | undefined, name: string): URL {
 }
 function isLocalOrigin(url: URL) { return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname.endsWith(".local"); }
 function parseOrigins(value?: string) { return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean); }
+function rpIdFor(url: URL) { return url.hostname === "127.0.0.1" ? "localhost" : url.hostname; }
 
 export function parseAuthConfig(env: AuthEnv): AuthConfigResult {
   try {
@@ -43,7 +46,7 @@ export function parseAuthConfig(env: AuthEnv): AuthConfigResult {
     if (production && (base.protocol !== "https:" || isLocalOrigin(base))) throw new Error("Production authentication URL must be HTTPS and non-local");
     if (production && trustedOrigins.some((origin) => { const url = new URL(origin); return url.protocol !== "https:" || isLocalOrigin(url); })) throw new Error("Production trusted origins must be HTTPS and non-local");
     const github = env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET ? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } : undefined;
-    return { ok: true, config: { db: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}) } };
+    return { ok: true, config: { db: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin } } };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Invalid authentication configuration" };
   }
@@ -57,6 +60,7 @@ export function createAuth(config: AuthConfig) {
     trustedOrigins: config.trustedOrigins,
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
     emailAndPassword: { enabled: true },
+    plugins: [passkey({ rpID: config.passkey.rpID, rpName: config.passkey.rpName, origin: config.passkey.origin, registration: { requireSession: true } })],
     ...(config.github ? { socialProviders: { github: config.github } } : {}),
     advanced: { cookiePrefix: "v2-auth", useSecureCookies: config.production },
   });

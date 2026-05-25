@@ -5,6 +5,7 @@ packages:
 
 catalog:
   '@better-auth/drizzle-adapter': ^1.6.11
+  '@better-auth/passkey': ^1.6.11
   '@cloudflare/workers-types': ^4.20260525.1
   '@types/react': ^19.2.15
   '@types/react-dom': ^19.2.3
