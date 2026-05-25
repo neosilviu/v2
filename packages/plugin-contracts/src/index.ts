@@ -28,8 +28,14 @@ export const publicContributionAccessSchema = z.enum(["anonymous", "authenticate
 export const publicRouteContributionSchema = z.object({ id: z.string().min(1), title: z.string(), path: z.string().regex(/^\/[a-zA-Z0-9/_-]*$/), surfaceId: z.string().min(1).optional(), access: publicContributionAccessSchema.default("anonymous") });
 export const publicSurfaceContributionSchema = z.object({ id: z.string().min(1), title: z.string(), surfaceId: z.string().min(1), path: z.string().regex(/^\/[a-zA-Z0-9/_-]*$/), access: publicContributionAccessSchema.default("anonymous") });
 export const publicToolContributionSchema = z.object({ id: z.string().min(1), title: z.string(), toolId: z.string().min(1), path: z.string().regex(/^\/[a-zA-Z0-9/_-]*$/), access: publicContributionAccessSchema.default("authenticated") });
+export const declarativeUiBlockSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string(), tone: z.enum(["default", "muted", "accent"]).default("default") }),
+  z.object({ type: z.literal("metric"), label: z.string(), value: z.string(), detail: z.string().optional() }),
+  z.object({ type: z.literal("action"), label: z.string(), commandId: z.string().min(1), variant: z.enum(["default", "primary"]).default("default") }),
+]);
+export const declarativeUiSchema = z.object({ body: z.array(declarativeUiBlockSchema).default([]) });
 export const surfaceRendererSchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("declarative") }),
+  z.object({ mode: z.literal("declarative"), schema: declarativeUiSchema.optional() }),
   z.object({ mode: z.literal("sandbox-frame"), entry: z.string().regex(/^ui\/[a-zA-Z0-9/_-]+\.html$/) }),
 ]);
 export const surfaceSchema = z.object({ id: z.string().min(1), title: z.string(), zone: z.string(), kind: z.enum(["panel", "settings", "widget", "page"]).default("panel"), renderer: surfaceRendererSchema.default({ mode: "declarative" }) });
@@ -65,3 +71,5 @@ export type PublicContributionAccess = z.output<typeof publicContributionAccessS
 export type PublicRouteContribution = z.output<typeof publicRouteContributionSchema>;
 export type PublicSurfaceContribution = z.output<typeof publicSurfaceContributionSchema>;
 export type PublicToolContribution = z.output<typeof publicToolContributionSchema>;
+export type DeclarativeUiBlock = z.output<typeof declarativeUiBlockSchema>;
+export type DeclarativeUi = z.output<typeof declarativeUiSchema>;

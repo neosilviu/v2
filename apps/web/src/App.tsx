@@ -11,6 +11,7 @@ import { CommandPalette } from "./platform/CommandPalette";
 import { PluginManagerPanel } from "./platform/PluginManagerPanel";
 import { RuntimeShellEditor } from "./platform/RuntimeShellEditor";
 import { SettingsRenderer } from "./platform/SettingsRenderer";
+import { DeclarativeSurface } from "./platform/DeclarativeSurface";
 import { hasTrustedNativeSurface, TrustedNativeSurface } from "./platform/TrustedNativeSurface";
 import { ToolApprovalDialog } from "./platform/ToolApprovalDialog";
 
@@ -18,6 +19,7 @@ type Page = "overview" | "plugins" | "approvals" | "settings" | `plugin:${string
 type PendingApproval = { tool: ToolContribution; approvalId: string };
 
 function RuntimeSurface({ surface }: { surface: SurfaceContribution }) {
+  if (surface.renderer.mode === "declarative" && surface.renderer.schema) return <DeclarativeSurface surface={surface} schema={surface.renderer.schema} />;
   if (hasTrustedNativeSurface(surface.id)) return <TrustedNativeSurface surface={surface} />;
   if (surface.renderer.mode === "sandbox-frame") return <SurfaceCard className="runtime-frame-surface">
     <div className="surface-header"><div><small>external isolated extension</small><h2>{surface.title}</h2></div><Badge>{surface.kind}</Badge></div>
