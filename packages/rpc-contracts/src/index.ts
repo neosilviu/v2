@@ -17,7 +17,44 @@ export const placementStateSchema = z.object({ surfaceId: z.string(), zoneId: z.
 export const workspaceLayoutSchema = z.object({ zones: z.array(zoneStateSchema), placements: z.array(placementStateSchema) });
 export const layoutWriteRequestSchema = z.object({ workspaceId: workspaceIdSchema, layout: workspaceLayoutSchema });
 
+export const appErrorCodeSchema = z.enum([
+  "validation_failed",
+  "not_authenticated",
+  "not_authorized",
+  "not_found",
+  "conflict",
+  "approval_required",
+  "dependency_unavailable",
+  "rate_limited",
+  "internal_error",
+]);
+export const appErrorSchema = z.object({
+  code: appErrorCodeSchema,
+  message: z.string().min(1),
+  requestId: z.string().min(1).optional(),
+  fieldErrors: z.record(z.string(), z.array(z.string())).optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
+  retryable: z.boolean().default(false),
+});
+export const errorResponseSchema = z.object({ error: appErrorSchema });
+export const notificationLevelSchema = z.enum(["info", "success", "warning", "error"]);
+export const notificationSchema = z.object({
+  id: z.string().min(1),
+  level: notificationLevelSchema,
+  title: z.string().min(1),
+  message: z.string().optional(),
+  source: z.string().min(1).default("platform"),
+  dismissible: z.boolean().default(true),
+  createdAt: z.string(),
+  action: z.object({ label: z.string().min(1), commandId: z.string().min(1) }).optional(),
+});
+
 export type ToolExecutionRequest = z.output<typeof toolExecutionRequestSchema>;
 export type ToolExecutionResult = z.output<typeof toolExecutionResultSchema>;
 export type SettingScope = z.output<typeof settingScopeSchema>;
 export type WorkspaceLayout = z.output<typeof workspaceLayoutSchema>;
+export type AppErrorCode = z.output<typeof appErrorCodeSchema>;
+export type AppError = z.output<typeof appErrorSchema>;
+export type ErrorResponse = z.output<typeof errorResponseSchema>;
+export type Notification = z.output<typeof notificationSchema>;
+export type NotificationLevel = z.output<typeof notificationLevelSchema>;
