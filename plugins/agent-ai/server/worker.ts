@@ -1,0 +1,20 @@
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { createChannelRequestSchema, createProviderBindingRequestSchema, createRunRequestSchema, sendMessageRequestSchema, setChannelProviderRequestSchema } from "@v2/agent-contracts";
+import type { AgentAiEnv } from "./env";
+import { createProviderRoutes } from "./provider-routes";
+import { AgentRepository } from "./repository";
+
+const app = new Hono<{ Bindings: AgentAiEnv }>();
+app.use("*", cors({ origin: "*" }));
+app.route("/provider-runtime", createProviderRoutes());
+app.get("/health", (c) => c.json({ ok: true, service: "agent-ai" }));
+app.get("/workspaces/:workspaceId/channels", async (c) => c.json({ channels: await new AgentRepository(c.env.AGENT_DB).listChannels(c.req.param("workspaceId")) }));
+app.post("/channels", async (c) => { const input = createChannelRequestSchema.parse(await c.req.json()); return c.json({ channel: await new AgentRepository(c.env.AGENT_DB).createChannel(input.workspaceId, input.title, input.providerId ?? null) }, 201); });
+app.put("/channels/:channelId/provider", async (c) => { const input = setChannelProviderRequestSchema.parse(await c.req.json()); await new AgentRepository(c.env.AGENT_DB).setChannelProvider(c.req.param("channelId"), input.providerId); return c.json({ saved: true }); });
+app.get("/workspaces/:workspaceId/providers", async (c) => c.json({ providers: await new AgentRepository(c.env.AGENT_DB).listProviders(c.req.param("workspaceId")) }));
+app.post("/providers", async (c) => { const input = createProviderBindingRequestSchema.parse(await c.req.json()); return c.json({ provider: await new AgentRepository(c.env.AGENT_DB).createProvider(input.workspaceId, input.contributionId, input.title, input.model) }, 201); });
+app.get("/channels/:channelId/messages", async (c) => c.json({ messages: await new AgentRepository(c.env.AGENT_DB).listMessages(c.req.param("channelId")) }));
+app.post("/messages", async (c) => { const input = sendMessageRequestSchema.parse(await c.req.json()); return c.json({ message: await new AgentRepository(c.env.AGENT_DB).addMessage(input.channelId, "user", input.content), status: "stored" }, 201); });
+app.post("/runs", async (c) => { const input = createRunRequestSchema.parse(await c.req.json()); const channel = (await new AgentRepository(c.env.AGENT_DB).listChannels(input.workspaceId)).find((item) => item.id === input.channelId); if (!channel) return c.json({ error: "Channel not found" }, 404); return c.json({ run: await new AgentRepository(c.env.AGENT_DB).createRun(channel.id, channel.providerId) }, 201); });
+export default app;
