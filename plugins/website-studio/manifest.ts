@@ -13,7 +13,17 @@ export const websiteStudioManifest = definePlugin({
     { id: "website.context.share", description: "Share approved page context with Agent AI", risk: "safe" }
   ],
   contributes: {
-    surfaces: [{ id: "website-studio.editor", title: "Website Studio", zone: "workspace.main", kind: "page" }],
+    surfaces: [{ id: "website-studio.editor", title: "Website Studio", zone: "workspace.main", kind: "page", renderer: { mode: "declarative", schema: {
+      id: "website-studio.page-scaffold",
+      title: "Website Page",
+      templateId: "public.contentPage",
+      access: "private",
+      slots: [
+        { id: "website-studio.hero", slot: "hero", blocks: [{ type: "heading", text: "Website Studio", level: "h1" }, { type: "text", text: "Public page scaffolds are declared by plugins and published explicitly per workspace.", tone: "muted" }] },
+        { id: "website-studio.body", slot: "body", blocks: [{ type: "text", text: "This content page remains private until a workspace publication activates a public route.", tone: "default" }] }
+      ],
+      actions: [{ id: "website-studio.publish", title: "Publish page", commandId: "website.publishPage", variant: "primary", access: "permission-gated" }]
+    } } }],
     tools: [
       { id: "website.listPages", title: "List pages", permissions: ["website.pages.read"], risk: "safe", exposure: ["agent-ai", "mcp", "command"] },
       { id: "website.updateSection", title: "Update section", permissions: ["website.pages.write"], risk: "reversible", exposure: ["agent-ai", "mcp", "command"] },

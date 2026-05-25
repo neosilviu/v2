@@ -12,7 +12,24 @@ export const aiProvidersPlugin = definePlugin({
       { id: "groq", title: "Groq", adapter: "groq", description: "Low latency OpenAI-compatible inference.", capabilities: ["chat", "fast"], models: [{ id: "llama-3.1-8b-instant", title: "Llama 3.1 8B Instant", capabilities: ["chat", "fast"] }], secretFields: [{ id: "api_key", title: "API key" }] },
       { id: "github", title: "GitHub Models", adapter: "github-models", description: "GitHub hosted model catalog.", capabilities: ["chat", "tool-use"], models: [{ id: "gpt-4o-mini", title: "GPT-4o mini", capabilities: ["chat"] }], secretFields: [{ id: "token", title: "Token" }] }
     ],
-    surfaces: [{ id: "ai-providers.settings", title: "AI Providers", zone: "settings.integrations", kind: "settings" }],
+    surfaces: [{ id: "ai-providers.settings", title: "AI Providers", zone: "settings.integrations", kind: "settings", renderer: { mode: "declarative", schema: {
+      id: "ai-providers.settings",
+      title: "AI Providers",
+      templateId: "admin.table",
+      access: "private",
+      columns: [
+        { id: "provider", label: "Provider", field: "provider" },
+        { id: "adapter", label: "Adapter", field: "adapter" },
+        { id: "status", label: "Status", field: "status", type: "badge" }
+      ],
+      data: { rows: [
+        { provider: "Cloudflare Workers AI", adapter: "cloudflare-workers-ai", status: "enabled" },
+        { provider: "OpenAI", adapter: "openai", status: "server-configured" },
+        { provider: "Gemini", adapter: "gemini", status: "server-configured" }
+      ] },
+      actions: [{ id: "ai-providers.detect", title: "Detect models", commandId: "providers.detectModels", variant: "primary", access: "permission-gated" }],
+      slots: [{ id: "ai-providers.settings.header", slot: "header", blocks: [{ type: "text", text: "Provider metadata is declarative. Secrets stay server-side.", tone: "muted" }] }]
+    } } }],
     tools: [
       { id: "providers.detectModels", title: "Detect provider models", permissions: ["providers.manage"], risk: "sensitive", exposure: ["agent-ai", "mcp", "command"] },
       { id: "providers.testConnection", title: "Test AI provider", permissions: ["providers.manage"], risk: "sensitive", exposure: ["agent-ai", "mcp", "command"] }

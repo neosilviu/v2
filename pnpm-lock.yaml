@@ -271,6 +271,9 @@ importers:
 
   packages/plugin-contracts:
     dependencies:
+      '@v2/ui-schema':
+        specifier: workspace:*
+        version: link:../ui-schema
       zod:
         specifier: 'catalog:'
         version: 4.4.3

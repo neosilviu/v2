@@ -5,6 +5,6 @@
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "zod": "catalog:" },
+  "dependencies": { "@v2/ui-schema": "workspace:*", "zod": "catalog:" },
   "devDependencies": { "typescript": "catalog:" }
 }

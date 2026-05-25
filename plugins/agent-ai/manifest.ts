@@ -14,7 +14,15 @@ export const agentAiManifest = definePlugin({
   ],
   contributes: {
     channels: [{ id: "general", title: "General", tools: ["runtime.*"], providers: [] }],
-    surfaces: [{ id: "agent-ai.assistant-panel", title: "Assistant", zone: "assistant.right", kind: "panel" }],
+    surfaces: [{ id: "agent-ai.assistant-panel", title: "Assistant", zone: "assistant.right", kind: "panel", renderer: { mode: "declarative", schema: {
+      id: "agent-ai.chat",
+      title: "Assistant",
+      templateId: "admin.chat",
+      access: "private",
+      data: { rows: [{ role: "system", title: "Runtime assistant", content: "Agent AI chat is exposed through a generic admin.chat template. Provider execution and tool approval stay server-side." }] },
+      actions: [{ id: "agent-ai.chat.send", title: "Send message", commandId: "agent.sendMessage", variant: "primary" }],
+      slots: [{ id: "agent-ai.chat.header", slot: "header", blocks: [{ type: "text", text: "Workspace assistant runtime", tone: "accent" }] }]
+    } } }],
     tools: [
       { id: "agent.sendMessage", title: "Send message", risk: "safe", exposure: ["agent-ai", "mcp"] },
       { id: "agent.executeTool", title: "Execute approved tool", risk: "sensitive", exposure: ["agent-ai", "mcp"] },

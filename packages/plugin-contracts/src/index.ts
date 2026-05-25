@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { declarativePageContributionSchema } from "@v2/ui-schema";
 
 export const riskSchema = z.enum(["safe", "reversible", "sensitive", "dangerous"]);
 export const exposureSchema = z.enum(["agent-ai", "mcp", "command"]);
@@ -34,8 +35,9 @@ export const declarativeUiBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("action"), label: z.string(), commandId: z.string().min(1), variant: z.enum(["default", "primary"]).default("default") }),
 ]);
 export const declarativeUiSchema = z.object({ body: z.array(declarativeUiBlockSchema).default([]) });
+export const runtimeDeclarativeRendererSchema = z.union([declarativeUiSchema, declarativePageContributionSchema]);
 export const surfaceRendererSchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("declarative"), schema: declarativeUiSchema.optional() }),
+  z.object({ mode: z.literal("declarative"), schema: runtimeDeclarativeRendererSchema.optional() }),
   z.object({ mode: z.literal("sandbox-frame"), entry: z.string().regex(/^ui\/[a-zA-Z0-9/_-]+\.html$/) }),
 ]);
 export const surfaceSchema = z.object({ id: z.string().min(1), title: z.string(), zone: z.string(), kind: z.enum(["panel", "settings", "widget", "page"]).default("panel"), renderer: surfaceRendererSchema.default({ mode: "declarative" }) });
@@ -73,3 +75,4 @@ export type PublicSurfaceContribution = z.output<typeof publicSurfaceContributio
 export type PublicToolContribution = z.output<typeof publicToolContributionSchema>;
 export type DeclarativeUiBlock = z.output<typeof declarativeUiBlockSchema>;
 export type DeclarativeUi = z.output<typeof declarativeUiSchema>;
+export type RuntimeDeclarativeRenderer = z.output<typeof runtimeDeclarativeRendererSchema>;
