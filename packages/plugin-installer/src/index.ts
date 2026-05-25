@@ -27,3 +27,9 @@ export async function unpackPluginZip(bytes: ArrayBuffer, objectKey: string): Pr
   const descriptor = pluginPackageDescriptorSchema.parse(JSON.parse(strFromU8(definition)));
   return assessPluginBundle({ ...descriptor, package: { format: "zip", sha256: await sha256Hex(bytes), sizeBytes: bytes.byteLength, objectKey } });
 }
+
+export function extractDeclaredHtmlAsset(bytes: ArrayBuffer, entry: string): string | undefined {
+  if (!/^ui\/[a-zA-Z0-9/_-]+\.html$/.test(entry)) return undefined;
+  const asset = unzipSync(new Uint8Array(bytes))[entry];
+  return asset ? strFromU8(asset) : undefined;
+}
