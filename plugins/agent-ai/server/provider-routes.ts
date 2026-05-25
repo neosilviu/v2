@@ -12,11 +12,14 @@ export function createProviderRoutes() {
     return payload.providers.some((provider) => provider.id === providerId);
   }
   async function callProvider(env: AgentAiEnv, path: string, body?: string) {
-    const response = await env.PROVIDER_RUNTIME.fetch(`https://providers.internal${path}`, {
-      method: "POST",
-      headers: body ? { "content-type": "application/json" } : undefined,
-      body,
-    });
+    const url = `https://providers.internal${path}`;
+    const response = body
+      ? await env.PROVIDER_RUNTIME.fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        })
+      : await env.PROVIDER_RUNTIME.fetch(url, { method: "POST" });
     const payload = await response.json().catch(() => ({ error: "Provider runtime returned an invalid response" }));
     return { ok: response.ok, payload };
   }
