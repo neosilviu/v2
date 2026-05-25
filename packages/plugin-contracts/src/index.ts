@@ -58,3 +58,4 @@ export type ChannelContribution = z.output<typeof channelSchema>;
 export type SurfaceContribution = z.output<typeof surfaceSchema>;
 export type ZoneContribution = z.output<typeof zoneSchema>;
 export type LayoutContribution = z.output<typeof layoutSchema>;
+export type SettingContribution = z.output<typeof settingSchema>;
