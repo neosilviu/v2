@@ -16,6 +16,10 @@ Runtime-first is a hard platform rule:
 - Trusted React UI discovered at build time is only a deployment optimization for included first-party plugins, not the runtime Marketplace standard.
 - `sandbox-frame` is reserved for external plugins that ship arbitrary unknown UI and therefore need browser isolation.
 - Dynamic plugin Worker logic must use a separate execution model compatible with Cloudflare Workers for Platforms / Dispatch Namespace. Hardcoded service bindings remain appropriate only for services known at deploy time, such as Core, Auth and official deployed services.
+- Auth Worker is a privileged platform service, not a normal Marketplace plugin. Login, session, OAuth and passkey handling are Auth-owned; ordinary plugins cannot inject executable code into them.
+- Login UI is public but runtime-driven from Auth DB methods and declarative UI contributions. Public login config may expose enabled method labels, public provider IDs, order and safe renderer JSON only.
+- Auth method configuration is admin/RBAC protected and audit-bound. Provider secrets and configuration references stay server-side and never appear in manifests, browser payloads or Core generic metadata.
+- Future auth extensions require privileged capabilities such as `auth.ui.contribute`, `auth.method.social.configure`, `auth.method.passkey.configure` and `auth.policy.admin`, with explicit approval.
 
 ## Faza 0 - Immediate Correction Gate
 
@@ -63,6 +67,8 @@ Required permissions:
 
 `PLATFORM_ADMIN_EMAILS` remains only a temporary bootstrap and recovery mechanism. It must not be the normal authorization model after RBAC lands.
 
+Auth configuration uses the same bootstrap rule until RBAC is available: temporary platform admins may publish login methods and login UI contributions, but this is recovery scaffolding rather than normal authorization.
+
 ## Faza 2 - Persistent Approval Engine
 
 - Define approval policies by risk, capability, plugin and actor role.
@@ -95,6 +101,8 @@ Official plugin lists in local scripts are development seed helpers only. Runtim
 - Keep the visual identity consistent for all declarative plugin UI.
 - Allow first-party trusted React surfaces only as an optimization when the plugin is included in the deployment.
 - Keep sandbox iframe rendering only for arbitrary external UI.
+
+Login contributions use the same declarative renderer boundary. They may decorate approved login slots, but they must not replace Auth Worker forms with plugin-owned JavaScript or iframes.
 
 ## Faza 4 - Typed iframe bridge
 
