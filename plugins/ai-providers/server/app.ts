@@ -11,7 +11,7 @@ const catalog = new Map(aiProvidersPlugin.contributes.providers.map((provider) =
 const providers = [...catalog.values()].map((provider) => ({ id: provider.id, title: provider.title }));
 const unavailable = (message: string) => errorResponse(failure("dependency_unavailable", message));
 const internal = (request: Request) => new URL(request.url).hostname === "providers.internal" && !request.headers.has("origin");
-app.use("/connections/*", async (c, next) => internal(c.req.raw) ? next() : c.json(errorResponse(failure("permission_denied", "Provider operations require an internal runtime request.")), 403));
+app.use("/connections/*", async (c, next) => internal(c.req.raw) ? next() : c.json(errorResponse(failure("not_authorized", "Provider operations require an internal runtime request.")), 403));
 app.get("/health", (c) => c.json({ ok: true, service: "ai-providers", storageConfigured: Boolean(c.env.PROVIDERS_DB) }));
 app.get("/providers", (c) => c.json({ providers }));
 async function resolve(c: { env: ProviderServiceEnv; req: { param(name: string): string } }) {
