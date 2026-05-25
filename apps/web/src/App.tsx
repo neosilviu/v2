@@ -4,7 +4,7 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { decideToolApproval, executeTool, loadActivePlugins, loadInstalledPlugins, loadLayout, loadRuntimeTools, runtimeSurfaceUrl, saveLayout } from "./api";
+import { decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadInstalledPlugins, loadLayout, loadRuntimeTools, runtimeSurfaceUrl, saveLayout } from "./api";
 import { composeShell, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { CommandPalette } from "./platform/CommandPalette";
@@ -67,6 +67,14 @@ function PluginPage({ plugin, surfaces }: { plugin: PluginManifest; surfaces: Su
   </div>;
 }
 
+function AuthRequiredPage() {
+  return <SurfaceCard className="auth-required">
+    <small>core access</small>
+    <h2>Authentication required</h2>
+    <p>Workspace runtime data is protected. Sign in through the Auth service to load installed plugins, active surfaces, tools, settings and layout.</p>
+  </SurfaceCard>;
+}
+
 export function App() {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [activePluginIds, setActivePluginIds] = useState<Set<string>>(new Set());
@@ -74,6 +82,7 @@ export function App() {
   const [shell, setShell] = useState<ShellState>(emptyShell);
   const [activePage, setActivePage] = useState<Page>("overview");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [notice, setNotice] = useState("runtime ready · no feature plugin required");
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -81,14 +90,31 @@ export function App() {
   const dismiss = (id: string) => setNotifications((current) => current.filter((item) => item.id !== id));
 
   useEffect(() => {
-    void Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadRuntimeTools(), loadLayout()]).then(([installed, activeIds, runtimeTools, layout]) => {
+    void loadCoreSession().then((session) => {
+      if (!session.authenticated) {
+        setAuthRequired(true);
+        setNotice("auth required · workspace runtime data locked");
+        emit(notification("warning", "Authentication required", "Sign in to load workspace runtime data."));
+        return null;
+      }
+      setAuthRequired(false);
+      return Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadRuntimeTools(), loadLayout()]);
+    }).then((result) => {
+      if (!result) return;
+      const [installed, activeIds, runtimeTools, layout] = result;
       const active = new Set(activeIds);
       const composed = composeShell(installed.filter((plugin) => active.has(plugin.id)));
       setPlugins(installed);
       setActivePluginIds(active);
       setTools(runtimeTools);
       setShell(layout ? { ...composed, zones: layout.zones, placements: layout.placements } : composed);
-    }).catch(() => {
+    }).catch((error) => {
+      if (isCoreAuthRequiredError(error)) {
+        setAuthRequired(true);
+        setNotice("auth required · workspace runtime data locked");
+        emit(notification("warning", "Authentication required", "Sign in to load workspace runtime data."));
+        return;
+      }
       setNotice("core offline · generic empty shell mode");
       emit(notification("warning", "Core unavailable", "The platform shell is running without runtime data."));
     });
@@ -103,8 +129,8 @@ export function App() {
   const pluginId = activePage.startsWith("plugin:") ? activePage.slice(7) : null;
   const selectedPlugin = activePlugins.find((plugin) => plugin.id === pluginId) ?? null;
   const selectedPluginSurfaces = selectedPlugin ? shell.surfaces.filter((surface) => surface.id.startsWith(`${selectedPlugin.id}.`)) : [];
-  const title = selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : "Dashboard");
-  const subtitle = selectedPlugin ? "Native plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Platform layout, appearance and integration settings" : "Runtime overview and active workspace";
+  const title = authRequired ? "Authentication Required" : selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : "Dashboard");
+  const subtitle = authRequired ? "Sign in before loading workspace runtime data" : selectedPlugin ? "Native plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Platform layout, appearance and integration settings" : "Runtime overview and active workspace";
 
   const runTool = async (tool: ToolContribution, approvalId?: string) => {
     setPaletteOpen(false);
@@ -182,11 +208,12 @@ export function App() {
           <div><h1>{title}</h1><p>{subtitle}</p></div>
           <div className="header-actions"><Badge>workspace/default</Badge><Button onClick={persistLayout}>Save layout</Button></div>
         </div>
-        {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} onOpenPlugins={() => setActivePage("plugins")} /> : null}
-        {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} onChanged={() => void refreshPlugins()} /></div> : null}
-        {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
-        {activePage === "settings" ? <div className="cards"><RuntimeShellEditor state={shell} onChange={setShell} /><SettingsRenderer sections={settings} />{appearanceSurfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />)}{integrationSurfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />)}</div> : null}
-        {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
+        {authRequired ? <AuthRequiredPage /> : null}
+        {!authRequired && activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} onOpenPlugins={() => setActivePage("plugins")} /> : null}
+        {!authRequired && activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} onChanged={() => void refreshPlugins()} /></div> : null}
+        {!authRequired && activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
+        {!authRequired && activePage === "settings" ? <div className="cards"><RuntimeShellEditor state={shell} onChange={setShell} /><SettingsRenderer sections={settings} />{appearanceSurfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />)}{integrationSurfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />)}</div> : null}
+        {!authRequired && selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
       </main>
       <aside className="assistant">{assistant.length ? assistant.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <div className="message">No assistant plugin surface installed.</div>}</aside>
       <footer className="statusbar"><span>{notice}</span><span>{activePluginIds.size}/{plugins.length} plugins active</span><span>Core workspace/default</span></footer>

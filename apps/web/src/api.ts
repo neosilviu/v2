@@ -3,7 +3,16 @@ import type { ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc
 import type { ShellState } from "@v2/ui-runtime";
 const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 const workspaceId = "default";
-async function json<T>(path: string, init?: RequestInit): Promise<T> { const response = await fetch(`${coreUrl}${path}`, { credentials: "include", headers: { "content-type": "application/json" }, ...init }); if (!response.ok) throw new Error(`Core request failed: ${response.status}`); return response.json() as Promise<T>; }
+export class CoreAuthRequiredError extends Error {
+  constructor() {
+    super("Core authentication is required.");
+    this.name = "CoreAuthRequiredError";
+  }
+}
+export function isCoreAuthRequiredError(error: unknown): error is CoreAuthRequiredError {
+  return error instanceof CoreAuthRequiredError;
+}
+async function json<T>(path: string, init?: RequestInit): Promise<T> { const response = await fetch(`${coreUrl}${path}`, { credentials: "include", headers: { "content-type": "application/json" }, ...init }); if (response.status === 401) throw new CoreAuthRequiredError(); if (!response.ok) throw new Error(`Core request failed: ${response.status}`); return response.json() as Promise<T>; }
 export type CoreSession = { authenticated: boolean; isAdmin: boolean; user: { id: string; email: string; name: string | null } | null };
 export type MarketplacePlugin = {
   manifest: PluginManifest;
