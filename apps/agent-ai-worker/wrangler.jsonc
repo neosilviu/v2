@@ -1,0 +1,6 @@
+{
+  "name": "v2-agent-ai-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-25",
+  "d1_databases": [{ "binding": "AGENT_DB", "database_name": "v2-agent-ai", "database_id": "REPLACE_WITH_AGENT_D1_ID" }]
+}
