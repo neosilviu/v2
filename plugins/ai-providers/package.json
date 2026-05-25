@@ -6,18 +6,16 @@
   "exports": {
     ".": "./src/index.ts",
     "./server/app": "./server/app.ts",
-    "./server/adapters/runtime": "./server/adapters/runtime.ts"
+    "./server/adapters/runtime": "./server/adapters/runtime.ts",
+    "./server/db/schema": "./server/db/schema.ts"
   },
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev", "build": "tsc --noEmit -p tsconfig.json" },
   "dependencies": {
     "@v2/feedback-runtime": "workspace:*",
     "@v2/plugin-contracts": "workspace:*",
     "@v2/plugin-sdk": "workspace:*",
+    "drizzle-orm": "catalog:",
     "hono": "catalog:"
   },
-  "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
-    "typescript": "catalog:",
-    "wrangler": "catalog:"
-  }
+  "devDependencies": { "@cloudflare/workers-types": "catalog:", "typescript": "catalog:", "wrangler": "catalog:" }
 }

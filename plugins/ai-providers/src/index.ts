@@ -1,11 +1,8 @@
 import { definePlugin } from "@v2/plugin-sdk";
 
 export const aiProvidersPlugin = definePlugin({
-  id: "ai-providers",
-  name: "AI Providers",
-  version: "0.1.0",
-  builtIn: true,
-  data: { mode: "namespaced" },
+  id: "ai-providers", name: "AI Providers", version: "0.1.0", builtIn: true,
+  data: { mode: "dedicated", resources: ["d1"] },
   capabilities: [{ id: "providers.manage", description: "Discover models and test AI provider connections", risk: "sensitive" }],
   contributes: {
     providers: [
