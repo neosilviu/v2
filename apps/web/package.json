@@ -1,19 +1,6 @@
 {
-  "name": "@v2/web",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
+  "name": "@v2/web", "version": "0.0.0", "private": true, "type": "module",
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "vite", "build": "vite build" },
-  "dependencies": {
-    "@v2/agent-contracts": "workspace:*",
-    "@v2/plugin-agent-ai": "workspace:*",
-    "@v2/plugin-contracts": "workspace:*",
-    "@v2/plugin-theme-studio": "workspace:*",
-    "@v2/rpc-contracts": "workspace:*",
-    "@v2/ui-kit": "workspace:*",
-    "@v2/ui-runtime": "workspace:*",
-    "react": "catalog:",
-    "react-dom": "catalog:"
-  },
+  "dependencies": { "@v2/agent-contracts": "workspace:*", "@v2/plugin-ai-providers": "workspace:*", "@v2/plugin-agent-ai": "workspace:*", "@v2/plugin-contracts": "workspace:*", "@v2/plugin-theme-studio": "workspace:*", "@v2/rpc-contracts": "workspace:*", "@v2/ui-kit": "workspace:*", "@v2/ui-runtime": "workspace:*", "react": "catalog:", "react-dom": "catalog:" },
   "devDependencies": { "@types/react": "catalog:", "@types/react-dom": "catalog:", "@vitejs/plugin-react": "catalog:", "typescript": "catalog:", "vite": "catalog:" }
 }

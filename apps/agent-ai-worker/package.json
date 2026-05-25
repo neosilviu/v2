@@ -1,9 +1,6 @@
 {
-  "name": "@v2/agent-ai-worker",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
+  "name": "@v2/agent-ai-worker", "version": "0.0.0", "private": true, "type": "module",
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev", "build": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "@v2/agent-contracts": "workspace:*", "hono": "catalog:" },
+  "dependencies": { "@v2/agent-contracts": "workspace:*", "@v2/plugin-contracts": "workspace:*", "hono": "catalog:" },
   "devDependencies": { "@cloudflare/workers-types": "catalog:", "typescript": "catalog:", "wrangler": "catalog:" }
 }

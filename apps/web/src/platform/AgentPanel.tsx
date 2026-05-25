@@ -1,48 +1,17 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { AgentChannel, AgentMessage, AgentProviderBinding } from "@v2/agent-contracts";
-import type { ProviderContribution } from "@v2/plugin-contracts";
+import type { ProviderContribution, ProviderModel } from "@v2/plugin-contracts";
 import { Badge, Button } from "@v2/ui-kit";
-import { bindProvider, createRun, loadChannels, loadMessages, loadProviderBindings, loadRuntimeProviders, sendMessage, setChannelProvider } from "../api";
-
+import { bindProvider, createRun, detectModels, loadChannels, loadMessages, loadProviderBindings, loadRuntimeProviders, sendMessage, setChannelProvider, testProvider } from "../api";
 export function AgentPanel({ title }: { title: string }) {
-  const [channels, setChannels] = useState<AgentChannel[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<AgentMessage[]>([]);
-  const [available, setAvailable] = useState<ProviderContribution[]>([]);
-  const [bindings, setBindings] = useState<AgentProviderBinding[]>([]);
-  const [text, setText] = useState("");
-  const activeChannel = channels.find((channel) => channel.id === activeId);
-  useEffect(() => { void Promise.all([loadChannels(), loadRuntimeProviders(), loadProviderBindings()]).then(([items, providerContributions, providerBindings]) => { setChannels(items); setActiveId(items[0]?.id ?? null); setAvailable(providerContributions); setBindings(providerBindings); }).catch(() => undefined); }, []);
+  const [channels, setChannels] = useState<AgentChannel[]>([]); const [activeId, setActiveId] = useState<string | null>(null); const [messages, setMessages] = useState<AgentMessage[]>([]); const [available, setAvailable] = useState<ProviderContribution[]>([]); const [bindings, setBindings] = useState<AgentProviderBinding[]>([]); const [selectedProvider, setSelectedProvider] = useState(""); const [models, setModels] = useState<ProviderModel[]>([]); const [notice, setNotice] = useState(""); const [text, setText] = useState("");
+  const activeChannel = channels.find((channel) => channel.id === activeId); const provider = available.find((item) => item.id === selectedProvider);
+  useEffect(() => { void Promise.all([loadChannels(), loadRuntimeProviders(), loadProviderBindings()]).then(([items, definitions, providerBindings]) => { setChannels(items); setActiveId(items[0]?.id ?? null); setAvailable(definitions); setSelectedProvider(definitions[0]?.id ?? ""); setBindings(providerBindings); }).catch(() => undefined); }, []);
   useEffect(() => { if (activeId) void loadMessages(activeId).then(setMessages).catch(() => undefined); }, [activeId]);
-  const chooseProvider = async (providerId: string) => {
-    if (!activeId) return;
-    await setChannelProvider(activeId, providerId || null);
-    setChannels((items) => items.map((channel) => channel.id === activeId ? { ...channel, providerId: providerId || null } : channel));
-  };
-  const addFirstProvider = async () => {
-    const contribution = available[0];
-    const model = contribution?.models[0];
-    if (!contribution || !model) return;
-    const provider = await bindProvider(contribution, model);
-    setBindings((items) => [...items, provider]);
-  };
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!activeId || !text.trim()) return;
-    const message = await sendMessage(activeId, text.trim());
-    setMessages((current) => [...current, message]);
-    setText("");
-    const run = await createRun(activeId);
-    if (run.status === "provider-required") setMessages((current) => [...current, { id: `notice.${run.id}`, channelId: activeId, role: "system", content: "Select a provider contributed by an active plugin before running the assistant.", createdAt: run.createdAt }]);
-  };
-  return <div className="chat">
-    <div className="chat-header"><strong>{title}</strong><Badge>{activeChannel?.title ?? "#general"}</Badge></div>
-    <div className="channel-tabs">{channels.map((channel) => <button key={channel.id} className={activeId === channel.id ? "active" : ""} onClick={() => setActiveId(channel.id)}>#{channel.title.toLowerCase()}</button>)}</div>
-    <div className="provider-row">
-      <select value={activeChannel?.providerId ?? ""} onChange={(event) => void chooseProvider(event.target.value)}><option value="">No provider</option>{bindings.map((provider) => <option key={provider.id} value={provider.id}>{provider.title} · {provider.model}</option>)}</select>
-      <Button onClick={() => void addFirstProvider()} disabled={!available.length}>Add provider</Button>
-    </div>
-    <div className="chat-messages">{messages.length ? messages.map((message) => <div className={`chat-message ${message.role}`} key={message.id}>{message.content}</div>) : <div className="message">I can operate active workspace tools after permission checks.</div>}</div>
-    <form className="composer" onSubmit={(event) => void submit(event)}><input value={text} onChange={(event) => setText(event.target.value)} placeholder="Ask Agent AI…" /><Button type="submit">Send</Button></form>
-  </div>;
+  const discover = async () => { if (!provider) return; try { const found = await detectModels(provider.id, {}); setModels(found); setNotice(`${found.length} models detected for ${provider.title}`); } catch { setNotice("Add provider credentials to detect models."); } };
+  const test = async () => { if (!provider) return; try { const result = await testProvider(provider.id, {}, models[0]?.id); setNotice(`Connected · ${result.detectedModels} models · ${result.latencyMs}ms`); } catch { setNotice("Connection test requires valid credentials."); } };
+  const addProvider = async () => { if (!provider) return; const model = models[0]?.id ?? provider.models[0]?.id; if (!model) return; const binding = await bindProvider(provider, model); setBindings((items) => [...items, binding]); setNotice(`${provider.title} configured with ${model}`); };
+  const chooseProvider = async (providerId: string) => { if (!activeId) return; await setChannelProvider(activeId, providerId || null); setChannels((items) => items.map((channel) => channel.id === activeId ? { ...channel, providerId: providerId || null } : channel)); };
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (!activeId || !text.trim()) return; const message = await sendMessage(activeId, text.trim()); setMessages((current) => [...current, message]); setText(""); const run = await createRun(activeId); if (run.status === "provider-required") setMessages((current) => [...current, { id: `notice.${run.id}`, channelId: activeId, role: "system", content: "Select and configure an AI provider before running the assistant.", createdAt: run.createdAt }]); };
+  return <div className="chat"><div className="chat-header"><strong>{title}</strong><Badge>{activeChannel?.title ?? "#general"}</Badge></div><div className="channel-tabs">{channels.map((channel) => <button key={channel.id} className={activeId === channel.id ? "active" : ""} onClick={() => setActiveId(channel.id)}>#{channel.title.toLowerCase()}</button>)}</div><div className="provider-box"><select value={selectedProvider} onChange={(event) => setSelectedProvider(event.target.value)}>{available.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select><div className="provider-actions"><Button onClick={() => void discover()}>Detect</Button><Button onClick={() => void test()}>Test</Button><Button onClick={() => void addProvider()}>Add</Button></div>{notice ? <small>{notice}</small> : null}</div><div className="provider-row"><select value={activeChannel?.providerId ?? ""} onChange={(event) => void chooseProvider(event.target.value)}><option value="">No active provider</option>{bindings.map((binding) => <option key={binding.id} value={binding.id}>{binding.title} · {binding.model}</option>)}</select></div><div className="chat-messages">{messages.length ? messages.map((message) => <div className={`chat-message ${message.role}`} key={message.id}>{message.content}</div>) : <div className="message">I can operate active workspace tools after permission checks.</div>}</div><form className="composer" onSubmit={(event) => void submit(event)}><input value={text} onChange={(event) => setText(event.target.value)} placeholder="Ask Agent AI…" /><Button type="submit">Send</Button></form></div>;
 }

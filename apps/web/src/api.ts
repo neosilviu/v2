@@ -1,17 +1,16 @@
 import type { AgentChannel, AgentMessage, AgentProviderBinding, AgentRun } from "@v2/agent-contracts";
-import type { PluginBundle, PluginManifest, ProviderContribution } from "@v2/plugin-contracts";
+import type { PluginBundle, PluginManifest, ProviderContribution, ProviderModel } from "@v2/plugin-contracts";
 import type { ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-
-const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
-const agentUrl = import.meta.env.VITE_AGENT_API_URL ?? "http://localhost:8788";
-const workspaceId = "default";
+const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787"; const agentUrl = import.meta.env.VITE_AGENT_API_URL ?? "http://localhost:8788"; const workspaceId = "default";
 async function json<T>(base: string, path: string, init?: RequestInit): Promise<T> { const response = await fetch(`${base}${path}`, { headers: { "content-type": "application/json" }, ...init }); return response.json() as Promise<T>; }
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(coreUrl, `/workspaces/${workspaceId}/layout`)).layout; }
 export async function saveLayout(state: ShellState): Promise<void> { await json(coreUrl, "/layouts", { method: "PUT", body: JSON.stringify({ workspaceId, layout: { zones: state.zones, placements: state.placements } }) }); }
 export async function executeTool(toolId: string, approved = false): Promise<ToolExecutionResult> { return json<ToolExecutionResult>(coreUrl, "/tools/execute", { method: "POST", body: JSON.stringify({ workspaceId, toolId, approved }) }); }
 export async function loadInstalledPlugins(): Promise<PluginManifest[]> { return (await json<{ plugins: PluginManifest[] }>(coreUrl, "/plugins/installed")).plugins; }
 export async function loadRuntimeProviders(): Promise<ProviderContribution[]> { return (await json<{ providers: ProviderContribution[] }>(coreUrl, `/runtime/providers?workspaceId=${workspaceId}`)).providers; }
+export async function detectModels(providerId: string, credentials: Record<string, string>): Promise<ProviderModel[]> { return (await json<{ models: ProviderModel[] }>(agentUrl, `/providers/${providerId}/detect-models`, { method: "POST", body: JSON.stringify({ workspaceId, credentials }) })).models; }
+export async function testProvider(providerId: string, credentials: Record<string, string>, modelId?: string) { return json<{ ok: boolean; detectedModels: number; latencyMs: number }>(agentUrl, `/providers/${providerId}/test`, { method: "POST", body: JSON.stringify({ workspaceId, credentials, modelId }) }); }
 export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body }); return response.json() as Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }>; }
 export async function approveInstall(bundle: PluginBundle): Promise<PluginManifest> { return (await json<{ status: string; manifest: PluginManifest }>(coreUrl, "/plugins/install", { method: "POST", body: JSON.stringify({ workspaceId, bundle, approved: true }) })).manifest; }
 export async function grantCapabilities(pluginId: string, capabilities: string[]): Promise<void> { await json(coreUrl, "/plugins/grants", { method: "POST", body: JSON.stringify({ workspaceId, pluginId, capabilities }) }); }

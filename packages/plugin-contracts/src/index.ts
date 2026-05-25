@@ -11,7 +11,18 @@ export const storageModeSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("dedicated"), resources: z.array(resourceSchema).default([]) }),
 ]);
 export const toolSchema = z.object({ id: z.string().min(1), title: z.string(), description: z.string().optional(), permissions: z.array(z.string()).default([]), risk: riskSchema.default("safe"), exposure: z.array(exposureSchema).default(["agent-ai"]) });
-export const providerSchema = z.object({ id: z.string().min(1), title: z.string(), models: z.array(z.string()).default([]) });
+export const providerModelSchema = z.object({ id: z.string().min(1), title: z.string(), capabilities: z.array(z.string()).default(["chat"]) });
+export const providerSecretFieldSchema = z.object({ id: z.string().min(1), title: z.string(), required: z.boolean().default(true), secret: z.boolean().default(true) });
+export const providerSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  description: z.string().optional(),
+  adapter: z.enum(["cloudflare-workers-ai", "openai", "gemini", "groq", "github-models", "openai-compatible"]),
+  enabled: z.boolean().default(false),
+  capabilities: z.array(z.string()).default(["chat"]),
+  models: z.array(providerModelSchema).default([]),
+  secretFields: z.array(providerSecretFieldSchema).default([]),
+});
 export const channelSchema = z.object({ id: z.string().min(1), title: z.string(), tools: z.array(z.string()).default([]), providers: z.array(z.string()).default([]) });
 export const surfaceSchema = z.object({ id: z.string().min(1), title: z.string(), zone: z.string(), kind: z.enum(["panel", "settings", "widget", "page"]).default("panel") });
 export const zoneSchema = z.object({ id: z.string().min(1), title: z.string(), accepts: z.array(z.string()).default(["panel", "settings", "widget", "page"]) });
@@ -32,6 +43,7 @@ export type PluginManifestInput = z.input<typeof pluginManifestSchema>;
 export type PluginManifest = z.output<typeof pluginManifestSchema>;
 export type PluginBundle = z.output<typeof pluginBundleSchema>;
 export type ToolContribution = z.output<typeof toolSchema>;
+export type ProviderModel = z.output<typeof providerModelSchema>;
 export type ProviderContribution = z.output<typeof providerSchema>;
 export type ChannelContribution = z.output<typeof channelSchema>;
 export type SurfaceContribution = z.output<typeof surfaceSchema>;
