@@ -1,9 +1,11 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { errorResponse, failure } from "@v2/feedback-runtime";
-import { createAuth, parseAuthConfig, type AuthEnv } from "./auth";
+import { createAuth, isAuthAdmin, parseAuthConfig, type AuthEnv } from "./auth";
+import { AuthRuntimeRepository } from "./runtime-config";
 
 const app = new Hono<{ Bindings: AuthEnv }>();
+type AuthContext = Context<{ Bindings: AuthEnv }>;
 
 app.get("/health", (c) => c.json({ ok: true, service: "auth-worker", configured: parseAuthConfig(c.env).ok }));
 app.use("/api/auth/*", cors({
@@ -17,6 +19,50 @@ app.use("/api/auth/*", cors({
   maxAge: 600,
   credentials: true,
 }));
+app.use("/public/auth/*", cors({
+  origin: (origin, c) => {
+    const parsed = parseAuthConfig(c.env);
+    return parsed.ok && parsed.config.trustedOrigins.includes(origin) ? origin : "";
+  },
+  allowHeaders: ["Content-Type", "Authorization"],
+  allowMethods: ["GET", "OPTIONS"],
+  maxAge: 600,
+  credentials: true,
+}));
+app.use("/admin/auth/*", cors({
+  origin: (origin, c) => {
+    const parsed = parseAuthConfig(c.env);
+    return parsed.ok && parsed.config.trustedOrigins.includes(origin) ? origin : "";
+  },
+  allowHeaders: ["Content-Type", "Authorization"],
+  allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
+  maxAge: 600,
+  credentials: true,
+}));
+app.get("/public/auth/login-config", async (c) => {
+  const parsed = parseAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const config = await new AuthRuntimeRepository(parsed.config.db).publicLoginConfig(c.req.query("workspaceId") ?? null, { github: Boolean(parsed.config.github) });
+  return c.json(config);
+});
+async function requireAdmin(c: AuthContext) {
+  const parsed = parseAuthConfig(c.env);
+  if (!parsed.ok) return { ok: false as const, response: c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503) };
+  if (!await isAuthAdmin(parsed.config, c.req.raw.headers)) return { ok: false as const, response: c.json(errorResponse(failure("not_authorized", "Authentication administrator permission is required.")), 403) };
+  return { ok: true as const, config: parsed.config };
+}
+app.post("/admin/auth/methods", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const method = await new AuthRuntimeRepository(admin.config.db).upsertMethod(await c.req.json());
+  return c.json({ method }, 201);
+});
+app.post("/admin/auth/ui-contributions", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const contribution = await new AuthRuntimeRepository(admin.config.db).upsertUiContribution(await c.req.json());
+  return c.json({ contribution }, 201);
+});
 app.on(["POST", "GET"], "/api/auth/*", (c) => {
   const parsed = parseAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
