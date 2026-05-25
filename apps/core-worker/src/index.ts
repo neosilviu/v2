@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { assessPluginBundle } from "@v2/plugin-installer";
-import { layoutWriteRequestSchema, pluginActivationRequestSchema, pluginInstallRequestSchema, settingScopeSchema, settingWriteRequestSchema } from "@v2/rpc-contracts";
+import { layoutWriteRequestSchema, pluginActivationRequestSchema, pluginInstallRequestSchema, settingScopeSchema, settingWriteRequestSchema, toolExecutionRequestSchema } from "@v2/rpc-contracts";
 import { RuntimeKernel } from "@v2/runtime";
 import { MemorySettingsStore, type SettingScope } from "@v2/settings-runtime";
 import { agentAiPlugin } from "@v2/plugin-agent-ai";
@@ -36,6 +36,20 @@ app.post("/plugins/install", async (c) => {
 app.post("/plugins/activate", async (c) => {
   const request = pluginActivationRequestSchema.parse(await c.req.json());
   return c.json(controlPlane.activate(request.workspaceId, request.pluginId), 201);
+});
+
+app.post("/tools/execute", async (c) => {
+  const request = toolExecutionRequestSchema.parse(await c.req.json());
+  const tool = runtime.tools.get(request.toolId);
+  if (!tool) return c.json({ status: "denied", toolId: request.toolId, reason: "Tool not registered" }, 404);
+  const decision = runtime.canExecuteTool(tool.id, {
+    permissions: new Set<string>(),
+    approvedToolIds: request.approved ? new Set([tool.id]) : undefined,
+  });
+  if (decision === "deny") return c.json({ status: "denied", toolId: tool.id, reason: "Permission not granted" }, 403);
+  if (decision === "require-approval") return c.json({ status: "approval-required", toolId: tool.id, risk: tool.risk }, 202);
+  await runtime.events.emit("tool.executed", { workspaceId: request.workspaceId, toolId: tool.id, input: request.input });
+  return c.json({ status: "executed", toolId: tool.id, result: { accepted: true } });
 });
 
 app.get("/workspaces/:workspaceId/settings/:scope", async (c) => {
