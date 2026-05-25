@@ -1,0 +1,10 @@
+{
+  "name": "@v2/ui-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.tsx" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "dependencies": { "react": "catalog:" },
+  "devDependencies": { "@types/react": "catalog:", "typescript": "catalog:" }
+}
