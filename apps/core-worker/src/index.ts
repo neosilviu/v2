@@ -63,7 +63,9 @@ app.post("/tools/execute", async (c) => {
   const request = toolExecutionRequestSchema.parse(await c.req.json());
   const tool = runtime.tools.get(request.toolId);
   if (!tool) return c.json({ status: "denied", toolId: request.toolId, reason: "Tool not registered" }, 404);
-  const decision = runtime.canExecuteTool(tool.id, { permissions: new Set<string>(), approvedToolIds: request.approved ? new Set([tool.id]) : undefined });
+  const permissions = new Set<string>();
+  const context = request.approved ? { permissions, approvedToolIds: new Set([tool.id]) } : { permissions };
+  const decision = runtime.canExecuteTool(tool.id, context);
   if (decision === "deny") return c.json({ status: "denied", toolId: tool.id, reason: "Permission not granted" }, 403);
   if (decision === "require-approval") return c.json({ status: "approval-required", toolId: tool.id, risk: tool.risk }, 202);
   await runtime.events.emit("tool.executed", { workspaceId: request.workspaceId, toolId: tool.id, input: request.input });
