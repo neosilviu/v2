@@ -3,7 +3,9 @@
   "main": "server/worker.ts",
   "compatibility_date": "2026-05-25",
   "services": [
+    { "binding": "AUTH", "service": "v2-auth-worker" },
     { "binding": "CORE", "service": "v2-core-worker" },
     { "binding": "PROVIDER_RUNTIME", "service": "v2-plugin-ai-providers" }
-  ]
+  ],
+  "vars": { "APP_ORIGIN": "http://localhost:5173", "TRUSTED_ORIGINS": "" }
 }
