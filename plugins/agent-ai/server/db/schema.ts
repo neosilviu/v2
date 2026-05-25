@@ -67,12 +67,21 @@ export const agentKnowledgeSources = sqliteTable("agent_knowledge_sources", {
 export const agentToolCalls = sqliteTable("agent_tool_calls", {
   id: text("id").primaryKey(),
   runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+  channelId: text("channel_id").notNull().references(() => agentChannels.id, { onDelete: "cascade" }),
   toolId: text("tool_id").notNull(),
-  approvalStatus: text("approval_status", { enum: ["pending", "approved", "denied", "not-required"] }).notNull(),
-  inputJson: text("input_json"),
-  outputJson: text("output_json"),
+  inputJson: text("input_json").notNull(),
+  approvalId: text("approval_id"),
+  status: text("status", { enum: ["pending", "approval-required", "approved", "executing", "completed", "denied", "failed"] }).notNull().default("pending"),
+  resultJson: text("result_json"),
+  error: text("error"),
   createdAt: text("created_at").notNull().default(now),
-}, (table) => [index("agent_tool_calls_run_idx").on(table.runId)]);
+  updatedAt: text("updated_at").notNull().default(now),
+  completedAt: text("completed_at"),
+}, (table) => [
+  index("agent_tool_calls_run_idx").on(table.runId),
+  index("agent_tool_calls_channel_idx").on(table.channelId, table.createdAt),
+  index("agent_tool_calls_approval_idx").on(table.approvalId),
+]);
 
 export const agentResourceBindings = sqliteTable("agent_resource_bindings", {
   id: text("id").primaryKey(),
@@ -88,3 +97,4 @@ export type AgentMessageRow = typeof agentMessages.$inferSelect;
 export type AgentProviderBindingRow = typeof agentProviderBindings.$inferSelect;
 export type AgentRunRow = typeof agentRuns.$inferSelect;
 export type AgentKnowledgeSourceRow = typeof agentKnowledgeSources.$inferSelect;
+export type AgentToolCallRow = typeof agentToolCalls.$inferSelect;
