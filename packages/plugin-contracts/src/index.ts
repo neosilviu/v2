@@ -24,7 +24,11 @@ export const providerSchema = z.object({
   secretFields: z.array(providerSecretFieldSchema).default([]),
 });
 export const channelSchema = z.object({ id: z.string().min(1), title: z.string(), tools: z.array(z.string()).default([]), providers: z.array(z.string()).default([]) });
-export const surfaceSchema = z.object({ id: z.string().min(1), title: z.string(), zone: z.string(), kind: z.enum(["panel", "settings", "widget", "page"]).default("panel") });
+export const surfaceRendererSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("declarative") }),
+  z.object({ mode: z.literal("sandbox-frame"), entry: z.string().regex(/^ui\/[a-zA-Z0-9/_-]+\.html$/) }),
+]);
+export const surfaceSchema = z.object({ id: z.string().min(1), title: z.string(), zone: z.string(), kind: z.enum(["panel", "settings", "widget", "page"]).default("panel"), renderer: surfaceRendererSchema.default({ mode: "declarative" }) });
 export const zoneSchema = z.object({ id: z.string().min(1), title: z.string(), accepts: z.array(z.string()).default(["panel", "settings", "widget", "page"]) });
 export const layoutSchema = z.object({ id: z.string().min(1), title: z.string(), zones: z.array(z.string()).default([]) });
 export const settingSchema = z.object({ id: z.string().min(1), title: z.string(), section: z.string(), fields: z.array(z.object({ key: z.string(), label: z.string(), type: z.enum(["string", "boolean", "number", "color", "select"]), options: z.array(z.string()).optional() })).default([]) });
@@ -35,7 +39,7 @@ export const pluginManifestSchema = z.object({
 export const pluginPackageDescriptorSchema = z.object({
   manifest: pluginManifestSchema,
   worker: z.object({ entry: z.string().optional(), isolation: z.enum(["none", "platform-worker"]).default("none") }).default({}),
-  ui: z.object({ mode: z.enum(["declarative", "module"]).default("declarative"), entry: z.string().optional() }).default({}),
+  ui: z.object({ mode: z.enum(["declarative", "sandbox-frame"]).default("declarative"), entry: z.string().optional() }).default({}),
 });
 export const pluginBundleSchema = pluginPackageDescriptorSchema.extend({ package: z.object({ format: z.literal("zip"), sha256: z.string().length(64), sizeBytes: z.number().int().positive(), objectKey: z.string().min(1) }) });
 export type Risk = z.infer<typeof riskSchema>;
@@ -46,6 +50,7 @@ export type ToolContribution = z.output<typeof toolSchema>;
 export type ProviderModel = z.output<typeof providerModelSchema>;
 export type ProviderContribution = z.output<typeof providerSchema>;
 export type ChannelContribution = z.output<typeof channelSchema>;
+export type SurfaceRenderer = z.output<typeof surfaceRendererSchema>;
 export type SurfaceContribution = z.output<typeof surfaceSchema>;
 export type ZoneContribution = z.output<typeof zoneSchema>;
 export type LayoutContribution = z.output<typeof layoutSchema>;
