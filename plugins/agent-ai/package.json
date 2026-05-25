@@ -10,17 +10,18 @@
     "./server/app": "./server/app.ts",
     "./server/db/schema": "./server/db/schema.ts"
   },
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev", "build": "tsc --noEmit -p tsconfig.json" },
   "dependencies": {
     "@v2/agent-contracts": "workspace:*",
-    "@v2/plugin-ai-providers": "workspace:*",
     "@v2/plugin-contracts": "workspace:*",
     "@v2/plugin-sdk": "workspace:*",
+    "@v2/provider-contracts": "workspace:*",
     "drizzle-orm": "catalog:",
     "hono": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
   }
 }
