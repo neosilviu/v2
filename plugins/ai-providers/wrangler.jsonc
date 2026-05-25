@@ -1,0 +1,6 @@
+{
+  "name": "v2-plugin-ai-providers",
+  "main": "server/app.ts",
+  "compatibility_date": "2026-05-25",
+  "ai": { "binding": "AI" }
+}
