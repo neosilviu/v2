@@ -9,10 +9,10 @@
     "build": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@v2/plugin-contracts": "workspace:*",
-    "@v2/plugin-installer": "workspace:*",
     "@v2/rpc-contracts": "workspace:*",
     "@v2/runtime": "workspace:*",
+    "drizzle-orm": "catalog:",
+    "fflate": "catalog:",
     "hono": "catalog:"
   },
   "devDependencies": {

@@ -69,28 +69,6 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  apps/agent-ai-worker:
-    dependencies:
-      '@v2/agent-contracts':
-        specifier: workspace:*
-        version: link:../../packages/agent-contracts
-      '@v2/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../packages/plugin-contracts
-      hono:
-        specifier: 'catalog:'
-        version: 4.12.23
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: 'catalog:'
-        version: 4.20260525.1
-      typescript:
-        specifier: 'catalog:'
-        version: 5.9.3
-      wrangler:
-        specifier: 'catalog:'
-        version: 4.94.0(@cloudflare/workers-types@4.20260525.1)
-
   apps/auth-worker:
     dependencies:
       '@better-auth/drizzle-adapter':
@@ -118,18 +96,18 @@ importers:
 
   apps/core-worker:
     dependencies:
-      '@v2/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../packages/plugin-contracts
-      '@v2/plugin-installer':
-        specifier: workspace:*
-        version: link:../../packages/plugin-installer
       '@v2/rpc-contracts':
         specifier: workspace:*
         version: link:../../packages/rpc-contracts
       '@v2/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.2(@cloudflare/workers-types@4.20260525.1)(kysely@0.28.17)
+      fflate:
+        specifier: 'catalog:'
+        version: 0.8.3
       hono:
         specifier: 'catalog:'
         version: 4.12.23
@@ -168,6 +146,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@v2/feedback-runtime':
+        specifier: workspace:*
+        version: link:../../packages/feedback-runtime
       '@v2/plugin-contracts':
         specifier: workspace:*
         version: link:../../packages/plugin-contracts
@@ -208,6 +189,16 @@ importers:
       zod:
         specifier: 'catalog:'
         version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/feedback-runtime:
+    dependencies:
+      '@v2/rpc-contracts':
+        specifier: workspace:*
+        version: link:../rpc-contracts
     devDependencies:
       typescript:
         specifier: 'catalog:'
@@ -294,6 +285,9 @@ importers:
 
   packages/ui-kit:
     dependencies:
+      '@v2/rpc-contracts':
+        specifier: workspace:*
+        version: link:../rpc-contracts
       react:
         specifier: 'catalog:'
         version: 19.2.6
@@ -335,10 +329,16 @@ importers:
       hono:
         specifier: 'catalog:'
         version: 4.12.23
+      react:
+        specifier: 'catalog:'
+        version: 19.2.6
     devDependencies:
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 4.20260525.1
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.15
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
