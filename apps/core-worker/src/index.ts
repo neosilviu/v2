@@ -23,13 +23,23 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+async function activePluginIds(c: { env: CoreEnv }, workspaceId: string) {
+  return new Set(await new CoreRepository(c.env.CORE_DB).activePlugins(workspaceId));
+}
+
 app.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
 app.get("/runtime/plugins", (c) => c.json({ plugins: runtime.plugins.all() }));
 app.get("/runtime/tools", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId;
-  const active = new Set(await new CoreRepository(c.env.CORE_DB).activePlugins(workspaceId));
+  const active = await activePluginIds(c, workspaceId);
   const tools = runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.tools);
   return c.json({ tools });
+});
+app.get("/runtime/providers", async (c) => {
+  const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId;
+  const active = await activePluginIds(c, workspaceId);
+  const providers = runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.providers);
+  return c.json({ providers });
 });
 app.get("/plugins/installed", async (c) => c.json({ plugins: await new CoreRepository(c.env.CORE_DB).installed() }));
 app.get("/workspaces/:workspaceId/plugins", async (c) => c.json({ active: await new CoreRepository(c.env.CORE_DB).activePlugins(c.req.param("workspaceId")) }));
@@ -81,7 +91,7 @@ app.post("/tools/execute", async (c) => {
   const owner = runtime.plugins.all().find((plugin) => plugin.contributes.tools.some((tool) => tool.id === request.toolId));
   const tool = runtime.tools.get(request.toolId);
   if (!owner || !tool) return c.json({ status: "denied", toolId: request.toolId, reason: "Tool not registered" }, 404);
-  const active = new Set(await new CoreRepository(c.env.CORE_DB).activePlugins(request.workspaceId));
+  const active = await activePluginIds(c, request.workspaceId);
   if (!active.has(owner.id)) return c.json({ status: "denied", toolId: tool.id, reason: "Plugin is not active in workspace" }, 403);
   const permissions = new Set(await new CoreRepository(c.env.CORE_DB).grantedCapabilities(request.workspaceId, owner.id));
   const context = request.approved ? { permissions, approvedToolIds: new Set([tool.id]) } : { permissions };
