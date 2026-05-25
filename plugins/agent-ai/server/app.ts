@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createChannelRequestSchema, createProviderBindingRequestSchema, createRunRequestSchema, providerDiscoveryRequestSchema, providerTestRequestSchema, sendMessageRequestSchema, setChannelProviderRequestSchema } from "@v2/agent-contracts";
-import { detectProviderModels, testProvider } from "@v2/plugin-ai-providers/server/adapters/runtime";
 import type { ProviderContribution } from "@v2/plugin-contracts";
 import type { AgentAiEnv } from "./env";
 import { AgentRepository } from "./repository";
@@ -10,11 +9,11 @@ export function createAgentAiApp() {
   const app = new Hono<{ Bindings: AgentAiEnv }>();
   app.use("*", cors({ origin: "*" }));
 
-  async function provider(env: AgentAiEnv, workspaceId: string, providerId: string) {
+  async function hasProvider(env: AgentAiEnv, workspaceId: string, providerId: string) {
     const response = await env.CORE.fetch(`https://core.internal/runtime/providers?workspaceId=${encodeURIComponent(workspaceId)}`);
-    if (!response.ok) throw new Error(`Core providers request failed: ${response.status}`);
+    if (!response.ok) return false;
     const payload = await response.json() as { providers: ProviderContribution[] };
-    return payload.providers.find((item) => item.id === providerId);
+    return payload.providers.some((provider) => provider.id === providerId);
   }
 
   app.get("/health", (c) => c.json({ ok: true, service: "agent-ai" }));
@@ -35,15 +34,17 @@ export function createAgentAiApp() {
   });
   app.post("/providers/:providerId/detect-models", async (c) => {
     const request = providerDiscoveryRequestSchema.parse(await c.req.json());
-    const definition = await provider(c.env, request.workspaceId, c.req.param("providerId"));
-    if (!definition) return c.json({ error: "Provider not contributed by an active plugin" }, 404);
-    return c.json({ models: await detectProviderModels(c.env, definition, request.credentials) });
+    const providerId = c.req.param("providerId");
+    if (!await hasProvider(c.env, request.workspaceId, providerId)) return c.json({ error: "Provider not available in workspace" }, 404);
+    return c.env.PROVIDER_RUNTIME.fetch(`https://providers.internal/connections/${encodeURIComponent(providerId)}/detect-models`, { method: "POST" });
   });
   app.post("/providers/:providerId/test", async (c) => {
     const request = providerTestRequestSchema.parse(await c.req.json());
-    const definition = await provider(c.env, request.workspaceId, c.req.param("providerId"));
-    if (!definition) return c.json({ error: "Provider not contributed by an active plugin" }, 404);
-    return c.json(await testProvider(c.env, definition, request.credentials, request.modelId));
+    const providerId = c.req.param("providerId");
+    if (!await hasProvider(c.env, request.workspaceId, providerId)) return c.json({ error: "Provider not available in workspace" }, 404);
+    return c.env.PROVIDER_RUNTIME.fetch(`https://providers.internal/connections/${encodeURIComponent(providerId)}/test`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ modelId: request.modelId })
+    });
   });
   app.get("/channels/:channelId/messages", async (c) => c.json({ messages: await new AgentRepository(c.env.AGENT_DB).listMessages(c.req.param("channelId")) }));
   app.post("/messages", async (c) => {
