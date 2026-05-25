@@ -1,3 +1,0 @@
-CREATE TABLE IF NOT EXISTS tool_approvals (id TEXT PRIMARY KEY NOT NULL, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, plugin_id TEXT NOT NULL REFERENCES installed_plugins(id) ON DELETE CASCADE, tool_id TEXT NOT NULL, risk TEXT NOT NULL, input_json TEXT, status TEXT NOT NULL DEFAULT 'pending', requested_by TEXT, decided_by TEXT, requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, consumed_at TEXT);
-CREATE INDEX IF NOT EXISTS tool_approvals_workspace_status_idx ON tool_approvals (workspace_id, status, requested_at);
-CREATE INDEX IF NOT EXISTS tool_approvals_tool_idx ON tool_approvals (tool_id, requested_at);

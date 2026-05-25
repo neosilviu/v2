@@ -1,5 +1,8 @@
 {
   "name": "v2-plugin-website-studio",
   "main": "server/worker.ts",
-  "compatibility_date": "2026-05-25"
+  "compatibility_date": "2026-05-25",
+  "d1_databases": [
+    { "binding": "WEBSITE_DB", "database_name": "v2-website-studio", "database_id": "7ac8b472-a1f4-4a88-b3f0-43fdb6db46ed" }
+  ]
 }

@@ -32,14 +32,16 @@ export const surfaceSchema = z.object({ id: z.string().min(1), title: z.string()
 export const zoneSchema = z.object({ id: z.string().min(1), title: z.string(), accepts: z.array(z.string()).default(["panel", "settings", "widget", "page"]) });
 export const layoutSchema = z.object({ id: z.string().min(1), title: z.string(), zones: z.array(z.string()).default([]) });
 export const settingSchema = z.object({ id: z.string().min(1), title: z.string(), section: z.string(), fields: z.array(z.object({ key: z.string(), label: z.string(), type: z.enum(["string", "boolean", "number", "color", "select"]), options: z.array(z.string()).optional() })).default([]) });
+const emptyContributions = { tools: [], providers: [], channels: [], surfaces: [], zones: [], layouts: [], settings: [] };
+
 export const pluginManifestSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), version: z.string().min(1), builtIn: z.boolean().default(false), data: storageModeSchema.default({ mode: "none" }), capabilities: z.array(capabilitySchema).default([]),
-  contributes: z.object({ tools: z.array(toolSchema).default([]), providers: z.array(providerSchema).default([]), channels: z.array(channelSchema).default([]), surfaces: z.array(surfaceSchema).default([]), zones: z.array(zoneSchema).default([]), layouts: z.array(layoutSchema).default([]), settings: z.array(settingSchema).default([]) }).default({}),
+  contributes: z.object({ tools: z.array(toolSchema).default([]), providers: z.array(providerSchema).default([]), channels: z.array(channelSchema).default([]), surfaces: z.array(surfaceSchema).default([]), zones: z.array(zoneSchema).default([]), layouts: z.array(layoutSchema).default([]), settings: z.array(settingSchema).default([]) }).default(emptyContributions),
 });
 export const pluginPackageDescriptorSchema = z.object({
   manifest: pluginManifestSchema,
-  worker: z.object({ entry: z.string().optional(), isolation: z.enum(["none", "platform-worker"]).default("none") }).default({}),
-  ui: z.object({ mode: z.enum(["declarative", "sandbox-frame"]).default("declarative"), entry: z.string().optional() }).default({}),
+  worker: z.object({ entry: z.string().optional(), isolation: z.enum(["none", "platform-worker"]).default("none") }).default({ isolation: "none" }),
+  ui: z.object({ mode: z.enum(["declarative", "sandbox-frame"]).default("declarative"), entry: z.string().optional() }).default({ mode: "declarative" }),
 });
 export const pluginBundleSchema = pluginPackageDescriptorSchema.extend({ package: z.object({ format: z.literal("zip"), sha256: z.string().length(64), sizeBytes: z.number().int().positive(), objectKey: z.string().min(1) }) });
 export type Risk = z.infer<typeof riskSchema>;

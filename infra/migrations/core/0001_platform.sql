@@ -1,5 +1,0 @@
-CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS installed_plugins (id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL, manifest_json TEXT NOT NULL, package_object_key TEXT, package_sha256 TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS workspace_plugins (workspace_id TEXT NOT NULL, plugin_id TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 0, approved_capabilities_json TEXT NOT NULL DEFAULT '[]', PRIMARY KEY (workspace_id, plugin_id));
-CREATE TABLE IF NOT EXISTS workspace_settings (workspace_id TEXT NOT NULL, scope TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (workspace_id, scope, key));
-CREATE TABLE IF NOT EXISTS audit_events (id TEXT PRIMARY KEY, workspace_id TEXT, actor_id TEXT, action TEXT NOT NULL, payload_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "vite", "build": "vite build" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "vite --host 127.0.0.1 --port 5173 --strictPort", "build": "vite build" },
   "dependencies": {
     "@v2/feedback-runtime": "workspace:*",
     "@v2/plugin-contracts": "workspace:*",
