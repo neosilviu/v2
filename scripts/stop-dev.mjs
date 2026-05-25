@@ -1,30 +1,57 @@
-import { execFileSync } from "node:child_process";
+import { commandForPid, isRepoDevCommand, pidListForPort, readDevEndpoints, repoDevPids, root, sleep, stopPid } from "./dev-utils.mjs";
 
-const ports = [5173, 8787, 8788, 8790, 8791, 8792, 8793, 8794, 9229, 9287, 9288, 9290, 9291, 9292, 9293, 9294];
+const stopped = new Set();
 
-for (const port of ports) {
-  try {
-    const output = execFileSync("lsof", ["-ti", `tcp:${port}`], { encoding: "utf8" }).trim();
-    if (!output) continue;
-    for (const pid of output.split("\n")) {
-      process.kill(Number(pid), "SIGTERM");
-      console.log(`stopped pid ${pid} on port ${port}`);
+for (const endpoint of readDevEndpoints()) {
+  for (const pid of pidListForPort(endpoint.port)) {
+    if (stopped.has(pid)) continue;
+    const command = commandForPid(pid);
+    if (!isRepoDevCommand(command)) {
+      console.log(`left pid ${pid} on port ${endpoint.port}; it is not from ${root}`);
+      continue;
     }
-  } catch {
-    // No process on this port, or lsof is unavailable.
+    if (stopPid(pid)) {
+      stopped.add(pid);
+      console.log(`stopped pid ${pid} on ${endpoint.kind} port ${endpoint.port}`);
+    }
   }
 }
 
-try {
-  const output = execFileSync("pgrep", ["-af", "/home/admin/v2/.*(wrangler|workerd|vite|turbo).*dev|/home/admin/v2/.*workerd"], {
-    encoding: "utf8",
-  }).trim();
-  for (const line of output.split("\n")) {
-    const [pid] = line.split(/\s+/, 1);
-    if (!pid || Number(pid) === process.pid) continue;
-    process.kill(Number(pid), "SIGTERM");
+await sleep(500);
+
+for (const pid of repoDevPids()) {
+  if (stopped.has(pid)) continue;
+  if (stopPid(pid)) {
+    stopped.add(pid);
     console.log(`stopped repo dev process ${pid}`);
   }
-} catch {
-  // No matching repo dev processes.
 }
+
+await sleep(500);
+
+for (const endpoint of readDevEndpoints()) {
+  for (const pid of pidListForPort(endpoint.port)) {
+    const command = commandForPid(pid);
+    if (!isRepoDevCommand(command)) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+      stopped.add(pid);
+      console.log(`force-stopped pid ${pid} on ${endpoint.kind} port ${endpoint.port}`);
+    } catch {
+      // Process already exited.
+    }
+  }
+}
+
+for (const pid of repoDevPids()) {
+  if (stopped.has(pid)) continue;
+  try {
+    process.kill(pid, "SIGKILL");
+    stopped.add(pid);
+    console.log(`force-stopped repo dev process ${pid}`);
+  } catch {
+    // Process already exited.
+  }
+}
+
+if (stopped.size === 0) console.log("no repo dev ports were active");

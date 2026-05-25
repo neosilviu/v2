@@ -43,10 +43,11 @@ function ToolCallComposer({ disabled, onSubmit }: { disabled: boolean; onSubmit:
     await onSubmit(toolId.trim(), parsed);
   }
   return <form className="plugin-list" onSubmit={submit}>
+    <div className="surface-header"><div><small>development trigger</small><h2>Manual tool request</h2></div><Badge>test</Badge></div>
     <label className="field">Tool ID<input value={toolId} onChange={(event) => setToolId(event.target.value)} disabled={disabled} /></label>
     <label className="field">Input JSON<textarea value={inputJson} onChange={(event) => setInputJson(event.target.value)} disabled={disabled} rows={4} /></label>
     {error ? <p className="message">{error}</p> : null}
-    <Button type="submit" disabled={disabled || !toolId.trim()}>Request tool</Button>
+    <Button type="submit" disabled={disabled || !toolId.trim()}>Request test tool</Button>
   </form>;
 }
 
@@ -133,10 +134,12 @@ export function AgentSurface() {
   }
 
   async function refreshTool(id: string) {
+    if (!channel) return;
     setBusy(true);
     try {
       const toolCall = await refreshToolCall(id);
       setToolCalls((current) => current.map((item) => item.id === id ? toolCall : item));
+      await reloadConversation(channel.id);
       setStatus(toolCall.status === "completed" ? "Tool call completed." : `Tool call ${toolCall.status}.`);
     } catch {
       setStatus("Tool call status could not be refreshed.");

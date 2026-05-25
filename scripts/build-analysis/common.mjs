@@ -18,6 +18,28 @@ export function walk(directory) {
 export const relativePath = (root, file) => path.relative(root, file).split(path.sep).join("/");
 export const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 
+export function readJsonc(file) {
+  const source = fs.readFileSync(file, "utf8");
+  const withoutBlockComments = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  const withoutLineComments = withoutBlockComments.replace(/(^|[^:])\/\/.*$/gm, "$1");
+  return JSON.parse(withoutLineComments.replace(/,\s*([}\]])/g, "$1"));
+}
+
+export function readWorkspacePatterns(root) {
+  const file = path.join(root, "pnpm-workspace.yaml");
+  if (!fs.existsSync(file)) return [];
+  return [...fs.readFileSync(file, "utf8").matchAll(/^\s*-\s+(.+)$/gm)].map((match) => match[1].trim()).filter(Boolean);
+}
+
+export function workspaceDirectories(root) {
+  return readWorkspacePatterns(root).flatMap((pattern) => {
+    if (!pattern.endsWith("/*")) return [path.join(root, pattern)];
+    const parent = path.join(root, pattern.slice(0, -2));
+    if (!fs.existsSync(parent)) return [];
+    return fs.readdirSync(parent, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => path.join(parent, entry.name));
+  });
+}
+
 export function formatBytes(bytes) {
   if (!bytes) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
