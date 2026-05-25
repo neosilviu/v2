@@ -194,6 +194,9 @@ importers:
       '@v2/ui-runtime':
         specifier: workspace:*
         version: link:../../packages/ui-runtime
+      '@v2/ui-schema':
+        specifier: workspace:*
+        version: link:../../packages/ui-schema
       better-auth:
         specifier: 'catalog:'
         version: 1.6.11(@cloudflare/workers-types@4.20260525.1)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260525.1)(kysely@0.28.17))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
