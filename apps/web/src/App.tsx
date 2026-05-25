@@ -4,7 +4,7 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { executeTool, loadInstalledPlugins, loadLayout, loadRuntimeTools, saveLayout } from "./api";
+import { executeTool, loadInstalledPlugins, loadLayout, loadRuntimeTools, runtimeSurfaceUrl, saveLayout } from "./api";
 import { composeShell, emptyShell } from "./shell";
 import { CommandPalette } from "./platform/CommandPalette";
 import { PluginManagerPanel } from "./platform/PluginManagerPanel";
@@ -13,6 +13,19 @@ import { SettingsRenderer } from "./platform/SettingsRenderer";
 import { ToolApprovalDialog } from "./platform/ToolApprovalDialog";
 
 function RuntimeSurface({ surface }: { surface: SurfaceContribution }) {
+  if (surface.renderer.mode === "sandbox-frame") {
+    return <SurfaceCard className="runtime-frame-surface">
+      <div className="surface-header"><div><small>isolated plugin surface</small><h2>{surface.title}</h2></div><Badge>{surface.kind}</Badge></div>
+      <iframe
+        className="runtime-frame"
+        title={surface.title}
+        src={runtimeSurfaceUrl(surface.id)}
+        sandbox="allow-scripts"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+      />
+    </SurfaceCard>;
+  }
   return <SurfaceCard>
     <small>runtime surface</small>
     <h2>{surface.title}</h2>
