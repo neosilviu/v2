@@ -1,5 +1,19 @@
 {
-  "name": "@v2/plugin-ai-providers", "version": "0.0.0", "private": true, "type": "module", "exports": { ".": "./src/index.ts" },
+  "name": "@v2/plugin-ai-providers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server/adapters/runtime": "./server/adapters/runtime.ts"
+  },
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "@v2/plugin-sdk": "workspace:*" }, "devDependencies": { "typescript": "catalog:" }
+  "dependencies": {
+    "@v2/plugin-contracts": "workspace:*",
+    "@v2/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "typescript": "catalog:"
+  }
 }
