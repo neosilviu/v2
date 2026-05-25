@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import type { ToolContribution } from "@v2/plugin-contracts";
 import { Badge } from "@v2/ui-kit";
+import type { ToolContribution } from "../runtime-types";
 
 export function CommandPalette({ tools, open, onClose, onExecute }: { tools: ToolContribution[]; open: boolean; onClose: () => void; onExecute: (tool: ToolContribution) => void }) {
   const [query, setQuery] = useState("");

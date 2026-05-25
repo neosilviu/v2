@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { notification } from "@v2/feedback-runtime";
-import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
 import { executeTool, loadInstalledPlugins, loadLayout, loadRuntimeTools, saveLayout } from "./api";
+import type { PluginManifest, SurfaceContribution, ToolContribution } from "./runtime-types";
 import { composeShell, emptyShell } from "./shell";
 import { CommandPalette } from "./platform/CommandPalette";
 import { PluginManagerPanel } from "./platform/PluginManagerPanel";

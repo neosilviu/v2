@@ -1,5 +1,5 @@
-import type { SettingContribution } from "@v2/plugin-contracts";
 import { SurfaceCard } from "@v2/ui-kit";
+import type { SettingContribution } from "../runtime-types";
 
 export function SettingsRenderer({ settings }: { settings: SettingContribution[] }) {
   return <SurfaceCard>

@@ -1,5 +1,5 @@
-import type { ToolContribution } from "@v2/plugin-contracts";
 import { Badge, Button } from "@v2/ui-kit";
+import type { ToolContribution } from "../runtime-types";
 
 export function ToolApprovalDialog({ tool, onApprove, onCancel }: { tool: ToolContribution | null; onApprove: () => void; onCancel: () => void }) {
   if (!tool) return null;

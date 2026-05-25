@@ -1,5 +1,5 @@
-import type { PluginManifest, ZoneContribution } from "@v2/plugin-contracts";
 import { createShellFromPlugins } from "@v2/ui-runtime";
+import type { PluginManifest, ZoneContribution } from "./runtime-types";
 
 export const foundationZones: ZoneContribution[] = [
   { id: "navigation.left", title: "Navigation", accepts: ["panel", "widget"] },

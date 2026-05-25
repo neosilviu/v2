@@ -1,6 +1,6 @@
-import type { PluginBundle, PluginManifest, ToolContribution } from "@v2/plugin-contracts";
 import type { ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
+import type { PluginBundle, PluginManifest, ToolContribution } from "./runtime-types";
 
 const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 const workspaceId = "default";

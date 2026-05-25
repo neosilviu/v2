@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { PluginBundle, PluginManifest } from "@v2/plugin-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { approveInstall, grantCapabilities, loadInstalledPlugins, uploadPlugin } from "../api";
+import type { PluginBundle, PluginManifest } from "../runtime-types";
 
 export function PluginManagerPanel({ plugins: initialPlugins, onChanged }: { plugins: PluginManifest[]; onChanged: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);

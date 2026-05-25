@@ -127,9 +127,6 @@ importers:
       '@v2/mcp-contracts':
         specifier: workspace:*
         version: link:../../packages/mcp-contracts
-      '@v2/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../packages/plugin-contracts
       hono:
         specifier: 'catalog:'
         version: 4.12.23
@@ -149,9 +146,6 @@ importers:
       '@v2/feedback-runtime':
         specifier: workspace:*
         version: link:../../packages/feedback-runtime
-      '@v2/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../packages/plugin-contracts
       '@v2/rpc-contracts':
         specifier: workspace:*
         version: link:../../packages/rpc-contracts

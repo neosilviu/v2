@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { mcpRequestSchema, mcpToolCallParamsSchema } from "@v2/mcp-contracts";
-import type { ToolContribution } from "@v2/plugin-contracts";
 import type { BridgeEnv } from "./env";
+import type { ToolContribution } from "./runtime-types";
 
 const app = new Hono<{ Bindings: BridgeEnv }>();
 const workspaceId = "default";
