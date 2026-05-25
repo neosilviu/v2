@@ -1,0 +1,13 @@
+{
+  "name": "Core workspace reads are private by default",
+  "requests": [
+    { "method": "GET", "path": "/health", "anonymous": 200 },
+    { "method": "GET", "path": "/session", "anonymous": 200 },
+    { "method": "GET", "path": "/plugins/installed", "anonymous": 401 },
+    { "method": "GET", "path": "/workspaces/default/plugins", "anonymous": 401 },
+    { "method": "GET", "path": "/runtime/tools?workspaceId=default", "anonymous": 401 },
+    { "method": "GET", "path": "/runtime/providers?workspaceId=default", "anonymous": 401 },
+    { "method": "GET", "path": "/workspaces/default/settings/platform", "anonymous": 401 },
+    { "method": "GET", "path": "/workspaces/default/layout", "anonymous": 401 }
+  ]
+}

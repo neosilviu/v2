@@ -12,6 +12,8 @@
     "dev:stop": "node scripts/stop-dev.mjs",
     "typecheck": "turbo run typecheck",
     "build:analyze": "node scripts/analyze-build.mjs",
+    "guard:architecture": "pnpm build:analyze -- --strict && pnpm test:generated",
+    "test:generated": "node --experimental-strip-types scripts/test-generated.mjs",
     "marketplace:sync": "node --experimental-strip-types scripts/sync-plugin-catalog.mjs",
     "check": "pnpm typecheck && pnpm build",
     "format": "prettier --write ."

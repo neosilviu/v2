@@ -1,0 +1,8 @@
+{
+  "name": "Public delivery is generic and publication-gated",
+  "requests": [
+    { "method": "GET", "path": "/public/default/website", "anonymous": 404 },
+    { "method": "GET", "path": "/public/default/commerce", "anonymous": 404 },
+    { "method": "GET", "path": "/public/default/ai-chat", "anonymous": 404 }
+  ]
+}

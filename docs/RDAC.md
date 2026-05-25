@@ -115,5 +115,6 @@ Official plugin lists in local scripts are development seed helpers only. Runtim
 
 - Add and enforce `pnpm guard:architecture`.
 - Add contract and policy tests for manifests, installs, capability grants, approvals, service identity and RBAC decisions.
+- Prefer generated tests derived from manifests, contracts, schemas and declarative scenario files. Keep repetitive auth, marketplace, publication and architecture cases data-driven.
 - Add `create:plugin` scaffolding for manifests, UI registry, worker, migrations and docs.
 - Run strict CI with `pnpm typecheck`, web build, build analysis and architecture guard.
