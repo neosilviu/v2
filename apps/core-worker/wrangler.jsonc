@@ -1,6 +1,6 @@
 {
   "name": "v2-core-worker",
-  "main": "src/index.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-05-25",
   "d1_databases": [
     { "binding": "CORE_DB", "database_name": "v2-core", "database_id": "ebf88733-8e41-4b2e-9956-c5a51b644d49" }
