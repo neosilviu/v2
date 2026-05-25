@@ -4,6 +4,7 @@ export const workspaceIdSchema = z.string().min(1);
 export const settingScopeSchema = z.union([z.literal("platform"), z.string().regex(/^plugin:[a-zA-Z0-9._-]+$/)]);
 export const pluginActivationRequestSchema = z.object({ workspaceId: workspaceIdSchema, pluginId: z.string().min(1) });
 export const pluginInstallRequestSchema = z.object({ workspaceId: workspaceIdSchema, bundle: z.unknown(), approved: z.boolean().default(false) });
+export const capabilityGrantRequestSchema = z.object({ workspaceId: workspaceIdSchema, pluginId: z.string().min(1), capabilities: z.array(z.string().min(1)) });
 export const toolExecutionRequestSchema = z.object({ workspaceId: workspaceIdSchema, toolId: z.string().min(1), input: z.unknown().optional(), approved: z.boolean().default(false) });
 export const toolExecutionResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("executed"), toolId: z.string(), result: z.unknown().optional() }),

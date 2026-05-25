@@ -1,5 +1,5 @@
 import type { AgentChannel, AgentMessage } from "@v2/agent-contracts";
-import type { PluginManifest } from "@v2/plugin-contracts";
+import type { PluginBundle, PluginManifest } from "@v2/plugin-contracts";
 import type { ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 
@@ -10,7 +10,10 @@ async function json<T>(base: string, path: string, init?: RequestInit): Promise<
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(coreUrl, `/workspaces/${workspaceId}/layout`)).layout; }
 export async function saveLayout(state: ShellState): Promise<void> { await json(coreUrl, "/layouts", { method: "PUT", body: JSON.stringify({ workspaceId, layout: { zones: state.zones, placements: state.placements } }) }); }
 export async function executeTool(toolId: string, approved = false): Promise<ToolExecutionResult> { return json<ToolExecutionResult>(coreUrl, "/tools/execute", { method: "POST", body: JSON.stringify({ workspaceId, toolId, approved }) }); }
-export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; bundle?: { manifest: PluginManifest }; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body }); return response.json() as Promise<{ status: string; manifest?: PluginManifest; bundle?: { manifest: PluginManifest }; sensitiveCapabilities?: string[] }>; }
+export async function loadInstalledPlugins(): Promise<PluginManifest[]> { return (await json<{ plugins: PluginManifest[] }>(coreUrl, "/plugins/installed")).plugins; }
+export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body }); return response.json() as Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }>; }
+export async function approveInstall(bundle: PluginBundle): Promise<PluginManifest> { return (await json<{ status: string; manifest: PluginManifest }>(coreUrl, "/plugins/install", { method: "POST", body: JSON.stringify({ workspaceId, bundle, approved: true }) })).manifest; }
+export async function grantCapabilities(pluginId: string, capabilities: string[]): Promise<void> { await json(coreUrl, "/plugins/grants", { method: "POST", body: JSON.stringify({ workspaceId, pluginId, capabilities }) }); }
 export async function loadChannels(): Promise<AgentChannel[]> { return (await json<{ channels: AgentChannel[] }>(agentUrl, `/workspaces/${workspaceId}/channels`)).channels; }
 export async function loadMessages(channelId: string): Promise<AgentMessage[]> { return (await json<{ messages: AgentMessage[] }>(agentUrl, `/channels/${encodeURIComponent(channelId)}/messages`)).messages; }
 export async function sendMessage(channelId: string, content: string): Promise<AgentMessage> { return (await json<{ message: AgentMessage }>(agentUrl, "/messages", { method: "POST", body: JSON.stringify({ workspaceId, channelId, content }) })).message; }

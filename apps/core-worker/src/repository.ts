@@ -20,6 +20,12 @@ export class CoreRepository {
     return rows.results.map((row) => JSON.parse(row.manifest_json) as PluginManifest);
   }
 
+  async ensureActive(workspaceId: string, pluginId: string) {
+    await this.ensureWorkspace(workspaceId);
+    await this.db.prepare("INSERT OR IGNORE INTO workspace_plugins (workspace_id, plugin_id, active) VALUES (?, ?, 1)")
+      .bind(workspaceId, pluginId).run();
+  }
+
   async activate(workspaceId: string, pluginId: string) {
     await this.ensureWorkspace(workspaceId);
     await this.db.prepare("INSERT INTO workspace_plugins (workspace_id, plugin_id, active) VALUES (?, ?, 1) ON CONFLICT(workspace_id, plugin_id) DO UPDATE SET active = 1")
@@ -31,6 +37,21 @@ export class CoreRepository {
   async activePlugins(workspaceId: string): Promise<string[]> {
     const rows = await this.db.prepare("SELECT plugin_id FROM workspace_plugins WHERE workspace_id = ? AND active = 1").bind(workspaceId).all<{ plugin_id: string }>();
     return rows.results.map((row) => row.plugin_id);
+  }
+
+  async grantCapabilities(workspaceId: string, pluginId: string, capabilities: string[]) {
+    await this.ensureWorkspace(workspaceId);
+    await this.db.prepare(`INSERT INTO workspace_plugins (workspace_id, plugin_id, active, approved_capabilities_json) VALUES (?, ?, 1, ?)
+      ON CONFLICT(workspace_id, plugin_id) DO UPDATE SET approved_capabilities_json = excluded.approved_capabilities_json`)
+      .bind(workspaceId, pluginId, JSON.stringify(capabilities)).run();
+    await this.audit(workspaceId, "plugin.capabilities.grant", { pluginId, capabilities });
+    return capabilities;
+  }
+
+  async grantedCapabilities(workspaceId: string, pluginId: string): Promise<string[]> {
+    const row = await this.db.prepare("SELECT approved_capabilities_json FROM workspace_plugins WHERE workspace_id = ? AND plugin_id = ?")
+      .bind(workspaceId, pluginId).first<{ approved_capabilities_json: string }>();
+    return row ? JSON.parse(row.approved_capabilities_json) as string[] : [];
   }
 
   async setSetting(workspaceId: string, scope: SettingScope, key: string, value: unknown) {
@@ -58,8 +79,7 @@ export class CoreRepository {
   }
 
   async audit(workspaceId: string | null, action: string, payload?: unknown) {
-    const id = crypto.randomUUID();
     await this.db.prepare("INSERT INTO audit_events (id, workspace_id, action, payload_json) VALUES (?, ?, ?, ?)")
-      .bind(id, workspaceId, action, payload === undefined ? null : JSON.stringify(payload)).run();
+      .bind(crypto.randomUUID(), workspaceId, action, payload === undefined ? null : JSON.stringify(payload)).run();
   }
 }
