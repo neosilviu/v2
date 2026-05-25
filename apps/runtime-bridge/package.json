@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev", "build": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "hono": "catalog:" },
+  "dependencies": { "@v2/rpc-contracts": "workspace:*", "hono": "catalog:" },
   "devDependencies": { "typescript": "catalog:" }
 }

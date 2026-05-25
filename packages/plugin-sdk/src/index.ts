@@ -1,9 +1,25 @@
-import type { ChannelContribution, LayoutContribution, PluginManifest, ProviderContribution, SurfaceContribution, ToolContribution, ZoneContribution } from "@v2/plugin-contracts";
+import {
+  channelSchema,
+  layoutSchema,
+  pluginManifestSchema,
+  providerSchema,
+  surfaceSchema,
+  toolSchema,
+  zoneSchema,
+  type ChannelContribution,
+  type LayoutContribution,
+  type PluginManifest,
+  type PluginManifestInput,
+  type ProviderContribution,
+  type SurfaceContribution,
+  type ToolContribution,
+  type ZoneContribution,
+} from "@v2/plugin-contracts";
 
-export const definePlugin = <T extends PluginManifest>(plugin: T) => plugin;
-export const defineTool = <T extends ToolContribution>(tool: T) => tool;
-export const defineProvider = <T extends ProviderContribution>(provider: T) => provider;
-export const defineChannel = <T extends ChannelContribution>(channel: T) => channel;
-export const defineSurface = <T extends SurfaceContribution>(surface: T) => surface;
-export const defineZone = <T extends ZoneContribution>(zone: T) => zone;
-export const defineLayout = <T extends LayoutContribution>(layout: T) => layout;
+export const definePlugin = (plugin: PluginManifestInput): PluginManifest => pluginManifestSchema.parse(plugin);
+export const defineTool = (tool: unknown): ToolContribution => toolSchema.parse(tool);
+export const defineProvider = (provider: unknown): ProviderContribution => providerSchema.parse(provider);
+export const defineChannel = (channel: unknown): ChannelContribution => channelSchema.parse(channel);
+export const defineSurface = (surface: unknown): SurfaceContribution => surfaceSchema.parse(surface);
+export const defineZone = (zone: unknown): ZoneContribution => zoneSchema.parse(zone);
+export const defineLayout = (layout: unknown): LayoutContribution => layoutSchema.parse(layout);

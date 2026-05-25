@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "vite", "build": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "@v2/ui-runtime": "workspace:*" },
+  "dependencies": { "@v2/plugin-contracts": "workspace:*", "@v2/ui-runtime": "workspace:*" },
   "devDependencies": { "typescript": "catalog:" }
 }

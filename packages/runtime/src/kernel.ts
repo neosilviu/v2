@@ -1,9 +1,11 @@
 import type { ChannelContribution, LayoutContribution, PluginManifest, ProviderContribution, SurfaceContribution, ToolContribution, ZoneContribution } from "@v2/plugin-contracts";
 import { EventBus } from "./events";
+import { RuntimePolicy, type ToolExecutionContext } from "./policy";
 import { Registry } from "./registry";
 
 export class RuntimeKernel {
   readonly events = new EventBus();
+  readonly policy = new RuntimePolicy();
   readonly plugins = new Registry<PluginManifest>();
   readonly tools = new Registry<ToolContribution>();
   readonly providers = new Registry<ProviderContribution>();
@@ -21,5 +23,11 @@ export class RuntimeKernel {
     for (const item of plugin.contributes.zones) this.zones.register(item);
     for (const item of plugin.contributes.layouts) this.layouts.register(item);
     await this.events.emit("plugin.registered", { pluginId: plugin.id });
+  }
+
+  canExecuteTool(toolId: string, context: ToolExecutionContext) {
+    const tool = this.tools.get(toolId);
+    if (!tool) return "deny" as const;
+    return this.policy.decide(tool, context);
   }
 }
