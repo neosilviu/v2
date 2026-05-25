@@ -4,9 +4,16 @@
 
 - Follow the official roadmap in `docs/RDAC.md`.
 - Faza 0 — Immediate Correction Gate must stay green before new platform or plugin features are added.
+- Runtime-first is mandatory: platform apps must not hardcode feature plugin IDs, feature routes, official Marketplace lists, plugin-specific public delivery paths or plugin-specific security exceptions.
+- Core is private-by-default. Public access must come only from explicit workspace publications and policies for contributions declared by plugin manifests.
+- Auth technical endpoints remain Auth-owned. Core public endpoints are limited to generic health/session status, non-personalized catalog reads and generic public delivery.
 - Do not expose installed plugins, active plugins, runtime tools, runtime providers, workspace settings or workspace layout to anonymous browser requests just because the request origin is CORS-allowed.
 - Marketplace installation must use validated runtime releases backed by ZIP/R2 package metadata and `@v2/plugin-installer`; do not install by copying a catalog manifest alone.
+- `plugin_catalog` may be seeded by local helper scripts during development, but runtime publish/install must be driven by Core endpoints and release metadata.
 - Do not automatically grant sensitive or dangerous capabilities during install, activation or marketplace flows.
+- Declarative UI schema rendered by Web is the standard Marketplace UI mechanism. Trusted React registries are deploy-time optimizations for included first-party plugins only.
+- `sandbox-frame` is only for external arbitrary UI that needs isolation.
+- Dynamic Worker execution for Marketplace code must be modeled separately, for example through Cloudflare Workers for Platforms / Dispatch Namespace; do not add per-plugin service bindings for runtime-installed plugins.
 - Keep D1 migrations incremental. Do not rewrite existing migration history, apply remote migrations from local work, or change assigned D1 identifiers.
 - Keep PR descriptions current with the real HEAD, validation status and remaining Faza 0 work.
 
