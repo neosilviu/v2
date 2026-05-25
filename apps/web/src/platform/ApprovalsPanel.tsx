@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ToolApproval } from "@v2/rpc-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { approveToolApproval, denyToolApproval, loadPendingToolApprovals } from "../api";
 
 export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
   const [approvals, setApprovals] = useState<ToolApproval[]>([]);
-  const [status, setStatus] = useState("Loading approvals");
+  const [status, setStatus] = useState("Platform admin access required to load approvals");
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -18,8 +18,6 @@ export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
       setStatus("Approvals require platform admin access");
     }
   };
-
-  useEffect(() => { void refresh(); }, []);
 
   const decide = async (approvalId: string, decision: "approved" | "denied") => {
     setBusyId(approvalId);
