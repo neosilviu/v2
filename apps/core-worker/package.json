@@ -1,16 +1,9 @@
 {
-  "name": "@v2/core-worker",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
+  "name": "@v2/core-worker", "version": "0.0.0", "private": true, "type": "module",
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev", "build": "tsc --noEmit -p tsconfig.json" },
   "dependencies": {
-    "@v2/plugin-contracts": "workspace:*",
-    "@v2/plugin-agent-ai": "workspace:*",
-    "@v2/plugin-theme-studio": "workspace:*",
-    "@v2/rpc-contracts": "workspace:*",
-    "@v2/runtime": "workspace:*",
-    "hono": "catalog:"
+    "@v2/plugin-contracts": "workspace:*", "@v2/plugin-installer": "workspace:*", "@v2/plugin-agent-ai": "workspace:*", "@v2/plugin-theme-studio": "workspace:*",
+    "@v2/rpc-contracts": "workspace:*", "@v2/runtime": "workspace:*", "@v2/settings-runtime": "workspace:*", "hono": "catalog:"
   },
   "devDependencies": { "typescript": "catalog:", "wrangler": "catalog:" }
 }

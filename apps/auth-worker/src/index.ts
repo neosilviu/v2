@@ -1,8 +1,7 @@
 import { Hono } from "hono";
+import { createAuth, type AuthEnv } from "./auth";
 
-const app = new Hono();
-
+const app = new Hono<{ Bindings: AuthEnv }>();
 app.get("/health", (c) => c.json({ ok: true, service: "auth-worker" }));
-app.all("/api/auth/*", (c) => c.json({ ok: false, message: "Better Auth boundary placeholder" }, 501));
-
+app.on(["POST", "GET"], "/api/auth/*", (c) => createAuth(c.env).handler(c.req.raw));
 export default app;

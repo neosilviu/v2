@@ -1,0 +1,1 @@
+{ "name": "v2-auth-worker", "main": "src/index.ts", "compatibility_date": "2026-05-25", "d1_databases": [{ "binding": "AUTH_DB", "database_name": "v2-auth", "database_id": "REPLACE_WITH_D1_ID" }], "vars": { "BETTER_AUTH_URL": "http://localhost:8787" } }

@@ -4,6 +4,10 @@ packages:
   - plugins/*
 
 catalog:
+  '@better-auth/drizzle-adapter': ^1.6.0
+  '@cloudflare/workers-types': ^4.20260525.0
+  better-auth: ^1.6.0
+  drizzle-orm: ^0.44.2
   hono: ^4.7.11
   vite: ^6.3.5
   wrangler: ^4.16.1

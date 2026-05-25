@@ -1,9 +1,6 @@
 {
-  "name": "@v2/auth-worker",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
+  "name": "@v2/auth-worker", "version": "0.0.0", "private": true, "type": "module",
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev", "build": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "hono": "catalog:" },
-  "devDependencies": { "typescript": "catalog:", "wrangler": "catalog:" }
+  "dependencies": { "@better-auth/drizzle-adapter": "catalog:", "better-auth": "catalog:", "drizzle-orm": "catalog:", "hono": "catalog:" },
+  "devDependencies": { "@cloudflare/workers-types": "catalog:", "typescript": "catalog:", "wrangler": "catalog:" }
 }
