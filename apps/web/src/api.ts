@@ -11,6 +11,9 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export function runtimeSurfaceUrl(surfaceId: string): string {
+  return `${coreUrl}/runtime/ui/surfaces/${encodeURIComponent(surfaceId)}?workspaceId=${encodeURIComponent(workspaceId)}`;
+}
 export async function loadLayout(): Promise<WorkspaceLayout | null> {
   return (await json<{ layout: WorkspaceLayout | null }>(`/workspaces/${workspaceId}/layout`)).layout;
 }
