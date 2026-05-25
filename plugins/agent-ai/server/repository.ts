@@ -96,6 +96,10 @@ export class AgentRepository {
     await this.db.prepare("UPDATE agent_tool_calls SET status = 'approval-required', approval_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(approvalId, id).run();
   }
 
+  async markToolCallApproved(id: string): Promise<void> {
+    await this.db.prepare("UPDATE agent_tool_calls SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+  }
+
   async markToolCallDenied(id: string, reason: string, result?: ToolExecutionResult): Promise<void> {
     await this.db.prepare("UPDATE agent_tool_calls SET status = 'denied', result_json = ?, error = ?, updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP WHERE id = ?").bind(result ? JSON.stringify(result) : null, reason, id).run();
   }
