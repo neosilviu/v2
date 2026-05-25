@@ -8,6 +8,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
     "typecheck": "turbo run typecheck",
+    "build:analyze": "node scripts/analyze-build.mjs",
     "check": "pnpm typecheck && pnpm build",
     "format": "prettier --write ."
   },
