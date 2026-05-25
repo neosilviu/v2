@@ -3,13 +3,14 @@ import type { PluginBundle, PluginManifest } from "@v2/plugin-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { approveInstall, grantCapabilities, loadInstalledPlugins, uploadPlugin } from "../api";
 
-export function PluginManagerPanel({ plugins: foundationPlugins }: { plugins: PluginManifest[] }) {
+export function PluginManagerPanel({ plugins: initialPlugins, onChanged }: { plugins: PluginManifest[]; onChanged: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [plugins, setPlugins] = useState(foundationPlugins);
+  const [plugins, setPlugins] = useState(initialPlugins);
   const [pendingBundle, setPendingBundle] = useState<PluginBundle | null>(null);
   const [uploadState, setUploadState] = useState("Upload a ZIP containing plugin.json");
+  useEffect(() => { setPlugins(initialPlugins); }, [initialPlugins]);
   useEffect(() => { void loadInstalledPlugins().then(setPlugins).catch(() => undefined); }, []);
-  const refresh = async () => setPlugins(await loadInstalledPlugins());
+  const refresh = async () => { setPlugins(await loadInstalledPlugins()); onChanged(); };
   const upload = async (file?: File) => {
     if (!file) return;
     setUploadState(`Uploading ${file.name}…`);
@@ -29,6 +30,6 @@ export function PluginManagerPanel({ plugins: foundationPlugins }: { plugins: Pl
     <div className="surface-header"><div><small>core</small><h2>Plugin Manager</h2></div><Button onClick={() => inputRef.current?.click()}>Upload ZIP</Button></div>
     <p>{uploadState}</p><input ref={inputRef} className="hidden-file" type="file" accept=".zip,application/zip" onChange={(event) => void upload(event.target.files?.[0])} />
     {pendingBundle ? <div className="approval-inline"><p>{pendingBundle.manifest.capabilities.length} requested capabilities</p><Button onClick={() => void approve()}>Approve & Install</Button></div> : null}
-    <div className="plugin-list">{plugins.map((plugin) => <div className="plugin-row" key={plugin.id}><div><strong>{plugin.name}</strong><small>{plugin.id} · {plugin.version}</small></div><Badge>{plugin.builtIn ? "built-in" : "installed"}</Badge></div>)}</div>
+    <div className="plugin-list">{plugins.length ? plugins.map((plugin) => <div className="plugin-row" key={plugin.id}><div><strong>{plugin.name}</strong><small>{plugin.id} · {plugin.version}</small></div><Badge>{plugin.builtIn ? "built-in" : "installed"}</Badge></div>) : <p>No feature plugins installed.</p>}</div>
   </SurfaceCard>;
 }
