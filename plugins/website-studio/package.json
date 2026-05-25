@@ -11,6 +11,7 @@
   },
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev", "build": "tsc --noEmit -p tsconfig.json" },
   "dependencies": {
+    "@v2/feedback-runtime": "workspace:*",
     "@v2/plugin-sdk": "workspace:*",
     "drizzle-orm": "catalog:",
     "hono": "catalog:"
