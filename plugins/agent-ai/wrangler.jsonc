@@ -1,0 +1,9 @@
+{
+  "name": "v2-plugin-agent-ai",
+  "main": "server/app.ts",
+  "compatibility_date": "2026-05-25",
+  "services": [
+    { "binding": "CORE", "service": "v2-core-worker" },
+    { "binding": "PROVIDER_RUNTIME", "service": "v2-plugin-ai-providers" }
+  ]
+}
