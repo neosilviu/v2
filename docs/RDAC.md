@@ -22,6 +22,10 @@ Runtime-first is a hard platform rule:
 - Login UI is public but runtime-driven from Auth DB methods and declarative UI contributions. Public login config may expose enabled method labels, public provider IDs, order and safe renderer JSON only.
 - Auth method configuration is admin/RBAC protected and audit-bound. Provider secrets and configuration references stay server-side and never appear in manifests, browser payloads or Core generic metadata.
 - Future auth extensions require privileged capabilities such as `auth.ui.contribute`, `auth.method.social.configure`, `auth.method.passkey.configure` and `auth.policy.admin`, with explicit approval.
+- Plugin install/update approval is persistent and one-shot. Browser booleans such as `approved: true` are not authorization; Core must store the exact release/package identity, SHA, workspace and sensitive capability list before an admin decision.
+- Public delivery routes may be exact or parameterized (`/:slug`, `/products/:id`) through validated route patterns only. Regexes, code and feature-specific host routes are not allowed.
+- Declarative templates may request data sources and actions only through generic Core endpoints. Core validates activation/publication/policy and blocks execution unless a declared runtime worker dispatch boundary exists.
+- Auth method server support is not public UI publication. Password signin can bootstrap as public; passkey, social and signup require explicit runtime Auth DB policy/publication.
 
 ## Faza 0 - Immediate Correction Gate
 
@@ -29,11 +33,14 @@ Runtime-first is a hard platform rule:
 - Keep public delivery separate from workspace internals. Auth technical endpoints remain Auth-owned; Core may expose only generic auth status, non-personalized catalog reads and explicitly published public contributions.
 - Make the Marketplace runtime real: installable releases are backed by validated ZIP bundles stored in R2, not by catalog manifest copies alone.
 - Route Marketplace installation through `@v2/plugin-installer` and the existing approval flow.
+- Use persistent approval requests for plugin install/update. Approval requests are claimed atomically and consumed once; replayed or mismatched approvals must be audited and denied.
 - Remove automatic grants for sensitive or dangerous capabilities. Installation and activation must not imply capability grants.
 - Preserve D1 migration history incrementally. Add new generated migrations; do not rewrite prior migrations or change assigned D1 identifiers.
 - Keep CI strict and keep PR #1 updated with the real HEAD, validation status and remaining Faza 0 risk.
 - Add generic public publication persistence before feature-specific public pages such as website, commerce or AI chat are added.
+- Resolve exact and parameterized public routes from `workspace_publications` with deterministic precedence and active-plugin/policy checks.
 - Add the declarative plugin UI renderer foundation before relying on build-time trusted UI as the Marketplace mechanism.
+- Add the policy-aware data/action dispatcher boundary for templates, but do not fake plugin worker execution before a real Dispatch Namespace or equivalent runtime model exists.
 
 ## Faza 1 - Workspace RBAC
 

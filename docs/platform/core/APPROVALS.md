@@ -1,6 +1,8 @@
-# Persistent tool approvals
+# Persistent approvals
 
 Sensitive runtime tools no longer rely on a browser-supplied boolean. When policy requires approval, Core creates a one-time `tool_approvals` record storing the tool identity, owning plugin, workspace and submitted input.
+
+Plugin install/update approvals use the generic `approval_requests` table. Core stores the exact workspace, kind, subject, plugin/release/package identity, SHA and sensitive capability list. The admin decision moves the request from `pending` to `approved` or `denied`; installation then atomically claims `approved -> consumed` and uses the persisted payload. A replayed, mismatched or already-consumed approval is denied and audited.
 
 ## Flow
 

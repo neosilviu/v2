@@ -34,8 +34,8 @@ Installing a Marketplace plugin is explicit:
 2. The user installs a plugin from Marketplace.
 3. Core selects the latest `published` release for that plugin.
 4. Core reconstructs the `PluginBundle` from release metadata and runs the same `assessPluginBundle` path used by direct uploads.
-5. If the bundle requires approval, Core returns `approval-required` and does not install it.
-6. After the permitted approval flow, Core installs the release metadata into `installed_plugins` and links the plugin to the workspace through `workspace_plugins`.
+5. If the bundle requires approval, Core creates a persistent `approval_requests` row and returns `approval-required` with an `approvalId`. Browser booleans such as `approved: true` are ignored and are not authorization.
+6. After an administrator approves the request, install resumes with the approved `approvalId`. Core atomically consumes the approval and installs the release/package identity persisted in the approval payload, not a replacement bundle from the browser.
 7. Capability grants remain explicit. Sensitive or dangerous capabilities are never granted automatically during install or activation.
 8. Plugin-owned functional or demo data remains plugin-owned and is installed only through plugin/demo flows.
 

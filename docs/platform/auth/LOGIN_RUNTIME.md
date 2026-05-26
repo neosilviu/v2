@@ -34,6 +34,8 @@ Slot renderers use the safe declarative UI schema shared through contracts. They
 
 Password and passkey actions call Better Auth through the Web auth client. Social methods call `signIn.social({ provider })` using the runtime provider ID returned by Auth Worker.
 
+Server-side availability does not publish a method. Passkey and social methods remain draft/hidden until an Auth admin publishes the method in Auth DB. Password sign-in may bootstrap as public, but password registration is controlled separately by `auth_policies.registration_mode`; the Login UI shows account creation only when the public policy is `open`, and Auth blocks email sign-up when registration is not open.
+
 Normal Marketplace plugins cannot provide arbitrary auth code. Future auth extensions must be privileged/trusted and gated by explicit capabilities:
 
 - `auth.ui.contribute`

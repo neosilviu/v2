@@ -23,6 +23,10 @@
 - Auth Worker is a privileged service boundary. Do not treat login, session, OAuth, password or passkey handling as ordinary plugin code.
 - Login UI must be runtime-driven from Auth DB methods and declarative UI contributions. Do not hardcode provider buttons in Web, expose secrets in public config, or let normal Marketplace plugins inject executable login code.
 - Auth extension capabilities are privileged and never auto-granted: `auth.ui.contribute`, `auth.method.social.configure`, `auth.method.passkey.configure`, `auth.policy.admin`.
+- Never authorize plugin install/update from browser booleans. Use persistent one-shot approval requests tied to workspace, plugin/release/package identity, version, SHA and sensitive capability summary.
+- Public delivery route patterns must be validated declarative patterns with static or `:paramName` segments. Do not use arbitrary regexes or feature-specific route code in the host.
+- Template data/action execution must go through generic Core runtime endpoints. Core validates activation/publication/policy and must return denied, approval-required or unavailable instead of pretending unsupported plugin worker logic succeeded.
+- Auth public login methods must come from Auth DB publication state and policy. Server-side support for passkey or OAuth does not make the method public.
 - Keep D1 migrations incremental. Do not rewrite existing migration history, apply remote migrations from local work, or change assigned D1 identifiers.
 - Keep PR descriptions current with the real HEAD, validation status and remaining Faza 0 work.
 
@@ -50,7 +54,7 @@
 
 - Use `pnpm typecheck` for code validation.
 - Use `pnpm build:analyze` to report bundle size, worker size, source metrics and dependency boundaries.
-- Use `pnpm guard:architecture` as the strict platform/plugin dependency check after existing foundation violations are refactored.
+- Use `pnpm guard:architecture` as the strict platform/plugin dependency and migration drift check.
 - For Faza 0 work, also run `pnpm --filter @v2/web build` after each commit-sized change.
 
 ## Planned plugins

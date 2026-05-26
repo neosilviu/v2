@@ -6,7 +6,10 @@
 - CORS returns only configured trusted origins and permits credentials only for authentication routes.
 - Secure cookies are enabled for production.
 - GitHub OAuth is enabled only when both required server-side values exist. Runtime login config may expose the public provider ID, but never client secrets or configuration references.
+- GitHub OAuth server-side availability does not make the GitHub login method public. Social methods must be explicitly enabled and public-visible in Auth DB.
 - Passkey support is enabled server-side through Better Auth. Passkey registration requires an authenticated session; passkey-first onboarding is not enabled by default and needs an explicit product and security decision.
+- Passkey login is hidden until the Auth method is published and `auth_policies.allow_passkey_signin` is enabled.
+- Password registration is controlled by `auth_policies.registration_mode`; email sign-up is rejected unless registration is `open`.
 - Auth DB is isolated from Core and all feature-plugin databases.
 - The only public Auth configuration endpoint is `GET /public/auth/login-config`. It returns enabled public methods, display labels/order, safe provider IDs, published declarative UI contributions and feature availability.
 - Admin Auth configuration routes are protected by temporary bootstrap admin access until RBAC lands. They must move to RBAC/policy checks and audit events before normal operation.
