@@ -58,7 +58,7 @@ export function runtimeSurfaceUrl(surfaceId: string): string { return `${coreUrl
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(`/workspaces/${workspaceId}/layout`)).layout; }
 export async function saveLayout(state: ShellState): Promise<void> { await json("/layouts", { method: "PUT", body: JSON.stringify({ workspaceId, layout: { zones: state.zones, placements: state.placements } }) }); }
 export async function loadActivePlugins(): Promise<string[]> { return (await json<{ active: string[] }>(`/workspaces/${workspaceId}/plugins`)).active; }
-export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> { return (await json<{ surfaces: SurfaceContribution[] }>(`/workspaces/${workspaceId}/ui/surfaces`)).surfaces; }
+export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> { return (await json<{ surfaces: SurfaceContribution[] }>(`/runtime/ui/surfaces?workspaceId=${encodeURIComponent(workspaceId)}`)).surfaces; }
 export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> { return (await json<{ tabs: RuntimeSettingsTab[] }>(`/workspaces/${workspaceId}/settings/tabs`)).tabs; }
 export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTabResolution> { return json<RuntimeSettingsTabResolution>(`/workspaces/${workspaceId}/settings/tabs/${encodeURIComponent(tabId)}`); }
 export async function saveSettingsTabOrder(tabIds: string[]): Promise<void> { await json(`/workspaces/${workspaceId}/settings/tabs/order`, { method: "POST", body: JSON.stringify({ tabIds }) }); }
