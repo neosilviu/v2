@@ -181,6 +181,35 @@ function testNoImplicitWorkspaceOwnerBootstrap() {
   pass("Workspace owner bootstrap is explicit and not a permission side effect");
 }
 
+function testProductionRuntimeHardening() {
+  const coreIndex = fs.readFileSync(path.join(root, "apps/core-worker/src/index.ts"), "utf8");
+  const repoSource = fs.readFileSync(path.join(root, "apps/core-worker/src/repository.ts"), "utf8");
+  const authSource = fs.readFileSync(path.join(root, "apps/auth-worker/src/auth.ts"), "utf8");
+  const authIndex = fs.readFileSync(path.join(root, "apps/auth-worker/src/index.ts"), "utf8");
+  const websiteWorker = fs.readFileSync(path.join(root, "plugins/website-studio/server/worker.ts"), "utf8");
+  const mailContracts = fs.readFileSync(path.join(root, "packages/mail-contracts/src/index.ts"), "utf8");
+
+  if (!mailContracts.includes("transactional-http")) fail("Core Mail contracts do not expose a Worker-compatible transactional-http provider");
+  if (repoSource.includes("provider.kind === \"mock-development-only\" || smtpReady")) fail("CoreRepository.sendMail still marks SMTP as sent from safe config flags");
+  if (!repoSource.includes("Mail provider response did not confirm delivery acceptance")) fail("Core Mail delivery does not require provider confirmation before sent");
+  if (!authSource.includes("sendVerificationEmail") || !authSource.includes("sendResetPassword") || !authSource.includes("core.internal/internal/workspaces")) fail("Better Auth verification/reset are not routed through Core Mail Runtime");
+  if (!authIndex.includes("/setup/owner/sign-up/email") || !coreIndex.includes("/internal/setup/owner/consume")) fail("First owner setup does not expose a dedicated token-authorized signup/finalization flow");
+
+  for (const route of ["/runtime/plugins", "/runtime/tools", "/runtime/providers", "/plugins/installed", "/workspaces/:workspaceId/plugins", "/workspaces/:workspaceId/ui/surfaces"]) {
+    const routePosition = coreIndex.indexOf(`app.get("${route}"`);
+    const body = routePosition >= 0 ? coreIndex.slice(routePosition, routePosition + 520) : "";
+    if (!body.includes("requirePermission(c")) fail(`Core private route ${route} does not visibly enforce workspace RBAC`);
+  }
+  for (const route of ["/tools/execute", "/runtime/ui/data", "/runtime/ui/actions"]) {
+    const routePosition = coreIndex.indexOf(`app.post("${route}"`);
+    const body = routePosition >= 0 ? coreIndex.slice(routePosition, routePosition + 1400) : "";
+    if (!body.includes("requireAllPermissions(c") && !body.includes("requirePermission(c")) fail(`Core private route ${route} does not visibly enforce user permissions`);
+  }
+  if (!coreIndex.includes("verifyDnsDomain") || !coreIndex.includes("cloudflare-dns.com/dns-query") || coreIndex.includes("input.status !== \"draft\" && input.status !== \"verifying\" && input.status !== \"verified\"")) fail("Domain verification can still bypass DNS verification");
+  if (!websiteWorker.includes("plugin-runtime.internal") || !websiteWorker.includes("not_authorized")) fail("Website Studio worker is not restricted to the internal runtime binding");
+  pass("Production runtime hardening source scan completed");
+}
+
 function testMigrationDrift() {
   if (!process.argv.includes("--check-migrations")) {
     note("Migration drift check skipped; run `pnpm test:generated -- --check-migrations` for Drizzle generate checks");
@@ -223,6 +252,7 @@ testManifestContracts(manifests);
 testRuntimeFirstArchitecture();
 testAuthRuntimeBootstrapPolicy();
 testNoImplicitWorkspaceOwnerBootstrap();
+testProductionRuntimeHardening();
 testMigrationDrift();
 await testHttpScenarios();
 console.log("==================");

@@ -22,6 +22,7 @@ const authDomain = value("--auth-domain", "");
 const ttlHours = Number(value("--ttl-hours", "24")) || 24;
 const local = flag("--local");
 const execute = flag("--execute") || local;
+const printToken = flag("--print-token") || flag("--break-glass-print-token");
 
 if (!ownerEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ownerEmail)) {
   console.error("Missing or invalid --owner email.");
@@ -88,4 +89,8 @@ console.log("Workspace provisioning request created.");
 console.log(`Workspace: ${workspaceId}`);
 console.log(`Owner: ${ownerEmail}`);
 console.log(`Expires: ${expiresAt}`);
-console.log(`One-time setup URL: ${setupUrl}`);
+if (printToken) {
+  console.log(`Break-glass one-time setup URL: ${setupUrl}`);
+} else {
+  console.log("One-time setup URL suppressed. Send owner_setup through Core Mail Runtime or rerun with --break-glass-print-token for explicit recovery.");
+}

@@ -89,9 +89,9 @@ function coreSqlLocal(sql) {
 }
 
 function provisionWorkspaceLocal() {
-  const result = spawnSync("node", ["scripts/provision-workspace.mjs", "--local", "--workspace", workspaceId, "--name", "Local Smoke Workspace", "--owner", email, "--ttl-hours", "2"], { encoding: "utf8", stdio: "pipe" });
+  const result = spawnSync("node", ["scripts/provision-workspace.mjs", "--local", "--break-glass-print-token", "--workspace", workspaceId, "--name", "Local Smoke Workspace", "--owner", email, "--ttl-hours", "2"], { encoding: "utf8", stdio: "pipe" });
   if (result.status !== 0) throw new Error((result.stderr || result.stdout || "workspace provisioning failed").trim());
-  const match = result.stdout.match(/One-time setup URL: \/setup\/owner\?token=([^\s]+)/);
+  const match = result.stdout.match(/Break-glass one-time setup URL: \/setup\/owner\?token=([^\s]+)/);
   if (!match?.[1]) throw new Error(`provisioning output did not include a setup token: ${result.stdout}`);
   record("Workspace provisioning request created", "ok", "local only");
   return decodeURIComponent(match[1]);
