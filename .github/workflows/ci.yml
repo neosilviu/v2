@@ -48,6 +48,59 @@ jobs:
           fi
           pnpm smoke:local -- --prepare-auth-db 2>&1 | tee /tmp/v2-smoke.log
         shell: bash
+      - name: Build smoke progress markers
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p /tmp/v2-smoke-markers
+          grep -Fq "[ok] Core session with Better Auth cookie" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/core-session || true
+          grep -Fq "[ok] Owner setup consumed explicitly" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/owner-consumed || true
+          grep -Fq "[ok] Runtime Settings tabs with session" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/settings-tabs || true
+          grep -Fq "[ok] Website Studio local runtime deployment confirmed" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/website-runtime || true
+          grep -Fq "[ok] Website publish executes after approval" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/website-publish || true
+          grep -Fq "[ok] Website public write action denied by policy" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/public-policy || true
+      - name: Upload marker core session reached
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-core-session-reached
+          path: /tmp/v2-smoke-markers/core-session
+          if-no-files-found: ignore
+      - name: Upload marker owner consumed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-owner-consumed
+          path: /tmp/v2-smoke-markers/owner-consumed
+          if-no-files-found: ignore
+      - name: Upload marker settings tabs reached
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-settings-tabs-reached
+          path: /tmp/v2-smoke-markers/settings-tabs
+          if-no-files-found: ignore
+      - name: Upload marker website runtime reached
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-website-runtime-reached
+          path: /tmp/v2-smoke-markers/website-runtime
+          if-no-files-found: ignore
+      - name: Upload marker website publish reached
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-website-publish-reached
+          path: /tmp/v2-smoke-markers/website-publish
+          if-no-files-found: ignore
+      - name: Upload marker public policy reached
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-public-policy-reached
+          path: /tmp/v2-smoke-markers/public-policy
+          if-no-files-found: ignore
       - name: Upload local smoke diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
