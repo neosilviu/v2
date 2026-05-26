@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { notification } from "@v2/feedback-runtime";
 import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadInstalledPlugins, loadLayout, loadRuntimeTools, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout } from "./api";
+import { decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadLayout, loadRuntimeTools, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe } from "./api";
+import { signOutAuth, updateAuthProfile } from "./auth-api";
 import { composeShellFromSurfaces, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { CommandPalette } from "./platform/CommandPalette";
@@ -16,12 +17,18 @@ import { LoginPage } from "./LoginPage";
 import { PublicPage } from "./PublicPage";
 import { SettingsPage } from "./SettingsPage";
 
-type Page = "overview" | "plugins" | "approvals" | "settings" | `plugin:${string}`;
+type Page = "overview" | "plugins" | "approvals" | "settings" | "profile" | `plugin:${string}`;
 type PendingApproval = { tool: ToolContribution; approvalId: string };
 type AuthStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
 
 function protectedRedirectTarget() {
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function initialPage(): Page {
+  if (window.location.pathname === "/settings" || window.location.pathname === "/marketplace") return "settings";
+  if (window.location.pathname === "/profile") return "profile";
+  return "overview";
 }
 
 function RuntimeSurface({ surface }: { surface: SurfaceContribution }) {
@@ -34,16 +41,32 @@ function RuntimeSurface({ surface }: { surface: SurfaceContribution }) {
   return <SurfaceCard><small>runtime surface</small><h2>{surface.title}</h2><p>{surface.id}</p><Badge>{surface.kind}</Badge></SurfaceCard>;
 }
 
-function UserMenu() {
+function displayUser(session: CoreSession | null) {
+  const user = session?.user;
+  return user?.name?.trim() || user?.email || "Workspace user";
+}
+
+function userInitial(session: CoreSession | null) {
+  return displayUser(session).slice(0, 1).toUpperCase() || "W";
+}
+
+function UserMenu({ session, onOpenProfile, onOpenSettings, onSignOut }: { session: CoreSession | null; onOpenProfile: () => void; onOpenSettings: () => void; onSignOut: () => void }) {
   const [open, setOpen] = useState(false);
+  const closeAndRun = (action: () => void) => {
+    setOpen(false);
+    action();
+  };
   return <div className="user-menu">
     <button className="user-button" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-      <span className="avatar">W</span><span>Default</span>
+      <span className="avatar">{userInitial(session)}</span><span>{displayUser(session)}</span>
     </button>
     {open ? <div className="user-popover">
-      <strong>Current workspace</strong>
+      <strong>{displayUser(session)}</strong>
+      {session?.user?.email ? <small>{session.user.email}</small> : null}
       <small>workspace/default</small>
-      <small>Core auth controls are provided by the auth service.</small>
+      <button type="button" onClick={() => closeAndRun(onOpenProfile)}>Edit profile</button>
+      <button type="button" onClick={() => closeAndRun(onOpenSettings)}>Settings</button>
+      <button type="button" onClick={() => closeAndRun(onSignOut)}>Sign out</button>
     </div> : null}
   </div>;
 }
@@ -84,6 +107,70 @@ function SessionCheckPage({ unavailable = false }: { unavailable?: boolean }) {
   </main>;
 }
 
+function ProfilePage({ session, onSessionChanged, onOpenSecurity, emit }: { session: CoreSession | null; onSessionChanged: (session: CoreSession) => void; onOpenSecurity: () => void; emit: (item: Notification) => void }) {
+  const [name, setName] = useState(session?.user?.name ?? "");
+  const [rbac, setRbac] = useState<RbacMe | null>(null);
+  const [status, setStatus] = useState("Profile ready");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => setName(session?.user?.name ?? ""), [session?.user?.name]);
+
+  useEffect(() => {
+    let alive = true;
+    void loadCurrentRbac().then((loaded) => {
+      if (!alive) return;
+      setRbac(loaded);
+    }).catch(() => {
+      if (alive) setStatus("RBAC summary unavailable");
+    });
+    return () => { alive = false; };
+  }, []);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setStatus("Saving profile...");
+    try {
+      await updateAuthProfile({ name });
+      const nextSession = await loadCoreSession();
+      onSessionChanged(nextSession);
+      setStatus("Profile saved");
+      emit(notification("success", "Profile saved", "Your account display name was updated."));
+    } catch {
+      setStatus("Profile could not be saved");
+      emit(notification("error", "Profile not saved", "Auth profile update failed."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <div className="page-stack">
+    <SurfaceCard>
+      <div className="surface-header">
+        <div><small>account</small><h2>Edit profile</h2><p>{status}</p></div>
+        <Badge>{session?.isAdmin ? "admin" : "member"}</Badge>
+      </div>
+      <form className="profile-form" onSubmit={submit}>
+        <label className="field">Display name<input value={name} onChange={(event) => setName(event.currentTarget.value)} placeholder="Your name" /></label>
+        <div className="actions"><Button className="primary" type="submit" disabled={saving}>{saving ? "Saving..." : "Save profile"}</Button><Button type="button" onClick={onOpenSecurity}>Security settings</Button></div>
+      </form>
+    </SurfaceCard>
+    <div className="settings-grid">
+      <section className="settings-subpanel">
+        <h3>Account</h3>
+        <p>Email: {session?.user?.email ?? "unknown"}</p>
+        <p>User ID: {session?.user?.id ?? "unknown"}</p>
+      </section>
+      <section className="settings-subpanel">
+        <h3>Workspace access</h3>
+        <p>Roles: {rbac?.roles.join(", ") || "none"}</p>
+        <p>Permissions: {rbac?.permissions.length ?? 0}</p>
+        {rbac?.recoveryAdmin ? <p className="message">Recovery admin is active for this user.</p> : null}
+      </section>
+    </div>
+  </div>;
+}
+
 export function App() {
   if (window.location.pathname === "/login") return <LoginPage />;
   if (window.location.pathname.startsWith("/public/")) return <PublicPage />;
@@ -92,9 +179,10 @@ export function App() {
   const [activePluginIds, setActivePluginIds] = useState<Set<string>>(new Set());
   const [tools, setTools] = useState<ToolContribution[]>([]);
   const [shell, setShell] = useState<ShellState>(emptyShell);
-  const [activePage, setActivePage] = useState<Page>(window.location.pathname === "/settings" || window.location.pathname === "/marketplace" ? "settings" : "overview");
+  const [activePage, setActivePage] = useState<Page>(initialPage());
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
+  const [session, setSession] = useState<CoreSession | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [notice, setNotice] = useState("runtime ready · no feature plugin required");
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -104,10 +192,12 @@ export function App() {
   useEffect(() => {
     void loadCoreSession().then((session) => {
       if (!session.authenticated) {
+        setSession(null);
         setAuthStatus("anonymous");
         setNotice("auth required · workspace runtime data locked");
         return null;
       }
+      setSession(session);
       setAuthStatus("authenticated");
       return Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadRuntimeTools(), loadLayout(), loadWorkspaceUiSurfaces()]);
     }).then((result) => {
@@ -121,6 +211,7 @@ export function App() {
       setShell(layout ? { ...composed, zones: layout.zones, placements: layout.placements } : composed);
     }).catch((error) => {
       if (isCoreAuthRequiredError(error)) {
+        setSession(null);
         setAuthStatus("anonymous");
         setNotice("auth required · workspace runtime data locked");
         return;
@@ -136,8 +227,15 @@ export function App() {
   const pluginId = activePage.startsWith("plugin:") ? activePage.slice(7) : null;
   const selectedPlugin = activePlugins.find((plugin) => plugin.id === pluginId) ?? null;
   const selectedPluginSurfaces = selectedPlugin ? shell.surfaces.filter((surface) => surface.id.startsWith(`${selectedPlugin.id}.`)) : [];
-  const title = selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : "Dashboard");
-  const subtitle = selectedPlugin ? "Native plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Runtime-composed platform and plugin administration" : "Runtime overview and active workspace";
+  const title = selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : activePage === "profile" ? "Profile" : "Dashboard");
+  const subtitle = selectedPlugin ? "Native plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Runtime-composed platform and plugin administration" : activePage === "profile" ? "Account profile and workspace access" : "Runtime overview and active workspace";
+
+  const openPage = (page: Page, path = "/") => {
+    setActivePage(page);
+    window.history.replaceState(null, "", path);
+  };
+
+  const openSecuritySettings = () => openPage("settings", "/settings?tab=platform.settings.security");
 
   const runTool = async (tool: ToolContribution, approvalId?: string) => {
     setPaletteOpen(false);
@@ -193,6 +291,18 @@ export function App() {
     }
   };
 
+  const signOut = async () => {
+    try {
+      await signOutAuth();
+      setSession(null);
+      setAuthStatus("anonymous");
+      window.history.replaceState(null, "", "/login");
+      emit(notification("success", "Signed out", "The current Auth session was closed."));
+    } catch {
+      emit(notification("error", "Sign out failed", "Auth service did not close the session."));
+    }
+  };
+
   if (authStatus === "checking") return <SessionCheckPage />;
   if (authStatus === "anonymous") return <LoginPage redirectTo={protectedRedirectTarget()} />;
   if (authStatus === "unavailable") return <SessionCheckPage unavailable />;
@@ -200,19 +310,19 @@ export function App() {
   return <>
     <div className="app-shell">
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => setActivePage("overview")}><strong>v2</strong><Badge>runtime</Badge></button>
+        <button className="brand" type="button" onClick={() => openPage("overview")}><strong>v2</strong><Badge>runtime</Badge></button>
         <button className="search" type="button" onClick={() => setPaletteOpen(true)}>Search commands or tools</button>
-        <UserMenu />
+        <UserMenu session={session} onOpenProfile={() => openPage("profile", "/profile")} onOpenSettings={() => openPage("settings", "/settings")} onSignOut={() => void signOut()} />
       </header>
       <aside className="sidebar">
         <div className="sidebar-label">WORKSPACE</div>
-        <button className={activePage === "overview" ? "nav active" : "nav"} onClick={() => setActivePage("overview")}>Dashboard</button>
-        <button className={activePage === "plugins" ? "nav active" : "nav"} onClick={() => setActivePage("plugins")}>Plugins</button>
-        <button className={activePage === "approvals" ? "nav active" : "nav"} onClick={() => setActivePage("approvals")}>Approvals</button>
-        <button className={activePage === "settings" ? "nav active" : "nav"} onClick={() => setActivePage("settings")}>Settings</button>
+        <button className={activePage === "overview" ? "nav active" : "nav"} onClick={() => openPage("overview")}>Dashboard</button>
+        <button className={activePage === "plugins" ? "nav active" : "nav"} onClick={() => openPage("plugins", "/plugins")}>Plugins</button>
+        <button className={activePage === "approvals" ? "nav active" : "nav"} onClick={() => openPage("approvals", "/approvals")}>Approvals</button>
+        <button className={activePage === "settings" ? "nav active" : "nav"} onClick={() => openPage("settings", "/settings")}>Settings</button>
         <div className="sidebar-label">APPS</div>
-        {activePlugins.length ? activePlugins.map((plugin) => <button key={plugin.id} className={activePage === `plugin:${plugin.id}` ? "nav active" : "nav"} onClick={() => setActivePage(`plugin:${plugin.id}`)}>{plugin.name}</button>) : <p className="message">No active plugins</p>}
-        <div className="sidebar-account"><span className="avatar">W</span><div><strong>Default</strong><small>workspace/default</small></div></div>
+        {activePlugins.length ? activePlugins.map((plugin) => <button key={plugin.id} className={activePage === `plugin:${plugin.id}` ? "nav active" : "nav"} onClick={() => openPage(`plugin:${plugin.id}`, `/plugins/${encodeURIComponent(plugin.id)}`)}>{plugin.name}</button>) : <p className="message">No active plugins</p>}
+        <div className="sidebar-account"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>workspace/default</small></div></div>
       </aside>
       <main className="workspace">
         <div className="workspace-header">
@@ -223,6 +333,7 @@ export function App() {
         {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} onChanged={() => void refreshPlugins()} /></div> : null}
         {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
         {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
+        {activePage === "profile" ? <ProfilePage session={session} onSessionChanged={setSession} onOpenSecurity={openSecuritySettings} emit={emit} /> : null}
         {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
       </main>
       <aside className="assistant">{assistant.length ? assistant.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <div className="message">No assistant plugin surface installed.</div>}</aside>

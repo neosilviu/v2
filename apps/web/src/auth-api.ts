@@ -12,7 +12,9 @@ export async function loadLoginConfig(workspaceId = "default"): Promise<AuthPubl
 async function authJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(new URL(path, authUrl), { credentials: "include", headers: { "content-type": "application/json" }, ...init });
   if (!response.ok) throw new Error(`Auth request failed: ${response.status}`);
-  return response.json() as Promise<T>;
+  if (response.status === 204) return undefined as T;
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export type AuthSecuritySummary = {
@@ -43,4 +45,13 @@ export async function saveAuthMethod(method: AuthMethod, workspaceId = "default"
 
 export async function loadAuthUiContributions(workspaceId = "default"): Promise<AuthUiContribution[]> {
   return (await authJson<{ contributions: AuthUiContribution[] }>(`/admin/auth/ui-contributions?workspaceId=${encodeURIComponent(workspaceId)}`)).contributions;
+}
+
+export async function updateAuthProfile(input: { name: string }): Promise<void> {
+  await authJson<unknown>("/api/auth/update-user", { method: "POST", body: JSON.stringify({ name: input.name.trim() || null }) });
+}
+
+export async function signOutAuth(): Promise<void> {
+  const response = await fetch(new URL("/api/auth/sign-out", authUrl), { method: "POST", credentials: "include", headers: { "content-type": "application/json" } });
+  if (!response.ok) throw new Error(`Auth sign out failed: ${response.status}`);
 }
