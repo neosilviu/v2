@@ -18,6 +18,12 @@ const loginSlots: LoginSlot[] = [
 ];
 type PublicLoginMethod = AuthPublicLoginConfig["methods"][number];
 
+function safeRedirectTarget() {
+  const target = new URLSearchParams(window.location.search).get("redirectTo");
+  if (!target || !target.startsWith("/") || target.startsWith("//") || target.includes("\\") || target.startsWith("/public/")) return "/";
+  return target;
+}
+
 function contributionsFor(slot: LoginSlot, contributions: AuthUiContribution[]) {
   return contributions.filter((item) => item.slot === slot).sort((left, right) => left.displayOrder - right.displayOrder);
 }
@@ -46,11 +52,11 @@ function PasswordMethod({ method, passkeyAvailable, allowSignup }: { method: Pub
       ? await authClient.signIn.email({ email, password })
       : await authClient.signUp.email({ name, email, password });
     if (result.error) {
-      setStatus(result.error.message ?? "Authentication failed");
+      setStatus("Authentication failed. Check your credentials and try again.");
       return;
     }
     setStatus("signed in");
-    window.location.assign("/");
+    window.location.assign(safeRedirectTarget());
   };
 
   return <form className="login-method password-method" onSubmit={(event) => void submit(event)}>
@@ -67,7 +73,7 @@ function SocialMethod({ method }: { method: PublicLoginMethod }) {
   if (!method.providerId) return null;
   const provider = method.providerId;
   const signIn = async () => {
-    await authClient.signIn.social({ provider });
+    await authClient.signIn.social({ provider, callbackURL: safeRedirectTarget() });
   };
   return <button className="login-method social-method" type="button" onClick={() => void signIn()}>
     <span>{method.title}</span><Badge>{method.providerId}</Badge>
@@ -80,11 +86,11 @@ function PasskeyMethod({ method, supported }: { method: PublicLoginMethod; suppo
     setStatus("checking passkey");
     const result = await authClient.signIn.passkey();
     if (result.error) {
-      setStatus(result.error.message ?? "Passkey sign-in failed");
+      setStatus("Passkey sign-in failed. Try another published method.");
       return;
     }
     setStatus("signed in");
-    window.location.assign("/");
+    window.location.assign(safeRedirectTarget());
   };
   return <div className="login-method passkey-method">
     <div className="method-header"><strong>{method.title}</strong><Badge>{supported ? "available" : "unsupported"}</Badge></div>
@@ -104,6 +110,7 @@ function LoginMethods({ config }: { config: AuthPublicLoginConfig }) {
 
   return <>
     {byType("password").map((method) => <PasswordMethod key={method.id} method={method} passkeyAvailable={passkeySupported && config.features.passkey} allowSignup={config.policy.registrationMode === "open"} />)}
+    {config.policy.registrationMode === "invitation-only" ? <div className="login-method"><div className="method-header"><strong>Invitation required</strong><Badge>registration</Badge></div><p className="login-status">Account creation is available only through an invitation.</p></div> : null}
     {byType("social").map((method) => <SocialMethod key={method.id} method={method} />)}
     {byType("passkey").map((method) => <PasskeyMethod key={method.id} method={method} supported={passkeySupported} />)}
   </>;
@@ -119,7 +126,7 @@ export function LoginPage() {
 
   return <main className="login-page">
     <SurfaceCard className="login-panel">
-      <div className="surface-header"><div><small>auth runtime</small><h2>Sign in</h2></div><Badge>public</Badge></div>
+      <div className="surface-header"><div><small>auth runtime</small><h2>Sign in</h2></div><Badge>{config?.policy.registrationMode === "open" ? "signup open" : "public"}</Badge></div>
       {error ? <p className="login-status">{error}</p> : null}
       {!config && !error ? <p>Loading login configuration...</p> : null}
       {config ? loginSlots.map((slot) => {
@@ -131,6 +138,7 @@ export function LoginPage() {
         </div>;
         return <SlotRenderer key={slot} slot={slot} contributions={config.uiContributions} />;
       }) : null}
+      {config && !config.features.social && !config.features.passkey ? <p className="login-status">Social and passkey methods are hidden until explicitly published by an Auth administrator.</p> : null}
     </SurfaceCard>
   </main>;
 }
