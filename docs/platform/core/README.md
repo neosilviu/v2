@@ -1,6 +1,8 @@
 # Core Worker
 
-Core is the generic v2 control plane. It owns workspaces, installed plugin manifest records, package metadata, activation, capability grants, settings, shell layout and audit events. It does not import concrete feature-plugin implementations.
+Core is the generic v2 control plane. It owns workspaces, installed plugin manifest records, package metadata, activation, capability grants, settings, shell layout, transactional mail delivery and audit events. It does not import concrete feature-plugin implementations.
+
+SMTP and future platform transactional mail providers are Core configuration. Gmail inbox/reply integrations remain Local Node customer communication channels.
 
 ## Routes and access
 
@@ -19,6 +21,6 @@ Installed manifests are read from D1 and validated against `@v2/plugin-contracts
 - `PLUGIN_PACKAGES`: R2 storage for validated ZIP archives.
 - `AUTH`: service binding to the Auth Worker for session resolution.
 - `APP_ORIGIN`, `TRUSTED_ORIGINS`: permitted credentialed browser origins.
-- `PLATFORM_ADMIN_EMAILS`: bootstrap administrator list configured server-side.
+- `RECOVERY_ADMIN_ENABLED`, `RECOVERY_ADMIN_EMAILS`: break-glass recovery access only. `PLATFORM_ADMIN_EMAILS` is legacy compatibility and must not be the normal administration path.
 
 The existing Core D1 identifier is intentionally retained in `wrangler.jsonc` at project-owner request.

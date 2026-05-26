@@ -50,7 +50,7 @@ export const localNodeManifest = definePlugin({
         ],
         slots: [{ id: "local-node.settings.header", slot: "header", blocks: [
           { type: "text", text: "Local Node connects this workspace to a separately installed runner. This slice exposes configuration and health boundaries only.", tone: "muted" },
-          { type: "metric", label: "Runner", value: "Mock/dev optional", detail: "Print, Gmail and WhatsApp require external credentials and hardware before real use." }
+          { type: "metric", label: "Runner", value: "Mock/dev optional", detail: "Print, Gmail channels and WhatsApp channels require external credentials and hardware before real use." }
         ] }]
       }
     }],
@@ -67,7 +67,7 @@ export const localNodeManifest = definePlugin({
       data: { rows: [
         { module: "Runner", status: "not-configured", detail: "Set runner URL and pair from Settings > Local Node." },
         { module: "Print Center", status: "not-configured", detail: "Real printers require runner and OS configuration." },
-        { module: "Gmail", status: "not-configured", detail: "OAuth is intentionally outside this slice." },
+        { module: "Gmail channel", status: "not-configured", detail: "Customer inbox, threads, attachments and replies belong to the Local Node Runner, not Core transactional mail." },
         { module: "WhatsApp", status: "not-configured", detail: "Session pairing is intentionally outside this slice." }
       ] },
       actions: [{ id: "local-node.production.refresh", title: "Refresh status", commandId: "localnode.health", variant: "primary" }],

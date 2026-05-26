@@ -8,7 +8,9 @@ Current vertical slice:
 - Local Production status surface;
 - typed contracts in `@v2/local-node-contracts`;
 - development mock runner exposing `GET /health`;
-- explicit `not-configured` / `mock-development-only` states for print, Gmail and WhatsApp.
+- explicit `not-configured` / `mock-development-only` states for print, Gmail customer channels and WhatsApp customer channels.
+
+Gmail in Local Node is a communication channel for inbox threads, messages, attachments and replies. It is not the platform transactional sender for owner setup, workspace invitations, verification or password reset; those messages are sent by Core Mail Runtime.
 
 Not implemented in this slice:
 

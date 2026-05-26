@@ -12,9 +12,9 @@
 - Password registration is controlled by `auth_policies.registration_mode`; email sign-up is rejected unless registration is `open`.
 - Auth DB is isolated from Core and all feature-plugin databases.
 - The only public Auth configuration endpoint is `GET /public/auth/login-config`. It returns enabled public methods, display labels/order, safe provider IDs, published declarative UI contributions and feature availability.
-- Admin Auth configuration routes are protected by temporary bootstrap admin access until RBAC lands. They must move to RBAC/policy checks and audit events before normal operation.
+- Normal Auth administration is authorized by Core workspace RBAC and proxied to Auth over an internal service binding. Direct admin access is recovery-only.
 - Ordinary Marketplace plugins cannot inject code into login, session, OAuth or passkey handling. Future auth extensions require privileged capabilities and explicit approval.
-- Email verification and forgot/reset password require a real server-side email provider. Do not add ad hoc email sending or expose reset tokens in logs or public payloads.
+- Email verification and forgot/reset password use Core Mail Runtime. Do not add ad hoc email sending or expose reset tokens in logs or public payloads.
 ## Auth Production Security Status
 
 Auth Worker remains the only authority for identity, sessions, password, passkeys and OAuth.
@@ -24,9 +24,9 @@ Current production closure:
 - Runtime login method publication is separate from server-side provider availability.
 - Passkey and social providers are not public by default.
 - Registration is disabled by default unless Auth runtime policy is changed by an administrator.
-- Email verification and password reset remain unavailable until a server-side mail delivery adapter exists.
-- Enabling `requireEmailVerification` is blocked without that adapter.
-- Admin Auth APIs are protected by the existing bootstrap admin check and must move to workspace RBAC in Faza 1.
+- Email verification and password reset remain unavailable until Core has an active transactional mail provider.
+- Enabling `requireEmailVerification` is blocked without that provider.
+- Auth admin APIs are not the normal browser path; Settings calls Core, Core checks RBAC, then Core calls Auth internally.
 - Public login config does not expose secrets or configuration refs.
 
 Domain trust rule:

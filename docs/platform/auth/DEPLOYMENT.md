@@ -13,9 +13,9 @@ Runtime login configuration is stored in Auth DB tables:
 - `auth_methods` for password, passkey and server-supported social methods.
 - `auth_ui_contributions` for safe declarative login slot content.
 
-`PLATFORM_ADMIN_EMAILS` is a temporary bootstrap/recovery setting for Auth admin configuration endpoints. Keep it narrow and remove it from the normal path when RBAC is available.
+`RECOVERY_ADMIN_ENABLED` and `RECOVERY_ADMIN_EMAILS` are break-glass recovery settings for Auth admin configuration endpoints. Keep them disabled in normal operation. `PLATFORM_ADMIN_EMAILS` is legacy compatibility only.
 
-Email verification and forgot/reset password are intentionally deferred until a trusted email provider is configured server-side.
+Email verification and forgot/reset password require Core Mail Runtime with an active transactional provider. SMTP is the implemented production baseline; local mock delivery is development-only.
 ## Auth Deployment Status
 
 Production Auth deployment requires:
@@ -25,6 +25,6 @@ Production Auth deployment requires:
 - HTTPS and secure cookies;
 - stable passkey RP ID/origin mapping;
 - OAuth callback URLs that match verified domains;
-- server-side mail delivery before email verification or reset password is enabled.
+- Core Mail Runtime before email verification or reset password is enabled.
 
 The current foundation exposes protected admin APIs and safe public login config, but does not yet implement the complete domain verification to Auth trusted-origin replication workflow.

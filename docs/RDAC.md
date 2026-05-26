@@ -69,7 +69,7 @@ Platform Settings tabs are:
 
 Plugin settings tabs are runtime contributions registered from installed and active plugin releases. Web must not hardcode plugin tabs.
 
-General owns workspace display metadata, locale, timezone, currency, business identity metadata, notification sender status and service status. Security owns Auth policy publication, methods, login contribution publication, sessions/passkeys overview and bootstrap-admin warnings. Domains owns verified workspace domains, public delivery mappings and the safe boundary for Auth trusted origins. Marketplace owns runtime catalog/releases/install approval status. Interface owns shell zones, placements, theme tokens and enabled surfaces.
+General owns workspace display metadata, locale, timezone, currency, business identity metadata, notification sender status and service status. Security owns Auth policy publication, methods, login contribution publication, sessions/passkeys overview and bootstrap-admin warnings. Domains owns verified workspace domains, public delivery mappings and the safe boundary for Auth trusted origins. Core Mail Runtime owns transactional SMTP/provider configuration, mail templates and delivery events. Gmail and WhatsApp are Local Node customer communication channels, not providers for owner setup, invitations, verification or reset. Marketplace owns runtime catalog/releases/install approval status. Interface owns shell zones, placements, theme tokens and enabled surfaces.
 
 ### Closure status
 
