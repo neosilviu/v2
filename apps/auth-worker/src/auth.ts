@@ -2,6 +2,7 @@ import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { passkey } from "@better-auth/passkey";
 import { betterAuth } from "better-auth";
 import { drizzle } from "drizzle-orm/d1";
+import type { Fetcher } from "@cloudflare/workers-types";
 import * as schema from "./db/schema";
 
 export interface AuthEnv {
@@ -16,6 +17,8 @@ export interface AuthEnv {
   RECOVERY_ADMIN_EMAILS?: string;
   RECOVERY_ADMIN_ENABLED?: string;
   PLATFORM_ADMIN_EMAILS?: string;
+  CORE?: Fetcher;
+  AUTH_WORKSPACE_ID?: string;
 }
 
 export type AuthConfig = {
@@ -28,6 +31,8 @@ export type AuthConfig = {
   passkey: { rpID: string; rpName: string; origin: string };
   adminEmails: string[];
   recoveryAdminEnabled: boolean;
+  core?: Fetcher;
+  workspaceId: string;
 };
 
 export type AuthConfigResult = { ok: true; config: AuthConfig } | { ok: false; message: string };
@@ -54,7 +59,7 @@ export function parseAuthConfig(env: AuthEnv): AuthConfigResult {
     if (production && trustedOrigins.some((origin) => { const url = new URL(origin); return url.protocol !== "https:" || isLocalOrigin(url); })) throw new Error("Production trusted origins must be HTTPS and non-local");
     const github = env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET ? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } : undefined;
     const recoveryAdminEnabled = env.RECOVERY_ADMIN_ENABLED === "true";
-    return { ok: true, config: { db: env.AUTH_DB, secret, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin }, adminEmails: recoveryAdminEnabled ? parseOrigins(env.RECOVERY_ADMIN_EMAILS || env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase()) : [], recoveryAdminEnabled } };
+    return { ok: true, config: { db: env.AUTH_DB, secret, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin }, adminEmails: recoveryAdminEnabled ? parseOrigins(env.RECOVERY_ADMIN_EMAILS || env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase()) : [], recoveryAdminEnabled, ...(env.CORE ? { core: env.CORE } : {}), workspaceId: env.AUTH_WORKSPACE_ID || "default" } };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Invalid authentication configuration" };
   }
@@ -73,12 +78,38 @@ export async function isAuthAdmin(config: AuthConfig, headers: Headers) {
 
 export function createAuth(config: AuthConfig) {
   const db = drizzle(config.db, { schema });
+  async function sendCoreMail(input: { purpose: "verify_email" | "reset_password"; templateKey: "verify_email" | "reset_password"; to: string; url: string }) {
+    if (!config.core) throw new Error("Core Mail Runtime binding is not configured.");
+    const response = await config.core.fetch(`https://core.internal/internal/workspaces/${encodeURIComponent(config.workspaceId)}/mail/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        purpose: input.purpose,
+        templateKey: input.templateKey,
+        to: input.to,
+        variables: input.purpose === "verify_email" ? { verificationUrl: input.url } : { resetUrl: input.url },
+      }),
+    });
+    if (!response.ok) throw new Error("Core Mail Runtime request failed.");
+    const result = await response.json() as { ok?: unknown; status?: unknown; errorSafe?: unknown };
+    if (result.ok !== true || result.status !== "sent") throw new Error(typeof result.errorSafe === "string" ? result.errorSafe : "Core Mail Runtime did not confirm delivery.");
+  }
   return betterAuth({
     secret: config.secret,
     baseURL: config.baseURL,
     trustedOrigins: config.trustedOrigins,
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
-    emailAndPassword: { enabled: true },
+    emailAndPassword: {
+      enabled: true,
+      sendResetPassword: async ({ user, url }) => {
+        await sendCoreMail({ purpose: "reset_password", templateKey: "reset_password", to: user.email, url });
+      },
+    },
+    emailVerification: {
+      sendVerificationEmail: async ({ user, url }) => {
+        await sendCoreMail({ purpose: "verify_email", templateKey: "verify_email", to: user.email, url });
+      },
+    },
     plugins: [passkey({ rpID: config.passkey.rpID, rpName: config.passkey.rpName, origin: config.passkey.origin, registration: { requireSession: true } })],
     ...(config.github ? { socialProviders: { github: config.github } } : {}),
     advanced: { cookiePrefix: "v2-auth", useSecureCookies: config.production },

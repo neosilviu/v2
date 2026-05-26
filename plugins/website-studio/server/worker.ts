@@ -113,6 +113,13 @@ async function installDemo(db: D1Database, workspaceId: string) {
   await upsertSection(db, contactId, 10, { kind: "contact", content: { heading: "Contact", body: "Replace this demo copy before going live." }, aiContextEnabled: false });
 }
 
+app.use("*", async (c, next) => {
+  const url = new URL(c.req.url);
+  if (url.hostname !== "plugin-runtime.internal" || c.req.header("origin")) {
+    return c.json(errorResponse(failure("not_authorized", "Website Studio runtime is only available through the internal Core binding.")), 403);
+  }
+  await next();
+});
 app.get("/health", (c) => c.json({ ok: true, service: "website-studio" }));
 app.get("/workspaces/:workspaceId/pages", async (c) => {
   const workspaceId = c.req.param("workspaceId");

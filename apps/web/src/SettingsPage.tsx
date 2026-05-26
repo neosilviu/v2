@@ -247,7 +247,7 @@ function MailDeliveryPanel({ emit }: { emit: (item: Notification) => void }) {
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const kind = String(form.get("kind") ?? "smtp") as "smtp" | "mock-development-only";
+    const kind = String(form.get("kind") ?? "transactional-http") as "smtp" | "transactional-http" | "mock-development-only";
     setBusy(true);
     try {
       const loaded = await configureMailProvider({
@@ -314,7 +314,7 @@ function MailDeliveryPanel({ emit }: { emit: (item: Notification) => void }) {
       <Button onClick={() => void refresh()} disabled={busy}>Refresh</Button>
     </div>
     <form className="mail-form" onSubmit={submit}>
-      <label>Kind<select name="kind" defaultValue="smtp" disabled={busy}><option value="smtp">SMTP</option><option value="mock-development-only">Mock dev-only</option></select></label>
+      <label>Kind<select name="kind" defaultValue="transactional-http" disabled={busy}><option value="transactional-http">Transactional HTTP</option><option value="smtp">SMTP</option><option value="mock-development-only">Mock dev-only</option></select></label>
       <label>Label<input name="label" placeholder="Transactional SMTP" required disabled={busy} /></label>
       <label>From name<input name="fromName" placeholder="Print Center" required disabled={busy} /></label>
       <label>From email<input name="fromEmail" type="email" placeholder="no-reply@example.com" required disabled={busy} /></label>

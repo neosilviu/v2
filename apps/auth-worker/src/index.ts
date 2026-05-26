@@ -132,6 +132,38 @@ app.post("/api/auth/sign-up/email", async (c) => {
   if (policy.registrationMode !== "open") return c.json(errorResponse(failure("not_authorized", "Password registration is not open.")), 403);
   return createAuth(parsed.config).handler(c.req.raw);
 });
+app.post("/setup/owner/sign-up/email", async (c) => {
+  const parsed = parseAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  if (!parsed.config.core) return c.json(errorResponse(failure("dependency_unavailable", "Core service binding is required for owner setup.")), 503);
+  const body = await c.req.json().catch(() => null) as { token?: unknown; email?: unknown; password?: unknown; name?: unknown } | null;
+  const token = typeof body?.token === "string" ? body.token : "";
+  const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+  if (token.length < 24 || !email || typeof body?.password !== "string") return c.json(errorResponse(failure("validation_failed", "A valid owner setup token, email and password are required.")), 400);
+  const statusResponse = await parsed.config.core.fetch(`https://core.internal/setup/owner?token=${encodeURIComponent(token)}`);
+  if (!statusResponse.ok) return c.json(errorResponse(failure("not_found", "Owner setup link is not available.")), 404);
+  const status = await statusResponse.json() as { setup?: { ownerEmail?: string; status?: string } };
+  if (status.setup?.status !== "pending" || status.setup.ownerEmail?.toLowerCase() !== email) return c.json(errorResponse(failure("not_authorized", "Owner setup token is not valid for this email.")), 403);
+  const signUpRequest = new Request(new URL("/api/auth/sign-up/email", parsed.config.baseURL).toString(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password: body.password, name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : email }),
+  });
+  const response = await createAuth(parsed.config).handler(signUpRequest);
+  if (!response.ok) return response;
+  const payload = await response.clone().json().catch(() => ({})) as { user?: { id?: unknown; email?: unknown; name?: unknown } };
+  const user = payload.user && typeof payload.user.id === "string" && typeof payload.user.email === "string"
+    ? { id: payload.user.id, email: payload.user.email, ...(typeof payload.user.name === "string" ? { name: payload.user.name } : {}) }
+    : await parsed.config.db.prepare("SELECT id, email, name FROM user WHERE lower(email) = lower(?) LIMIT 1").bind(email).first<{ id: string; email: string; name: string }>();
+  if (!user) return c.json(errorResponse(failure("conflict", "Owner account was not created.")), 409);
+  const consumeResponse = await parsed.config.core.fetch("https://core.internal/internal/setup/owner/consume", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token, user }),
+  });
+  if (!consumeResponse.ok) return c.json(errorResponse(failure("conflict", "Owner account was created but workspace membership could not be finalized. Retry with the same setup link.")), 409);
+  return response;
+});
 app.on(["POST", "GET"], "/api/auth/*", (c) => {
   const parsed = parseAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);

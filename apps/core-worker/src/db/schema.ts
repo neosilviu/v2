@@ -89,7 +89,7 @@ export const workspaceDomains = sqliteTable("workspace_domains", {
 export const workspaceMailProviders = sqliteTable("workspace_mail_providers", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  kind: text("kind", { enum: ["smtp", "mock-development-only"] }).notNull(),
+  kind: text("kind", { enum: ["smtp", "transactional-http", "mock-development-only"] }).notNull(),
   label: text("label").notNull(),
   status: text("status", { enum: ["draft", "configured", "active", "disabled", "error"] }).notNull().default("draft"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),

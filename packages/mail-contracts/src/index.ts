@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const mailProviderKindSchema = z.enum(["smtp", "mock-development-only"]);
+export const mailProviderKindSchema = z.enum(["smtp", "transactional-http", "mock-development-only"]);
 export const mailProviderStatusSchema = z.enum(["draft", "configured", "active", "disabled", "error"]);
 export const mailTemplateKeySchema = z.enum(["owner_setup", "workspace_invite", "verify_email", "reset_password", "notification_generic"]);
 export const mailTemplateStatusSchema = z.enum(["draft", "active", "disabled"]);

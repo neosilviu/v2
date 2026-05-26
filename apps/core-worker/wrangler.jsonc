@@ -9,7 +9,8 @@
     { "binding": "PLUGIN_PACKAGES", "bucket_name": "v2-plugin-packages" }
   ],
   "services": [
-    { "binding": "AUTH", "service": "v2-auth-worker" }
+    { "binding": "AUTH", "service": "v2-auth-worker" },
+    { "binding": "WEBSITE_RUNTIME", "service": "v2-plugin-website-studio" }
   ],
   "vars": {
     "APP_ORIGIN": "http://localhost:5173,http://127.0.0.1:5173",

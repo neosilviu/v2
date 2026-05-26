@@ -2,6 +2,7 @@ import { declarativeUiSchema, pluginManifestSchema, type PluginBundle, type Plug
 import type { MailDeliveryResult, MailMessageRequest, MailProviderConfigure, MailProviderPublicSummary, MailTemplate } from "@v2/mail-contracts";
 import type { SettingScope, WorkspaceLayout } from "@v2/rpc-contracts";
 import { declarativePageContributionSchema, publicRoutePatternSchema, settingsPanelContributionSchema, settingsTabContributionSchema, type AccessMode, type DeclarativePageContribution, type SettingsPanelContribution, type SettingsTabContribution } from "@v2/ui-schema";
+import type { CoreEnv } from "./env";
 
 export type PluginWorkspaceState = {
   workspaceId: string;
@@ -115,6 +116,7 @@ type MailProviderRow = {
   from_name: string;
   from_email: string;
   reply_to_email: string | null;
+  configuration_ref: string | null;
   safe_config_json: string;
   is_default_transactional: number;
   last_tested_at: string | null;
@@ -133,7 +135,68 @@ export const workspacePermissions = [
   "agent.read", "agent.use", "provider.read", "provider.configure",
   "localnode.read", "localnode.configure", "localnode.execute", "production.read", "production.execute", "production.approve",
 ] as const;
-export type WorkspacePermission = typeof workspacePermissions[number];
+export type WorkspacePermission = string;
+type MailSecretConfig = { endpoint?: string; token?: string; headers?: Record<string, string> };
+type MailDeliveryAdapterResult = { ok: boolean; providerMessageId?: string; errorSafe?: string };
+
+function interpolate(template: string, variables: Record<string, string>) {
+  return template.replaceAll(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (_match, key: string) => variables[key] ?? "");
+}
+
+function parseSecretConfigs(env?: Pick<CoreEnv, "MAIL_PROVIDER_CONFIGS_JSON">): Record<string, MailSecretConfig> {
+  if (!env?.MAIL_PROVIDER_CONFIGS_JSON) return {};
+  try {
+    const parsed = JSON.parse(env.MAIL_PROVIDER_CONFIGS_JSON) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, MailSecretConfig>;
+  } catch {
+    return {};
+  }
+}
+
+class CoreMailDeliveryAdapter {
+  constructor(private readonly env?: Pick<CoreEnv, "ENVIRONMENT" | "MAIL_PROVIDER_CONFIGS_JSON">) {}
+
+  async deliver(provider: MailProviderPublicSummary & { configurationRef: string | null }, message: MailMessageRequest & { subject: string; text: string; html?: string }): Promise<MailDeliveryAdapterResult> {
+    if (provider.kind === "mock-development-only") {
+      if (this.env?.ENVIRONMENT === "production") return { ok: false, errorSafe: "Development-only mail providers are disabled in production." };
+      return { ok: true, providerMessageId: `mock:${crypto.randomUUID()}` };
+    }
+    if (provider.kind === "smtp") {
+      return { ok: false, errorSafe: "Direct SMTP delivery is not available in the Worker runtime. Configure a transactional-http provider." };
+    }
+    if (!provider.configurationRef) return { ok: false, errorSafe: "Mail provider secret reference is not configured." };
+    const secret = parseSecretConfigs(this.env)[provider.configurationRef];
+    if (!secret?.endpoint) return { ok: false, errorSafe: "Mail provider secret reference cannot be resolved server-side." };
+    const headers = new Headers({ "content-type": "application/json", ...(secret.headers ?? {}) });
+    if (secret.token) headers.set("authorization", `Bearer ${secret.token}`);
+    try {
+      const response = await fetch(secret.endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          from: { name: provider.fromName, email: provider.fromEmail },
+          replyTo: provider.replyToEmail,
+          to: message.to,
+          subject: message.subject,
+          text: message.text,
+          html: message.html ?? null,
+          purpose: message.purpose,
+          templateKey: message.templateKey ?? null,
+          variables: message.variables,
+        }),
+      });
+      if (!response.ok) return { ok: false, errorSafe: `Mail provider rejected delivery with HTTP ${response.status}.` };
+      const body = await response.json().catch(() => ({})) as { id?: unknown; messageId?: unknown; status?: unknown; accepted?: unknown };
+      const accepted = body.accepted === true || body.status === "sent" || body.status === "queued" || typeof body.id === "string" || typeof body.messageId === "string";
+      if (!accepted) return { ok: false, errorSafe: "Mail provider response did not confirm delivery acceptance." };
+      const providerMessageId = String(body.messageId ?? body.id ?? "");
+      return providerMessageId ? { ok: true, providerMessageId } : { ok: true };
+    } catch {
+      return { ok: false, errorSafe: "Mail provider delivery request failed." };
+    }
+  }
+}
 
 type PublicDeliveryRow = {
   id: string;
@@ -186,7 +249,7 @@ function matchRoutePattern(pattern: string, path: string): Record<string, string
 }
 
 export class CoreRepository {
-  constructor(private readonly db: D1Database) {}
+  constructor(private readonly db: D1Database, private readonly env?: Pick<CoreEnv, "ENVIRONMENT" | "MAIL_PROVIDER_CONFIGS_JSON">) {}
 
   async ensureWorkspace(workspaceId: string, name = "Default Workspace", status: "unprovisioned" | "provisioning" | "active" | "suspended" = "unprovisioned") {
     await this.db.prepare("INSERT OR IGNORE INTO workspaces (id, name, status) VALUES (?, ?, ?)").bind(workspaceId, name, status).run();
@@ -304,6 +367,14 @@ export class CoreRepository {
     if (!user) return false;
     const permissions = await this.permissionsForUser(workspaceId, user.id);
     return permissions.includes(permission) || permissions.includes("workspace.admin");
+  }
+
+  async hasAllPermissions(workspaceId: string, user: { id: string; email: string } | null, permissions: WorkspacePermission[]): Promise<boolean> {
+    if (!permissions.length) return await this.hasPermission(workspaceId, user, "workspace.read");
+    if (!user) return false;
+    const granted = new Set(await this.permissionsForUser(workspaceId, user.id));
+    if (granted.has("workspace.admin")) return true;
+    return permissions.every((permission) => granted.has(permission));
   }
 
   async memberSummary(workspaceId: string, user: { id: string; email: string } | null) {
@@ -1034,6 +1105,14 @@ export class CoreRepository {
     return rows.results.map((row) => this.domainRow(row));
   }
 
+  async domain(workspaceId: string, domainId: string): Promise<WorkspaceDomain | null> {
+    const row = await this.db.prepare(`SELECT id, workspace_id, hostname, kind, status, verification_method, verification_instructions_json, publication_id, is_primary, created_at, verified_at, updated_at
+      FROM workspace_domains WHERE workspace_id = ? AND id = ? LIMIT 1`)
+      .bind(workspaceId, domainId)
+      .first<{ id: string; workspace_id: string; hostname: string; kind: WorkspaceDomain["kind"]; status: WorkspaceDomain["status"]; verification_method: WorkspaceDomain["verificationMethod"]; verification_instructions_json: string | null; publication_id: string | null; is_primary: number; created_at: string; verified_at: string | null; updated_at: string }>();
+    return row ? this.domainRow(row) : null;
+  }
+
   async createDomain(workspaceId: string, input: { hostname: string; kind: WorkspaceDomain["kind"]; verificationMethod?: WorkspaceDomain["verificationMethod"]; isPrimary?: boolean }, actorId?: string) {
     await this.ensureWorkspace(workspaceId);
     const hostname = input.hostname.trim().toLowerCase();
@@ -1081,6 +1160,10 @@ export class CoreRepository {
     };
   }
 
+  private mailProviderInternal(row: MailProviderRow): MailProviderPublicSummary & { configurationRef: string | null } {
+    return { ...this.mailProviderRow(row), configurationRef: row.configuration_ref };
+  }
+
   private defaultMailTemplates(workspaceId: string): MailTemplate[] {
     const specs = [
       ["owner_setup", "Set up your workspace owner account", "Use this one-time setup link: {{setupUrl}}"],
@@ -1111,14 +1194,18 @@ export class CoreRepository {
   }
 
   async listMailProviders(workspaceId: string): Promise<MailProviderPublicSummary[]> {
-    const rows = await this.db.prepare(`SELECT id, workspace_id, kind, label, status, enabled, from_name, from_email, reply_to_email, safe_config_json, is_default_transactional, last_tested_at, last_test_status, last_error, created_at, updated_at
+    const rows = await this.db.prepare(`SELECT id, workspace_id, kind, label, status, enabled, from_name, from_email, reply_to_email, configuration_ref, safe_config_json, is_default_transactional, last_tested_at, last_test_status, last_error, created_at, updated_at
       FROM workspace_mail_providers WHERE workspace_id = ? ORDER BY is_default_transactional DESC, label`).bind(workspaceId).all<MailProviderRow>();
     return rows.results.map((row) => this.mailProviderRow(row));
   }
 
-  async activeMailProvider(workspaceId: string): Promise<MailProviderPublicSummary | null> {
-    const row = await this.db.prepare(`SELECT id, workspace_id, kind, label, status, enabled, from_name, from_email, reply_to_email, safe_config_json, is_default_transactional, last_tested_at, last_test_status, last_error, created_at, updated_at
+  private async activeMailProviderRow(workspaceId: string): Promise<MailProviderRow | null> {
+    return await this.db.prepare(`SELECT id, workspace_id, kind, label, status, enabled, from_name, from_email, reply_to_email, configuration_ref, safe_config_json, is_default_transactional, last_tested_at, last_test_status, last_error, created_at, updated_at
       FROM workspace_mail_providers WHERE workspace_id = ? AND enabled = 1 AND status = 'active' AND is_default_transactional = 1 LIMIT 1`).bind(workspaceId).first<MailProviderRow>();
+  }
+
+  async activeMailProvider(workspaceId: string): Promise<MailProviderPublicSummary | null> {
+    const row = await this.activeMailProviderRow(workspaceId);
     return row ? this.mailProviderRow(row) : null;
   }
 
@@ -1159,7 +1246,8 @@ export class CoreRepository {
   }
 
   async sendMail(request: MailMessageRequest): Promise<MailDeliveryResult> {
-    const provider = await this.activeMailProvider(request.workspaceId);
+    const providerRow = await this.activeMailProviderRow(request.workspaceId);
+    const provider = providerRow ? this.mailProviderInternal(providerRow) : null;
     const recipientHash = await this.sha256(request.to.toLowerCase());
     const eventId = crypto.randomUUID();
     if (!provider) {
@@ -1168,13 +1256,33 @@ export class CoreRepository {
         .bind(eventId, request.workspaceId, request.templateKey ?? null, recipientHash, request.purpose).run();
       return { ok: false, status: "failed", providerId: null, eventId, errorSafe: "No active Core transactional mail provider is configured." };
     }
-    const smtpReady = provider.kind === "smtp" && provider.safeConfig.passwordConfigured && provider.safeConfig.usernameConfigured;
-    const ok = provider.kind === "mock-development-only" || smtpReady;
-    const errorSafe = ok ? null : "SMTP secret reference is not fully configured.";
-    await this.db.prepare(`INSERT INTO mail_delivery_events (id, workspace_id, provider_id, template_key, recipient_hash_or_safe_reference, status, purpose, error_safe, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
-      .bind(eventId, request.workspaceId, provider.id, request.templateKey ?? null, recipientHash, ok ? "sent" : "failed", request.purpose, errorSafe).run();
-    return { ok, status: ok ? "sent" : "failed", providerId: provider.id, eventId, errorSafe };
+    await this.db.prepare(`INSERT INTO mail_delivery_events (id, workspace_id, provider_id, template_key, recipient_hash_or_safe_reference, status, purpose)
+      VALUES (?, ?, ?, ?, ?, 'queued', ?)`)
+      .bind(eventId, request.workspaceId, provider.id, request.templateKey ?? null, recipientHash, request.purpose).run();
+    const templates = await this.listMailTemplates(request.workspaceId);
+    const template = request.templateKey ? templates.find((item) => item.templateKey === request.templateKey && item.status === "active") : undefined;
+    const html = request.html ?? (template?.bodyHtmlTemplate ? interpolate(template.bodyHtmlTemplate, request.variables) : undefined);
+    const message = {
+      workspaceId: request.workspaceId,
+      purpose: request.purpose,
+      to: request.to,
+      variables: request.variables,
+      ...(request.templateKey ? { templateKey: request.templateKey } : {}),
+      subject: request.subject ?? (template ? interpolate(template.subjectTemplate, request.variables) : ""),
+      text: request.text ?? (template ? interpolate(template.bodyTextTemplate, request.variables) : ""),
+      ...(html ? { html } : {}),
+    };
+    if (!message.subject || !message.text) {
+      const errorSafe = "Mail request is missing subject/text and no active template could render it.";
+      await this.db.prepare("UPDATE mail_delivery_events SET status = 'failed', error_safe = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?").bind(errorSafe, eventId).run();
+      await this.audit(request.workspaceId, "mail.delivery.failed", { eventId, providerId: provider.id, purpose: request.purpose, errorSafe });
+      return { ok: false, status: "failed", providerId: provider.id, eventId, errorSafe };
+    }
+    const delivered = await new CoreMailDeliveryAdapter(this.env).deliver(provider, message);
+    await this.db.prepare("UPDATE mail_delivery_events SET status = ?, error_safe = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(delivered.ok ? "sent" : "failed", delivered.errorSafe ?? null, eventId).run();
+    await this.audit(request.workspaceId, delivered.ok ? "mail.delivery.sent" : "mail.delivery.failed", { eventId, providerId: provider.id, purpose: request.purpose, providerMessageId: delivered.providerMessageId ?? null, errorSafe: delivered.errorSafe ?? null });
+    return { ok: delivered.ok, status: delivered.ok ? "sent" : "failed", providerId: provider.id, eventId, errorSafe: delivered.errorSafe ?? null };
   }
 
   async testMailProvider(workspaceId: string, providerId: string, to: string, actorId?: string) {
