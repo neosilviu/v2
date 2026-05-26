@@ -22,6 +22,7 @@ The built-in platform tabs are runtime contributions:
 - `platform.settings.general`
 - `platform.settings.security`
 - `platform.settings.domains`
+- `platform.settings.mail`
 - `platform.settings.marketplace`
 - `platform.settings.interface`
 
@@ -47,8 +48,9 @@ Core owns workspace domain metadata and verification state. Auth must trust only
 - Plugin Settings tabs and panels are contract-supported through `@v2/ui-schema`, `@v2/plugin-contracts` and `@v2/plugin-sdk`.
 - Core now enforces workspace RBAC for production administration using workspace members, roles, role permissions, member roles, invitations and service identities.
 - General Settings load/save workspace metadata through Core runtime data/actions.
-- Security Settings consume protected Auth admin APIs for runtime auth methods, registration policy, session/passkey summary and RBAC summary.
+- Security Settings consume Core RBAC-protected Auth proxy APIs for runtime auth methods, registration policy, session/passkey summary and RBAC summary.
 - Domains Settings persist workspace domains and support draft, verified, active and disabled states with manual verification for the local vertical slice.
+- Mail Delivery Settings configure Core-owned transactional provider metadata, secret references, templates and delivery/test status.
 - Settings surfaces contributed by plugins are promoted into runtime Settings tabs after install/activation, without Web hardcoding.
 - Local Node exists as a testable plugin slice with contracts, a Settings tab, a Local Production surface and a development mock runner.
 - Web Settings uses a runtime tab registry and generic `TemplateRenderer`; standard plugin Settings tabs do not require Web rebuilds.
@@ -60,5 +62,6 @@ Not yet complete:
 
 - Production domain verification and trusted-origin replication.
 - Auth-owned persistent audit table for admin changes.
+- Real SMTP network delivery backed by a production secret vault/resolver.
 - Dynamic Marketplace Worker execution via Dispatch Namespace or Workers for Platforms.
 - Real Local Node printing, Gmail and WhatsApp integrations.

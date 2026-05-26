@@ -53,15 +53,16 @@ pnpm marketplace:sync
 pnpm smoke:local -- --prepare-auth-db
 ```
 
-`--prepare-auth-db` opens registration only in the local Auth D1 database so the smoke runner can create/sign in a test user. It does not touch remote D1. Use `V2_SMOKE_EMAIL` and `V2_SMOKE_PASSWORD` to override the default local account. To exercise protected Auth admin publication endpoints in the smoke runner, copy `apps/auth-worker/.dev.vars.example` to `.dev.vars` and set `PLATFORM_ADMIN_EMAILS` to the same smoke email before running `pnpm dev`.
+`--prepare-auth-db` opens registration only in the local Auth D1 database so the smoke runner can create/sign in a test user. It does not touch remote D1. Use `V2_SMOKE_EMAIL` and `V2_SMOKE_PASSWORD` to override the default local account. The runner verifies 403 for a signed-in normal user before provisioning, creates a local one-time provisioning request, consumes the setup token, and only then exercises admin Settings.
 
 The smoke runner checks:
 
 - `/login`, Core health and public login config.
 - anonymous Settings access is rejected.
 - email sign-up/sign-in creates a real Better Auth session.
-- Core accepts the real session cookie and returns runtime Settings tabs.
-- Auth passkey publication remains stable across repeated public login config reads when the smoke user is an Auth admin.
+- Core accepts the real session cookie but denies admin Settings before explicit owner setup.
+- The one-time owner setup flow grants Owner explicitly and then returns runtime Settings tabs.
+- Auth passkey publication remains stable across repeated public login config reads through Core RBAC-protected Auth admin proxy APIs.
 - every seeded Marketplace plugin can request approval if needed, be approved, installed, deactivated and reactivated through Core APIs.
 
 ## Real Versus Mock
@@ -71,6 +72,7 @@ Real in this slice:
 - Auth public login configuration and admin policy/method APIs.
 - Core RBAC membership/role/permission tables and permission checks for administration.
 - Core workspace domain metadata and manual verification/activation state.
+- Core Mail Runtime metadata, templates, delivery event logging and development-only mock provider state.
 - Persistent Marketplace install approvals.
 - Runtime Settings tab/panel composition from D1 and plugin manifests.
 - Local Node typed contracts and declarative UI boundary.
@@ -79,5 +81,6 @@ Development-only or not configured:
 
 - Local Node runner health can use the mock runner.
 - Gmail, WhatsApp and real printing require external credentials, pairing and hardware.
+- Real SMTP delivery requires a production secret resolver/vault and network adapter; D1 stores only safe metadata and configuration references.
 - Commerce checkout/payment is not implemented.
 - Dynamic arbitrary third-party Worker deployment still requires Dispatch Namespace or Workers for Platforms.
