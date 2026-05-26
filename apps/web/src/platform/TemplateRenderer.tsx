@@ -112,8 +112,16 @@ const registry: Record<TemplateId, (props: TemplateRendererProps) => ReactElemen
   "public.chat": AdminChat,
 };
 
+const nativePlatformPanels = new Set([
+  "platform.settings.security.panel",
+  "platform.settings.domains.panel",
+  "platform.settings.mail.panel",
+  "platform.settings.marketplace.panel",
+  "platform.settings.interface.panel",
+]);
+
 function isNativePlatformSettingsPanel(contributionId: string): boolean {
-  return contributionId.startsWith("platform.settings.");
+  return nativePlatformPanels.has(contributionId);
 }
 
 export function TemplateRenderer(props: TemplateRendererProps) {
