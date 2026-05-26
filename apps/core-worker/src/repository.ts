@@ -17,7 +17,7 @@ export type PluginRuntimeDeployment = {
   releaseId: string;
   runtimeKey: string;
   runtimeKind: "dispatch-namespace" | "local-dev" | "none";
-  runtimeStatus: "pending" | "active" | "disabled" | "error";
+  runtimeStatus: "pending" | "provisioning" | "deployed" | "active" | "failed" | "disabled" | "deleted";
   deployedVersion: string | null;
   deploymentId: string | null;
   createdAt: string;
@@ -58,6 +58,11 @@ export type SandboxSurfaceAsset = {
 export type PublicationKind = "route" | "surface" | "tool";
 export type PublicationStatus = "draft" | "published" | "unpublished" | "disabled";
 export type PublicContribution = PublicRouteContribution | PublicSurfaceContribution | PublicToolContribution;
+
+function publicSurfaceId(contribution: PublicContribution | undefined): string | undefined {
+  if (!contribution || !("surfaceId" in contribution)) return undefined;
+  return typeof contribution.surfaceId === "string" ? contribution.surfaceId : undefined;
+}
 export type PluginUiContribution = {
   pluginId: string;
   contributionId: string;
@@ -443,7 +448,7 @@ export class CoreRepository {
         zoneId: surface.zone,
         templateId: page.templateId,
         schema: page,
-        requiredPermission: page.actions.find((action) => action.access === "permission-gated")?.commandId ?? null,
+        requiredPermission: typeof page.data.requiredPermission === "string" ? page.data.requiredPermission : null,
         version: manifest.version,
       }];
     });
@@ -805,22 +810,25 @@ export class CoreRepository {
     if (!manifest) return undefined;
     const active = await this.activePlugins(input.workspaceId);
     if (!active.includes(input.pluginId)) return undefined;
-    const uiContribution = await this.pluginUiContribution(input.pluginId, input.contributionId);
     const contribution = this.findPublicContribution(manifest, input.contributionKind, input.contributionId);
+    const targetContributionId = publicSurfaceId(contribution) ?? input.contributionId;
+    const uiContribution = await this.pluginUiContribution(input.pluginId, targetContributionId);
     if (!contribution && !uiContribution) return undefined;
     const publicPath = input.publicPath ?? contribution?.path ?? `/${input.contributionId.replace(/[^a-zA-Z0-9/_-]/g, "-")}`;
     const route = routeMetadata(publicPath);
     const title = input.title ?? contribution?.title ?? uiContribution?.schema.title ?? input.contributionId;
     const access = input.access ?? contribution?.access ?? "anonymous";
     const templateId = uiContribution?.templateId ?? "public.contentPage";
-    const schemaJson = JSON.stringify(uiContribution?.schema ?? declarativePageContributionSchema.parse({ id: input.contributionId, title, templateId, access: "public-candidate", slots: [{ id: `${input.contributionId}.body`, slot: "body", blocks: [{ type: "text", text: title }] }] }));
+    const schema = uiContribution?.schema ?? declarativePageContributionSchema.parse({ id: input.contributionId, title, templateId, access: "public-candidate", slots: [{ id: `${input.contributionId}.body`, slot: "body", blocks: [{ type: "text", text: title }] }] });
+    const schemaJson = JSON.stringify(schema);
+    const allowedOperations = [...new Set([input.contributionId, ...schema.dataSources.map((item) => item.id), ...schema.dataSources.flatMap((item) => item.resource ? [item.resource] : []), ...schema.actions.map((item) => item.id), ...schema.actions.map((item) => item.commandId)])];
     const publicationId = `${input.workspaceId}:${input.pluginId}:${input.contributionKind}:${input.contributionId}`;
     const policyId = `${publicationId}:policy`;
     await this.db.batch([
       this.db.prepare(`INSERT INTO public_access_policies (id, workspace_id, name, access, authentication_mode, rules_json, allowed_operations_json, enabled, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET name = excluded.name, access = excluded.access, authentication_mode = excluded.authentication_mode, rules_json = excluded.rules_json, allowed_operations_json = excluded.allowed_operations_json, enabled = 1, updated_at = CURRENT_TIMESTAMP`)
-        .bind(policyId, input.workspaceId, `${title} public access`, access, access === "authenticated" ? "verified" : "anonymous", JSON.stringify({ contributionId: input.contributionId, contributionKind: input.contributionKind }), JSON.stringify([input.contributionId])),
+        .bind(policyId, input.workspaceId, `${title} public access`, access, access === "authenticated" ? "verified" : "anonymous", JSON.stringify({ contributionId: input.contributionId, contributionKind: input.contributionKind }), JSON.stringify(allowedOperations)),
       this.db.prepare(`INSERT INTO workspace_publications
         (id, workspace_id, plugin_id, contribution_kind, publication_type, contribution_id, public_path, route_pattern, route_priority, route_kind, parameter_names_json, title, template_id, schema_json, status, policy_id, published_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -901,6 +909,10 @@ export class CoreRepository {
     const manifest = await this.installedById(pluginId);
     if (!manifest) return undefined;
     await this.ensureWorkspace(workspaceId);
+    if (active) {
+      const deployment = await this.pluginRuntimeDeployment(workspaceId, pluginId);
+      if (!deployment || !["deployed", "active", "disabled"].includes(deployment.runtimeStatus)) return undefined;
+    }
     await this.db.prepare(`INSERT INTO workspace_plugins
       (workspace_id, plugin_id, active, activated_at, deactivated_at, updated_at)
       VALUES (?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, CASE WHEN ? = 0 THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
@@ -924,17 +936,11 @@ export class CoreRepository {
         await this.db.batch(permissions.map((permission) => this.db.prepare("INSERT OR IGNORE INTO workspace_role_permissions (workspace_id, role_id, permission) VALUES (?, ?, ?)").bind(workspaceId, ownerRoleId, permission)));
       }
       await this.db.prepare("UPDATE workspace_ui_activations SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId).run();
-      await this.upsertPluginRuntimeDeployment({
-        workspaceId,
-        pluginId,
-        releaseId: `${pluginId}@${manifest.version}`,
-        runtimeKey: pluginId,
-        runtimeKind: "dispatch-namespace",
-        runtimeStatus: "active",
-        deployedVersion: manifest.version,
-        deploymentId: null,
-        lastError: null,
-      });
+      await this.db.prepare(`UPDATE plugin_runtime_deployments
+        SET runtime_status = 'active', activated_at = CURRENT_TIMESTAMP, disabled_at = NULL, last_error = NULL
+        WHERE workspace_id = ? AND plugin_id = ? AND runtime_status IN ('deployed', 'active', 'disabled')`)
+        .bind(workspaceId, pluginId)
+        .run();
     } else {
       await this.db.prepare("UPDATE workspace_ui_activations SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId).run();
       await this.db.prepare(`UPDATE plugin_runtime_deployments
@@ -963,6 +969,29 @@ export class CoreRepository {
         last_error = excluded.last_error`)
       .bind(input.workspaceId, input.pluginId, input.releaseId, input.runtimeKey, input.runtimeKind, input.runtimeStatus, input.deployedVersion, input.deploymentId, input.runtimeStatus, input.runtimeStatus, input.lastError)
       .run();
+  }
+
+  async pluginRuntimeDeployment(workspaceId: string, pluginId: string): Promise<PluginRuntimeDeployment | undefined> {
+    const row = await this.db.prepare(`SELECT workspace_id, plugin_id, release_id, runtime_key, runtime_kind, runtime_status, deployed_version, deployment_id, created_at, activated_at, disabled_at, last_error
+      FROM plugin_runtime_deployments
+      WHERE workspace_id = ? AND plugin_id = ?
+      LIMIT 1`)
+      .bind(workspaceId, pluginId)
+      .first<{ workspace_id: string; plugin_id: string; release_id: string; runtime_key: string; runtime_kind: PluginRuntimeDeployment["runtimeKind"]; runtime_status: PluginRuntimeDeployment["runtimeStatus"]; deployed_version: string | null; deployment_id: string | null; created_at: string; activated_at: string | null; disabled_at: string | null; last_error: string | null }>();
+    return row ? {
+      workspaceId: row.workspace_id,
+      pluginId: row.plugin_id,
+      releaseId: row.release_id,
+      runtimeKey: row.runtime_key,
+      runtimeKind: row.runtime_kind,
+      runtimeStatus: row.runtime_status,
+      deployedVersion: row.deployed_version,
+      deploymentId: row.deployment_id,
+      createdAt: row.created_at,
+      activatedAt: row.activated_at,
+      disabledAt: row.disabled_at,
+      lastError: row.last_error,
+    } : undefined;
   }
 
   async activePluginRuntime(workspaceId: string, pluginId: string): Promise<PluginRuntimeDeployment | undefined> {

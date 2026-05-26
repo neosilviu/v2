@@ -199,9 +199,10 @@ function testPlatformSeparationGuards() {
   for (const route of ["/login", "/setup/owner", "/settings", "/public/*"]) {
     if (!webRedirects.includes(`${route} /index.html 200`)) fail(`Web Pages SPA fallback is missing ${route}`);
   }
-  if (!webWrangler.includes("VITE_CORE_API_URL") || !webWrangler.includes("VITE_AUTH_API_URL")) fail("Web Pages config is missing public Core/Auth API variables");
-  pass("Platform/plugin separation guards completed");
-}
+	  if (!webWrangler.includes("VITE_CORE_API_URL") || !webWrangler.includes("VITE_AUTH_API_URL")) fail("Web Pages config is missing public Core/Auth API variables");
+	  if (webWrangler.includes("example.invalid")) fail("Web Pages config must not commit fake preview/production API URLs");
+	  pass("Platform/plugin separation guards completed");
+	}
 
 function runCommand(args, label) {
   const result = spawnSync("pnpm", args, { cwd: root, encoding: "utf8" });
@@ -255,9 +256,15 @@ function testProductionRuntimeHardening() {
   }
   if (!coreIndex.includes("verifyDnsDomain") || !coreIndex.includes("cloudflare-dns.com/dns-query") || coreIndex.includes("input.status !== \"draft\" && input.status !== \"verifying\" && input.status !== \"verified\"")) fail("Domain verification can still bypass DNS verification");
   if (!websiteWorker.includes("plugin-runtime.internal") || !websiteWorker.includes("not_authorized")) fail("Website Studio worker is not restricted to the internal runtime binding");
-  if (coreIndex.includes("websiteStudioDispatch") || coreIndex.includes("WEBSITE_RUNTIME") || coreIndex.includes("website.publishPage")) fail("Core contains Website Studio feature-specific dispatch");
-  pass("Production runtime hardening source scan completed");
-}
+	  if (coreIndex.includes("websiteStudioDispatch") || coreIndex.includes("WEBSITE_RUNTIME") || coreIndex.includes("website.publishPage")) fail("Core contains Website Studio feature-specific dispatch");
+	  if (coreIndex.includes("if (c.get(\"internal\")) return undefined")) fail("Delegated internal user calls can bypass Core RBAC");
+	  if (!coreIndex.includes("PLATFORM_PROVISIONER") || !coreIndex.includes("plugin.runtime.provisioning") || !coreIndex.includes("runtimeStatus: \"deployed\"")) fail("Plugin installation does not visibly provision runtime before activation");
+	  if (repoSource.includes("runtimeKey: pluginId") || repoSource.includes("runtimeStatus: \"active\", deploymentId: null")) fail("CoreRepository still creates fake active plugin runtimes");
+	  if (!repoSource.includes("publicSurfaceId(contribution)") || repoSource.includes("?.commandId ?? null")) fail("Runtime surfaces may still derive requiredPermission from command ids");
+	  if (!coreIndex.includes("approvals.release") || !coreIndex.includes("approvals.consume") || coreIndex.indexOf("approvals.consume") < coreIndex.indexOf("pluginRuntimeDispatch")) fail("Tool approvals are not visibly released/consumed around confirmed runtime execution");
+	  if (!coreIndex.includes("public.runtime.ui.data.execute") || !coreIndex.includes("public.runtime.ui.action.execute")) fail("Public runtime data/actions do not dispatch through the generic runtime bridge");
+	  pass("Production runtime hardening source scan completed");
+	}
 
 function testMigrationDrift() {
   if (!process.argv.includes("--check-migrations")) {

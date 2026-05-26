@@ -3,6 +3,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-05-25",
   "vars": {
-    "DISPATCH_NAMESPACE": "v2-plugin-runtime"
+    "DISPATCH_NAMESPACE": "v2-plugin-runtime",
+    "ENVIRONMENT": "development"
   }
 }

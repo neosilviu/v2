@@ -40,7 +40,7 @@ export const declarativeUiBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("action"), label: z.string(), commandId: z.string().min(1), variant: z.enum(["default", "primary"]).default("default") }),
 ]);
 export const declarativeUiSchema = z.object({ body: z.array(declarativeUiBlockSchema).default([]) });
-export const runtimeDeclarativeRendererSchema = z.union([declarativeUiSchema, declarativePageContributionSchema]);
+export const runtimeDeclarativeRendererSchema = z.union([declarativePageContributionSchema, declarativeUiSchema]);
 export const surfaceRendererSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("declarative"), schema: runtimeDeclarativeRendererSchema.optional() }),
   z.object({ mode: z.literal("sandbox-frame"), entry: z.string().regex(/^ui\/[a-zA-Z0-9/_-]+\.html$/) }),

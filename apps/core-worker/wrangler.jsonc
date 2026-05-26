@@ -17,6 +17,7 @@
     "APP_ORIGIN": "http://localhost:5173,http://127.0.0.1:5173",
     "TRUSTED_ORIGINS": "",
     "RECOVERY_ADMIN_ENABLED": "false",
-    "RECOVERY_ADMIN_EMAILS": ""
+    "RECOVERY_ADMIN_EMAILS": "",
+    "ENVIRONMENT": "development"
   }
 }

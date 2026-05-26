@@ -157,7 +157,7 @@ export const pluginRuntimeDeployments = sqliteTable("plugin_runtime_deployments"
   releaseId: text("release_id").notNull(),
   runtimeKey: text("runtime_key").notNull(),
   runtimeKind: text("runtime_kind", { enum: ["dispatch-namespace", "local-dev", "none"] }).notNull().default("dispatch-namespace"),
-  runtimeStatus: text("runtime_status", { enum: ["pending", "active", "disabled", "error"] }).notNull().default("pending"),
+  runtimeStatus: text("runtime_status", { enum: ["pending", "provisioning", "deployed", "active", "failed", "disabled", "deleted"] }).notNull().default("pending"),
   deployedVersion: text("deployed_version"),
   deploymentId: text("deployment_id"),
   createdAt: text("created_at").notNull().default(now),
@@ -177,7 +177,7 @@ export const workspaceUiActivations = sqliteTable("workspace_ui_activations", {
   updatedAt: text("updated_at").notNull().default(now),
 }, (table) => [primaryKey({ columns: [table.workspaceId, table.pluginId, table.contributionId] }), index("workspace_ui_activations_workspace_idx").on(table.workspaceId, table.enabled)]);
 export const workspaceCapabilityGrants = sqliteTable("workspace_capability_grants", { workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }), capabilityId: text("capability_id").notNull(), grantedAt: text("granted_at").notNull().default(now) }, (table) => [primaryKey({ columns: [table.workspaceId, table.pluginId, table.capabilityId] })]);
-export const toolApprovals = sqliteTable("tool_approvals", { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }), toolId: text("tool_id").notNull(), risk: text("risk").notNull(), inputJson: text("input_json"), status: text("status", { enum: ["pending", "approved", "denied", "consumed"] }).notNull().default("pending"), requestedBy: text("requested_by"), decidedBy: text("decided_by"), requestedAt: text("requested_at").notNull().default(now), decidedAt: text("decided_at"), consumedAt: text("consumed_at") }, (table) => [index("tool_approvals_workspace_status_idx").on(table.workspaceId, table.status, table.requestedAt), index("tool_approvals_tool_idx").on(table.toolId, table.requestedAt)]);
+export const toolApprovals = sqliteTable("tool_approvals", { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }), toolId: text("tool_id").notNull(), risk: text("risk").notNull(), inputJson: text("input_json"), status: text("status", { enum: ["pending", "approved", "executing", "denied", "consumed", "failed"] }).notNull().default("pending"), requestedBy: text("requested_by"), decidedBy: text("decided_by"), requestedAt: text("requested_at").notNull().default(now), decidedAt: text("decided_at"), consumedAt: text("consumed_at") }, (table) => [index("tool_approvals_workspace_status_idx").on(table.workspaceId, table.status, table.requestedAt), index("tool_approvals_tool_idx").on(table.toolId, table.requestedAt)]);
 export const approvalRequests = sqliteTable("approval_requests", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),

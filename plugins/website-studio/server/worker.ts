@@ -127,6 +127,7 @@ app.post("/runtime/execute", async (c) => {
   const workspaceId = typeof request?.workspaceId === "string" ? request.workspaceId : "";
   const operationId = typeof request?.operationId === "string" ? request.operationId : "";
   const input = request?.input && typeof request.input === "object" ? request.input as Record<string, unknown> : {};
+  const routeParams = request && "routeParams" in request && request.routeParams && typeof request.routeParams === "object" ? request.routeParams as Record<string, unknown> : {};
   if (!workspaceId || !operationId) return c.json(errorResponse(failure("validation_failed", "A valid runtime operation is required.")), 400);
   if (operationId === "website.listPages") {
     const rows = await c.env.WEBSITE_DB.prepare("SELECT id, slug, title, status, seo_title, seo_description, published_at, updated_at FROM website_pages WHERE workspace_id = ? ORDER BY updated_at DESC").bind(workspaceId).all<Record<string, unknown>>();
@@ -154,6 +155,12 @@ app.post("/runtime/execute", async (c) => {
     const result = await c.env.WEBSITE_DB.prepare("SELECT surface_id, readable_json, allowed_tools_json FROM website_context_shares WHERE workspace_id = ? AND page_id = ? AND enabled = 1 LIMIT 1").bind(workspaceId, pageId).first();
     if (!result) return c.json(errorResponse(failure("not_found", "Approved page context is not available.")), 404);
     return c.json({ context: result });
+  }
+  if (operationId === "website.readPageContext") {
+    const slug = typeof routeParams.slug === "string" ? routeParams.slug : "home";
+    const row = await c.env.WEBSITE_DB.prepare("SELECT id FROM website_pages WHERE workspace_id = ? AND slug = ? AND status = 'published' LIMIT 1").bind(workspaceId, slug).first<{ id: string }>();
+    if (!row) return c.json(errorResponse(failure("not_found", "Published page is not available.")), 404);
+    return c.json({ page: await pageWithSections(c.env.WEBSITE_DB, workspaceId, row.id) });
   }
   return c.json(errorResponse(failure("not_found", "Runtime operation is not available.")), 404);
 });

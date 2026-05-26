@@ -219,6 +219,9 @@ async function exerciseMarketplace() {
 }
 
 async function exerciseWebsiteStudioRuntime() {
+  const runtimeOutput = coreSqlLocal(`SELECT runtime_status, runtime_kind FROM plugin_runtime_deployments WHERE workspace_id = '${workspaceId.replaceAll("'", "''")}' AND plugin_id = 'website-studio' LIMIT 1;`);
+  if (!/"runtime_status":\s*"active"/.test(runtimeOutput) || !/"runtime_kind":\s*"local-dev"/.test(runtimeOutput)) throw new Error(`website-studio runtime was not provisioned by the local adapter: ${runtimeOutput}`);
+  record("Website Studio local runtime deployment confirmed", "ok");
   await expectOk("Website Studio capability grants separated from RBAC", request(coreUrl, "/plugins/grants", {
     method: "POST",
     body: JSON.stringify({ workspaceId, pluginId: "website-studio", capabilities: ["website.pages.read", "website.pages.write", "website.publish", "website.context.share"] }),
@@ -253,6 +256,22 @@ async function exerciseWebsiteStudioRuntime() {
   });
   if (replay.response.status !== 403) throw new Error(`Website publish approval replay should be 403, got ${replay.response.status}`);
   record("Website publish approval replay denied", "ok");
+  await expectOk("Website public contribution published by Core", request(coreUrl, "/publications", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId, pluginId: "website-studio", contributionKind: "route", contributionId: "website-studio.public.home", publicPath: "/" }),
+  }));
+  await expectOk("Website public route resolves", request(coreUrl, `/public/${encodeURIComponent(workspaceId)}/`));
+  const publicData = await expectOk("Website public page data dispatches to runtime", request(coreUrl, `/public/${encodeURIComponent(workspaceId)}/runtime/data`, {
+    method: "POST",
+    body: JSON.stringify({ contributionId: "website-studio.public.home", dataSourceId: "website-studio.public.page.read", routeParams: {} }),
+  }));
+  if (publicData.body?.status !== "ok" || !publicData.body?.data?.page?.id) throw new Error(`public Website data did not return a page: ${JSON.stringify(publicData.body).slice(0, 240)}`);
+  const forbiddenPublicAction = await request(coreUrl, `/public/${encodeURIComponent(workspaceId)}/runtime/actions`, {
+    method: "POST",
+    body: JSON.stringify({ contributionId: "website-studio.public.home", actionId: "website.updateSection", input: { pageId } }),
+  });
+  if (forbiddenPublicAction.response.status !== 403) throw new Error(`public write action should be denied, got ${forbiddenPublicAction.response.status}`);
+  record("Website public write action denied by policy", "ok");
 }
 
 async function exerciseOwnerSetupSignupWithRegistrationDisabled() {

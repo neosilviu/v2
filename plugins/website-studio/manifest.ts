@@ -56,6 +56,9 @@ export const websiteStudioManifest = definePlugin({
       title: "Website Studio",
       templateId: "admin.dashboard",
       access: "private",
+      dataSources: [
+        { id: "website-studio.public.page.read", title: "Published page", kind: "resource", resource: "website.readPageContext", access: "public-candidate" }
+      ],
       data: { rows: [
         { label: "Install state", value: "Plugin-owned", detail: "Page records and demo content live in Website Studio D1." },
         { label: "Public delivery", value: "Explicit publish", detail: "Core publication is required before public routes resolve." },
