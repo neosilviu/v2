@@ -31,7 +31,7 @@ jobs:
       - run: pnpm build:analyze
       - run: pnpm test:generated -- --check-migrations
       - run: pnpm guard:architecture
-      - name: Production-like local smoke
+      - name: Production-like local smoke and browser boundary checks
         run: |
           pnpm dev > /tmp/v2-dev.log 2>&1 &
           echo $! > /tmp/v2-dev.pid
@@ -47,83 +47,25 @@ jobs:
             exit 1
           fi
           pnpm smoke:local -- --prepare-auth-db 2>&1 | tee /tmp/v2-smoke.log
+          curl -sS -D /tmp/v2-auth-cors.headers -o /tmp/v2-auth-cors.body \
+            -X POST http://localhost:8788/api/auth/sign-in/email \
+            -H 'Origin: http://localhost:5173' \
+            -H 'Content-Type: application/json' \
+            --data '{"email":"browser-cors-check@example.local","password":"NotARealPassword123!"}'
+          grep -qi '^access-control-allow-origin: http://localhost:5173' /tmp/v2-auth-cors.headers
+          grep -Fq 'dataSource.access !== "public-candidate"' apps/web/src/platform/TemplateRenderer.tsx
+          grep -Fq "c.contribution_type = 'surface'" apps/core-worker/src/surface-routes.ts
         shell: bash
-      - name: Build smoke progress markers
-        if: failure()
-        shell: bash
-        run: |
-          mkdir -p /tmp/v2-smoke-markers
-          grep -Fq "[ok] Core session with Better Auth cookie" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/core-session || true
-          grep -Fq "[ok] Owner setup consumed explicitly" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/owner-consumed || true
-          [ "$(grep -Fc '[ok] Workspace provisioning request created' /tmp/v2-smoke.log || true)" -ge 2 ] && printf ok > /tmp/v2-smoke-markers/second-token || true
-          grep -Fq "[ok] Owner setup API creates account with registration disabled" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/owner-created || true
-          for code in 400 401 403 404 409 422 429 500 502 503; do
-            grep -Fq "Owner setup API creates account with registration disabled - HTTP ${code}" /tmp/v2-smoke.log && printf ok > "/tmp/v2-smoke-markers/http-${code}" || true
-          done
-      - name: Upload marker core session reached
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-core-session-reached, path: /tmp/v2-smoke-markers/core-session, if-no-files-found: ignore }
-      - name: Upload marker owner consumed
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-consumed, path: /tmp/v2-smoke-markers/owner-consumed, if-no-files-found: ignore }
-      - name: Upload marker second owner token
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-second-owner-token, path: /tmp/v2-smoke-markers/second-token, if-no-files-found: ignore }
-      - name: Upload marker owner created
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-registration-disabled-owner-created, path: /tmp/v2-smoke-markers/owner-created, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 400
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-400, path: /tmp/v2-smoke-markers/http-400, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 401
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-401, path: /tmp/v2-smoke-markers/http-401, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 403
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-403, path: /tmp/v2-smoke-markers/http-403, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 404
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-404, path: /tmp/v2-smoke-markers/http-404, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 409
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-409, path: /tmp/v2-smoke-markers/http-409, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 422
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-422, path: /tmp/v2-smoke-markers/http-422, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 429
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-429, path: /tmp/v2-smoke-markers/http-429, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 500
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-500, path: /tmp/v2-smoke-markers/http-500, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 502
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-502, path: /tmp/v2-smoke-markers/http-502, if-no-files-found: ignore }
-      - name: Upload marker owner signup HTTP 503
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with: { name: marker-owner-signup-http-503, path: /tmp/v2-smoke-markers/http-503, if-no-files-found: ignore }
-      - name: Upload local smoke diagnostics
+      - name: Upload local browser/smoke diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: local-smoke-diagnostics
+          name: local-browser-smoke-diagnostics
           path: |
             /tmp/v2-smoke.log
             /tmp/v2-dev.log
+            /tmp/v2-auth-cors.headers
+            /tmp/v2-auth-cors.body
           if-no-files-found: warn
       - name: Stop local smoke services
         if: always()
@@ -131,4 +73,7 @@ jobs:
       - name: Upload build analysis report
         if: always()
         uses: actions/upload-artifact@v4
-        with: { name: build-analysis-report, path: reports/, if-no-files-found: warn }
+        with:
+          name: build-analysis-report
+          path: reports/
+          if-no-files-found: warn
