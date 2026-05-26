@@ -86,6 +86,50 @@ export const workspaceDomains = sqliteTable("workspace_domains", {
   verifiedAt: text("verified_at"),
   updatedAt: text("updated_at").notNull().default(now),
 }, (table) => [uniqueIndex("workspace_domains_hostname_idx").on(table.workspaceId, table.hostname), index("workspace_domains_status_idx").on(table.workspaceId, table.status), index("workspace_domains_kind_idx").on(table.workspaceId, table.kind)]);
+export const workspaceMailProviders = sqliteTable("workspace_mail_providers", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["smtp", "mock-development-only"] }).notNull(),
+  label: text("label").notNull(),
+  status: text("status", { enum: ["draft", "configured", "active", "disabled", "error"] }).notNull().default("draft"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  fromName: text("from_name").notNull(),
+  fromEmail: text("from_email").notNull(),
+  replyToEmail: text("reply_to_email"),
+  configurationRef: text("configuration_ref"),
+  safeConfigJson: text("safe_config_json").notNull().default("{}"),
+  isDefaultTransactional: integer("is_default_transactional", { mode: "boolean" }).notNull().default(false),
+  lastTestedAt: text("last_tested_at"),
+  lastTestStatus: text("last_test_status"),
+  lastError: text("last_error"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => [index("workspace_mail_providers_workspace_idx").on(table.workspaceId, table.status), index("workspace_mail_providers_default_idx").on(table.workspaceId, table.isDefaultTransactional)]);
+export const workspaceMailTemplates = sqliteTable("workspace_mail_templates", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  templateKey: text("template_key", { enum: ["owner_setup", "workspace_invite", "verify_email", "reset_password", "notification_generic"] }).notNull(),
+  subjectTemplate: text("subject_template").notNull(),
+  bodyTextTemplate: text("body_text_template").notNull(),
+  bodyHtmlTemplate: text("body_html_template"),
+  status: text("status", { enum: ["draft", "active", "disabled"] }).notNull().default("draft"),
+  locale: text("locale").notNull().default("ro-RO"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => [uniqueIndex("workspace_mail_templates_key_idx").on(table.workspaceId, table.templateKey, table.locale), index("workspace_mail_templates_workspace_idx").on(table.workspaceId, table.status)]);
+export const mailDeliveryEvents = sqliteTable("mail_delivery_events", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  providerId: text("provider_id").references(() => workspaceMailProviders.id, { onDelete: "set null" }),
+  templateKey: text("template_key", { enum: ["owner_setup", "workspace_invite", "verify_email", "reset_password", "notification_generic"] }),
+  recipientHashOrSafeReference: text("recipient_hash_or_safe_reference").notNull(),
+  status: text("status", { enum: ["queued", "sent", "failed"] }).notNull().default("queued"),
+  purpose: text("purpose").notNull(),
+  errorSafe: text("error_safe"),
+  auditEventId: text("audit_event_id"),
+  createdAt: text("created_at").notNull().default(now),
+  completedAt: text("completed_at"),
+}, (table) => [index("mail_delivery_events_workspace_idx").on(table.workspaceId, table.createdAt), index("mail_delivery_events_provider_idx").on(table.workspaceId, table.providerId, table.status)]);
 export const pluginCatalog = sqliteTable("plugin_catalog", { pluginId: text("plugin_id").primaryKey(), name: text("name").notNull(), version: text("version").notNull(), manifestJson: text("manifest_json").notNull(), category: text("category").notNull(), demoAvailable: integer("demo_available", { mode: "boolean" }).notNull().default(false), source: text("source").notNull().default("official"), createdAt: text("created_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) }, (table) => [index("plugin_catalog_source_idx").on(table.source), index("plugin_catalog_category_idx").on(table.category)]);
 export const pluginCatalogReleases = sqliteTable("plugin_catalog_releases", { id: text("id").primaryKey(), pluginId: text("plugin_id").notNull().references(() => pluginCatalog.pluginId, { onDelete: "cascade" }), version: text("version").notNull(), manifestJson: text("manifest_json").notNull(), packageObjectKey: text("package_object_key").notNull(), sha256: text("sha256").notNull(), sizeBytes: integer("size_bytes").notNull(), format: text("format").notNull(), workerIsolation: text("worker_isolation").notNull().default("none"), uiMode: text("ui_mode").notNull().default("declarative"), status: text("status", { enum: ["draft", "published", "deprecated"] }).notNull().default("draft"), source: text("source").notNull().default("official"), createdAt: text("created_at").notNull().default(now), publishedAt: text("published_at"), updatedAt: text("updated_at").notNull().default(now) }, (table) => [uniqueIndex("plugin_catalog_releases_identity_idx").on(table.pluginId, table.version, table.sha256), index("plugin_catalog_releases_plugin_status_idx").on(table.pluginId, table.status), index("plugin_catalog_releases_source_idx").on(table.source)]);
 export const installedPlugins = sqliteTable("installed_plugins", { id: text("id").primaryKey(), name: text("name").notNull(), version: text("version").notNull(), manifestJson: text("manifest_json").notNull(), packageObjectKey: text("package_object_key"), packageSha256: text("package_sha256"), packageSizeBytes: integer("package_size_bytes"), packageFormat: text("package_format"), workerIsolation: text("worker_isolation").notNull().default("none"), uiMode: text("ui_mode").notNull().default("declarative"), installedAt: text("installed_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) });

@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { errorResponse, failure } from "@v2/feedback-runtime";
+import { mailMessageRequestSchema, mailProviderConfigureSchema, mailProviderTestRequestSchema } from "@v2/mail-contracts";
 import type { PluginBundle, PublicContributionAccess } from "@v2/plugin-contracts";
 import { assessPluginBundle, unpackPluginZip } from "@v2/plugin-installer";
 import { approvalRequestDecisionRequestSchema, capabilityGrantRequestSchema, layoutWriteRequestSchema, pluginActivationRequestSchema, pluginInstallRequestSchema, settingScopeSchema, settingWriteRequestSchema, toolApprovalDecisionRequestSchema, toolApprovalLookupRequestSchema, toolExecutionRequestSchema, type SettingScope } from "@v2/rpc-contracts";
@@ -458,6 +459,43 @@ app.put("/workspaces/:workspaceId/domains/:domainId", async (c) => { const denie
 app.post("/workspaces/:workspaceId/domains/:domainId/verify", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.verify"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "verified", c.get("user")?.id) }); });
 app.post("/workspaces/:workspaceId/domains/:domainId/activate", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "active", c.get("user")?.id) }); });
 app.post("/workspaces/:workspaceId/domains/:domainId/disable", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "disabled", c.get("user")?.id) }); });
+app.get("/workspaces/:workspaceId/mail", async (c) => {
+  const denied = await requirePermission(c, c.req.param("workspaceId"), "mail.read");
+  if (denied) return denied;
+  return c.json(await new CoreRepository(c.env.CORE_DB).mailSummary(c.req.param("workspaceId")));
+});
+app.post("/workspaces/:workspaceId/mail/providers", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "mail.configure");
+  if (denied) return denied;
+  const input = mailProviderConfigureSchema.parse(await c.req.json());
+  if (input.kind === "mock-development-only" && c.env.ENVIRONMENT === "production") return c.json(errorResponse(failure("validation_failed", "Development-only mail providers are not available in production.")), 400);
+  return c.json(await new CoreRepository(c.env.CORE_DB).configureMailProvider(workspaceId, input, c.get("user")?.id), 201);
+});
+app.post("/workspaces/:workspaceId/mail/providers/:providerId/activate", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "mail.configure");
+  if (denied) return denied;
+  return c.json(await new CoreRepository(c.env.CORE_DB).activateMailProvider(workspaceId, c.req.param("providerId"), c.get("user")?.id));
+});
+app.post("/workspaces/:workspaceId/mail/providers/:providerId/disable", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "mail.configure");
+  if (denied) return denied;
+  return c.json(await new CoreRepository(c.env.CORE_DB).disableMailProvider(workspaceId, c.req.param("providerId"), c.get("user")?.id));
+});
+app.post("/workspaces/:workspaceId/mail/providers/:providerId/test", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "mail.test");
+  if (denied) return denied;
+  const input = mailProviderTestRequestSchema.parse(await c.req.json());
+  return c.json(await new CoreRepository(c.env.CORE_DB).testMailProvider(workspaceId, c.req.param("providerId"), input.to, c.get("user")?.id));
+});
+app.post("/internal/workspaces/:workspaceId/mail/send", async (c) => {
+  if (!c.get("internal")) return c.json(errorResponse(failure("not_authorized", "Internal mail delivery requires a service binding.")), 403);
+  const request = mailMessageRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
+  return c.json(await new CoreRepository(c.env.CORE_DB).sendMail(request));
+});
 app.get("/workspaces/:workspaceId/auth/security-summary", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.read");
@@ -496,8 +534,10 @@ app.put("/workspaces/:workspaceId/auth/policy", async (c) => {
   const denied = await requirePermission(c, workspaceId, "auth.policy.write");
   if (denied) return denied;
   const body = await c.req.json();
-  const result = await authAdminJson(c, "/admin/auth/policy", { method: "PUT", body: JSON.stringify({ ...(body as Record<string, unknown>), workspaceId }) });
-  await new CoreRepository(c.env.CORE_DB).audit(workspaceId, "auth.policy.update", {}, c.get("user")?.id);
+  const repo = new CoreRepository(c.env.CORE_DB);
+  if ((body as Record<string, unknown>).requireEmailVerification === true && !await repo.activeMailProvider(workspaceId)) return c.json(errorResponse(failure("dependency_unavailable", "Email verification requires an active Core Mail Runtime provider.")), 409);
+  const result = await authAdminJson(c, "/admin/auth/policy", { method: "PUT", body: JSON.stringify({ ...(body as Record<string, unknown>), workspaceId, mailDeliveryAvailable: true }) });
+  await repo.audit(workspaceId, "auth.policy.update", {}, c.get("user")?.id);
   return c.json(result);
 });
 app.get("/workspaces/:workspaceId/auth/ui-contributions", async (c) => {

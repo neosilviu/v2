@@ -120,6 +120,9 @@ importers:
       '@v2/feedback-runtime':
         specifier: workspace:*
         version: link:../../packages/feedback-runtime
+      '@v2/mail-contracts':
+        specifier: workspace:*
+        version: link:../../packages/mail-contracts
       '@v2/plugin-contracts':
         specifier: workspace:*
         version: link:../../packages/plugin-contracts
@@ -188,6 +191,9 @@ importers:
       '@v2/feedback-runtime':
         specifier: workspace:*
         version: link:../../packages/feedback-runtime
+      '@v2/mail-contracts':
+        specifier: workspace:*
+        version: link:../../packages/mail-contracts
       '@v2/plugin-contracts':
         specifier: workspace:*
         version: link:../../packages/plugin-contracts
@@ -269,6 +275,16 @@ importers:
         version: 6.0.3
 
   packages/local-node-contracts:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  packages/mail-contracts:
     dependencies:
       zod:
         specifier: 'catalog:'

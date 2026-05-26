@@ -5,7 +5,7 @@ import type { PluginManifest } from "@v2/plugin-contracts";
 import type { Notification } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { activateDomain, createDomain, disableDomain, isCoreAuthRequiredError, loadActivePlugins, loadCurrentRbac, loadDomains, loadInstalledPlugins, loadMarketplacePlugins, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, verifyDomain, type MarketplacePlugin, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type WorkspaceDomain } from "./api";
+import { activateDomain, activateMailProvider, configureMailProvider, createDomain, disableDomain, disableMailProvider, isCoreAuthRequiredError, loadActivePlugins, loadCurrentRbac, loadDomains, loadInstalledPlugins, loadMailSummary, loadMarketplacePlugins, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, testMailProvider, verifyDomain, type MailSummary, type MarketplacePlugin, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type WorkspaceDomain } from "./api";
 import { loadAuthSecuritySummary, loadAuthSessionsSummary, saveAuthMethod, saveAuthPolicy, type AuthSecuritySummary } from "./auth-api";
 import { PluginManagerPanel } from "./platform/PluginManagerPanel";
 import { RuntimeShellEditor } from "./platform/RuntimeShellEditor";
@@ -196,6 +196,7 @@ function DomainsPanel({ emit }: { emit: (item: Notification) => void }) {
         <option value="website">Website</option>
         <option value="storefront">Storefront</option>
         <option value="public-chat">Public chat</option>
+        <option value="mail">Mail sender</option>
       </select>
       <select name="verificationMethod" defaultValue="manual" disabled={saving}>
         <option value="manual">Manual</option>
@@ -220,6 +221,131 @@ function DomainsPanel({ emit }: { emit: (item: Notification) => void }) {
       </tr>;
     })}</tbody></table></div>
     <p>Only verified active admin/auth domains can become trusted-origin candidates. Manual verification is an explicit admin action for local/testing use.</p>
+  </SurfaceCard>;
+}
+
+function MailDeliveryPanel({ emit }: { emit: (item: Notification) => void }) {
+  const [summary, setSummary] = useState<MailSummary | null>(null);
+  const [status, setStatus] = useState("Loading mail runtime...");
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      const loaded = await loadMailSummary();
+      setSummary(loaded);
+      setStatus(loaded.activeProvider ? `Active provider: ${loaded.activeProvider.label}` : "No active transactional provider");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh().catch((error) => setStatus(error instanceof Error ? error.message : "Mail runtime unavailable"));
+  }, []);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const kind = String(form.get("kind") ?? "smtp") as "smtp" | "mock-development-only";
+    setBusy(true);
+    try {
+      const loaded = await configureMailProvider({
+        kind,
+        label: String(form.get("label") ?? "SMTP"),
+        fromName: String(form.get("fromName") ?? ""),
+        fromEmail: String(form.get("fromEmail") ?? ""),
+        replyToEmail: String(form.get("replyToEmail") || "") || null,
+        configurationRef: String(form.get("configurationRef") || "") || null,
+        enabled: true,
+        safeConfig: {
+          host: String(form.get("host") || "") || undefined,
+          port: Number(form.get("port") || 587),
+          secure: String(form.get("secure") || "starttls") as "none" | "starttls" | "tls",
+          usernameConfigured: Boolean(String(form.get("configurationRef") || "")),
+          passwordConfigured: Boolean(String(form.get("configurationRef") || "")),
+          secretHint: String(form.get("configurationRef") || "") ? "stored server-side by reference" : null,
+        },
+      });
+      setSummary(loaded);
+      setStatus("Mail provider saved");
+      event.currentTarget.reset();
+      emit(notification("success", "Mail provider saved", "Core stored safe metadata and only a secret reference."));
+    } catch {
+      setStatus("Mail provider could not be saved");
+      emit(notification("error", "Mail provider failed", "Core rejected the mail provider configuration."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const apply = async (label: string, action: () => Promise<MailSummary>) => {
+    setBusy(true);
+    try {
+      const loaded = await action();
+      setSummary(loaded);
+      setStatus(label);
+      emit(notification("success", label, "Mail Runtime state was updated."));
+    } catch {
+      setStatus(`${label} failed`);
+      emit(notification("error", label, "Core rejected the mail runtime action."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async (providerId: string) => {
+    const to = window.prompt("Test recipient email");
+    if (!to) return;
+    setBusy(true);
+    try {
+      const result = await testMailProvider(providerId, to);
+      setStatus(result.message);
+      emit(notification(result.ok ? "success" : "error", "Mail test", result.message));
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <SurfaceCard>
+    <div className="surface-header">
+      <div><small>Core Mail Runtime</small><h2>Mail Delivery</h2><p>{status}</p></div>
+      <Button onClick={() => void refresh()} disabled={busy}>Refresh</Button>
+    </div>
+    <form className="mail-form" onSubmit={submit}>
+      <label>Kind<select name="kind" defaultValue="smtp" disabled={busy}><option value="smtp">SMTP</option><option value="mock-development-only">Mock dev-only</option></select></label>
+      <label>Label<input name="label" placeholder="Transactional SMTP" required disabled={busy} /></label>
+      <label>From name<input name="fromName" placeholder="Print Center" required disabled={busy} /></label>
+      <label>From email<input name="fromEmail" type="email" placeholder="no-reply@example.com" required disabled={busy} /></label>
+      <label>Reply-to<input name="replyToEmail" type="email" placeholder="support@example.com" disabled={busy} /></label>
+      <label>SMTP host<input name="host" placeholder="smtp.example.com" disabled={busy} /></label>
+      <label>Port<input name="port" type="number" defaultValue={587} disabled={busy} /></label>
+      <label>Secure<select name="secure" defaultValue="starttls" disabled={busy}><option value="starttls">STARTTLS</option><option value="tls">TLS</option><option value="none">None</option></select></label>
+      <label>Secret ref<input name="configurationRef" placeholder="secret://workspace/default/smtp" disabled={busy} /></label>
+      <Button className="primary" type="submit" disabled={busy}>Add provider</Button>
+    </form>
+    {summary ? <div className="settings-grid">
+      <section className="settings-subpanel">
+        <h3>Providers</h3>
+        <div className="plugin-list">{summary.providers.map((provider) => <div className="plugin-row" key={provider.id}>
+          <div><strong>{provider.label}</strong><small>{provider.kind} · {provider.status} · {provider.fromEmail} · secret {provider.safeConfig.passwordConfigured ? "configured" : "missing"}</small></div>
+          <div className="plugin-actions">
+            <Button disabled={busy || provider.isDefaultTransactional} onClick={() => void apply("Mail provider activated", () => activateMailProvider(provider.id))}>Activate</Button>
+            <Button disabled={busy} onClick={() => void test(provider.id)}>Test</Button>
+            <Button disabled={busy || provider.status === "disabled"} onClick={() => void apply("Mail provider disabled", () => disableMailProvider(provider.id))}>Disable</Button>
+          </div>
+        </div>)}</div>
+      </section>
+      <section className="settings-subpanel">
+        <h3>Templates</h3>
+        <div className="plugin-list">{summary.templates.map((template) => <div className="plugin-row" key={template.id}><div><strong>{template.templateKey}</strong><small>{template.status} · {template.locale} · {template.subjectTemplate}</small></div></div>)}</div>
+      </section>
+      <section className="settings-subpanel">
+        <h3>Recent delivery</h3>
+        <div className="plugin-list">{summary.events.map((event) => <div className="plugin-row" key={event.id}><div><strong>{event.purpose}</strong><small>{event.status} · {event.template_key ?? "direct"} · {event.error_safe ?? "no safe error"}</small></div></div>)}</div>
+      </section>
+    </div> : null}
   </SurfaceCard>;
 }
 
@@ -295,6 +421,7 @@ export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: S
         {selectedTabId === "platform.settings.interface" ? <RuntimeShellEditor state={shell} onChange={onShellChange} /> : null}
         {selectedTabId === "platform.settings.security" ? <SecurityPanel emit={emit} /> : null}
         {selectedTabId === "platform.settings.domains" ? <DomainsPanel emit={emit} /> : null}
+        {selectedTabId === "platform.settings.mail" ? <MailDeliveryPanel emit={emit} /> : null}
       </section>
     </div>
   </div>;

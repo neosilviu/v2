@@ -9,4 +9,5 @@ export interface CoreEnv {
   RECOVERY_ADMIN_EMAILS?: string;
   RECOVERY_ADMIN_ENABLED?: string;
   PLATFORM_ADMIN_EMAILS?: string;
+  ENVIRONMENT?: string;
 }

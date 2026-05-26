@@ -266,9 +266,9 @@ export class AuthRuntimeRepository {
     return { id, ...request };
   }
 
-  async upsertPolicy(input: unknown) {
+  async upsertPolicy(input: unknown, options: { mailDeliveryAvailable?: boolean } = {}) {
     const request = authPolicyWriteSchema.parse(input);
-    if (request.requireEmailVerification) throw new Error("Email verification requires a server-side mail delivery adapter before it can be enabled.");
+    if (request.requireEmailVerification && !options.mailDeliveryAvailable) throw new Error("Email verification requires a server-side mail delivery adapter before it can be enabled.");
     const workspace = request.workspaceId ?? null;
     const id = workspace ? `workspace:${workspace}` : "global";
     await this.db.prepare(`INSERT INTO auth_policies

@@ -1,4 +1,5 @@
 import type { PluginBundle, PluginManifest, ToolContribution } from "@v2/plugin-contracts";
+import type { MailProviderConfigure, MailProviderPublicSummary, MailProviderTestResult, MailTemplate } from "@v2/mail-contracts";
 import type { SurfaceContribution } from "@v2/plugin-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
@@ -33,7 +34,7 @@ export type WorkspaceDomain = {
   id: string;
   workspaceId: string;
   hostname: string;
-  kind: "admin" | "auth" | "website" | "storefront" | "public-chat";
+  kind: "admin" | "auth" | "website" | "storefront" | "public-chat" | "mail";
   status: "draft" | "verifying" | "verified" | "active" | "disabled";
   verificationMethod: "manual" | "dns-txt" | "dns-cname";
   verificationInstructions: Record<string, unknown> | null;
@@ -42,6 +43,12 @@ export type WorkspaceDomain = {
   createdAt: string;
   verifiedAt: string | null;
   updatedAt: string;
+};
+export type MailSummary = {
+  providers: MailProviderPublicSummary[];
+  templates: MailTemplate[];
+  events: { id: string; provider_id: string | null; template_key: string | null; status: string; purpose: string; error_safe: string | null; created_at: string; completed_at: string | null }[];
+  activeProvider: MailProviderPublicSummary | null;
 };
 export async function loadCoreSession(): Promise<CoreSession> { return json<CoreSession>("/session"); }
 export async function loadOwnerSetup(token: string): Promise<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }> { return json<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }>(`/setup/owner?token=${encodeURIComponent(token)}`); }
@@ -69,6 +76,11 @@ export async function createDomain(input: { hostname: string; kind: WorkspaceDom
 export async function verifyDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${workspaceId}/domains/${encodeURIComponent(domainId)}/verify`, { method: "POST" })).domains; }
 export async function activateDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${workspaceId}/domains/${encodeURIComponent(domainId)}/activate`, { method: "POST" })).domains; }
 export async function disableDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${workspaceId}/domains/${encodeURIComponent(domainId)}/disable`, { method: "POST" })).domains; }
+export async function loadMailSummary(): Promise<MailSummary> { return json<MailSummary>(`/workspaces/${workspaceId}/mail`); }
+export async function configureMailProvider(input: MailProviderConfigure): Promise<MailSummary> { return json<MailSummary>(`/workspaces/${workspaceId}/mail/providers`, { method: "POST", body: JSON.stringify(input) }); }
+export async function activateMailProvider(providerId: string): Promise<MailSummary> { return json<MailSummary>(`/workspaces/${workspaceId}/mail/providers/${encodeURIComponent(providerId)}/activate`, { method: "POST" }); }
+export async function disableMailProvider(providerId: string): Promise<MailSummary> { return json<MailSummary>(`/workspaces/${workspaceId}/mail/providers/${encodeURIComponent(providerId)}/disable`, { method: "POST" }); }
+export async function testMailProvider(providerId: string, to: string): Promise<MailProviderTestResult> { return json<MailProviderTestResult>(`/workspaces/${workspaceId}/mail/providers/${encodeURIComponent(providerId)}/test`, { method: "POST", body: JSON.stringify({ to }) }); }
 export async function executeTool(toolId: string, approvalId?: string): Promise<ToolExecutionResult> { return json<ToolExecutionResult>("/tools/execute", { method: "POST", body: JSON.stringify({ workspaceId, toolId, ...(approvalId ? { approvalId } : {}) }) }); }
 export async function decideToolApproval(approvalId: string, decision: "approved" | "denied"): Promise<ToolApproval> { return (await json<{ approval: ToolApproval }>("/tool-approvals/decision", { method: "POST", body: JSON.stringify({ workspaceId, approvalId, decision }) })).approval; }
 export async function loadPendingToolApprovals(): Promise<ToolApproval[]> { return (await json<{ approvals: ToolApproval[] }>(`/workspaces/${workspaceId}/tool-approvals`)).approvals; }

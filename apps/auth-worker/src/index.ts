@@ -109,7 +109,8 @@ app.get("/admin/auth/policy", async (c) => {
 app.put("/admin/auth/policy", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
-  const policy = await new AuthRuntimeRepository(admin.config.db).upsertPolicy(await c.req.json());
+  const body = await c.req.json();
+  const policy = await new AuthRuntimeRepository(admin.config.db).upsertPolicy(body, { mailDeliveryAvailable: isInternalRequest(c) && (body as { mailDeliveryAvailable?: unknown }).mailDeliveryAvailable === true });
   return c.json({ policy });
 });
 app.get("/admin/auth/security-summary", async (c) => {

@@ -1,4 +1,5 @@
 import { declarativeUiSchema, pluginManifestSchema, type PluginBundle, type PluginManifest, type PublicContributionAccess, type PublicRouteContribution, type PublicSurfaceContribution, type PublicToolContribution, type SurfaceContribution } from "@v2/plugin-contracts";
+import type { MailDeliveryResult, MailMessageRequest, MailProviderConfigure, MailProviderPublicSummary, MailTemplate } from "@v2/mail-contracts";
 import type { SettingScope, WorkspaceLayout } from "@v2/rpc-contracts";
 import { declarativePageContributionSchema, publicRoutePatternSchema, settingsPanelContributionSchema, settingsTabContributionSchema, type AccessMode, type DeclarativePageContribution, type SettingsPanelContribution, type SettingsTabContribution } from "@v2/ui-schema";
 
@@ -103,6 +104,24 @@ export type WorkspaceDomain = {
   createdAt: string;
   verifiedAt: string | null;
   updatedAt: string;
+};
+type MailProviderRow = {
+  id: string;
+  workspace_id: string;
+  kind: MailProviderPublicSummary["kind"];
+  label: string;
+  status: MailProviderPublicSummary["status"];
+  enabled: number;
+  from_name: string;
+  from_email: string;
+  reply_to_email: string | null;
+  safe_config_json: string;
+  is_default_transactional: number;
+  last_tested_at: string | null;
+  last_test_status: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
 };
 export const workspacePermissions = [
   "workspace.read", "workspace.admin", "workspace.members.manage", "workspace.settings.read", "workspace.settings.write",
@@ -443,6 +462,7 @@ export class CoreRepository {
       ], slots: [{ id: "general.status", slot: "header", blocks: [{ type: "text" as const, text: "Workspace metadata, regional defaults, sender status and service health are managed here.", tone: "muted" as const }] }] },
       { id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.admin" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "security.summary", slot: "header", blocks: [{ type: "text" as const, text: "Auth methods, registration policy, passkeys, sessions and approvals are protected Auth/Core administration controls.", tone: "muted" as const }] }] },
       { id: "platform.settings.domains", label: "Domains", icon: "globe", order: 30, permission: "domains.read" as const, templateId: "admin.table" as const, dataSourceId: "platform.settings.domains.list", fields: [], slots: [{ id: "domains.boundary", slot: "header", blocks: [{ type: "text" as const, text: "Only verified active domains may become public delivery or Auth trust candidates.", tone: "muted" as const }] }] },
+      { id: "platform.settings.mail", label: "Mail Delivery", icon: "mail", order: 35, permission: "mail.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "mail.boundary", slot: "header", blocks: [{ type: "text" as const, text: "Transactional owner setup, invitations, verification and reset messages use Core-owned mail providers.", tone: "muted" as const }] }] },
       { id: "platform.settings.marketplace", label: "Marketplace", icon: "package", order: 40, permission: "marketplace.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "marketplace.lifecycle", slot: "header", blocks: [{ type: "text" as const, text: "Catalog releases, package uploads, installs and persistent approvals live in this platform tab.", tone: "muted" as const }] }] },
       { id: "platform.settings.interface", label: "Interface", icon: "layout", order: 50, permission: "layout.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "interface.runtime", slot: "header", blocks: [{ type: "text" as const, text: "Shell zones, placements and theme tokens are runtime configuration, not plugin-specific Web code.", tone: "muted" as const }] }] },
     ];
@@ -975,7 +995,7 @@ export class CoreRepository {
       contactEmailPublic: settings.contactEmailPublic ?? "",
       contactPhonePublic: settings.contactPhonePublic ?? "",
       communicationLanguage: settings.communicationLanguage ?? "ro-RO",
-      emailDeliveryStatus: "unavailable",
+      emailDeliveryStatus: (await this.activeMailProvider(workspaceId)) ? "configured" : "unavailable",
       serviceHealth: { core: "ok", auth: "external", marketplace: "ok" },
     };
   }
@@ -1038,6 +1058,132 @@ export class CoreRepository {
   private async sha256(value: string) {
     const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
     return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  private mailProviderRow(row: MailProviderRow): MailProviderPublicSummary {
+    return {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      kind: row.kind,
+      label: row.label,
+      status: row.status,
+      enabled: row.enabled === 1,
+      fromName: row.from_name,
+      fromEmail: row.from_email,
+      replyToEmail: row.reply_to_email,
+      safeConfig: JSON.parse(row.safe_config_json || "{}") as MailProviderPublicSummary["safeConfig"],
+      isDefaultTransactional: row.is_default_transactional === 1,
+      lastTestedAt: row.last_tested_at,
+      lastTestStatus: row.last_test_status,
+      lastError: row.last_error,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private defaultMailTemplates(workspaceId: string): MailTemplate[] {
+    const specs = [
+      ["owner_setup", "Set up your workspace owner account", "Use this one-time setup link: {{setupUrl}}"],
+      ["workspace_invite", "Workspace invitation", "You were invited to {{workspaceName}}. Accept here: {{inviteUrl}}"],
+      ["verify_email", "Verify your email", "Verify your email address: {{verificationUrl}}"],
+      ["reset_password", "Reset your password", "Reset your password: {{resetUrl}}"],
+      ["notification_generic", "{{subject}}", "{{body}}"],
+    ] as const;
+    return specs.map(([templateKey, subjectTemplate, bodyTextTemplate]) => ({ id: `${workspaceId}:${templateKey}:ro-RO`, workspaceId, templateKey, subjectTemplate, bodyTextTemplate, bodyHtmlTemplate: null, status: "active", locale: "ro-RO" }));
+  }
+
+  async ensureMailTemplates(workspaceId: string) {
+    await this.ensureWorkspace(workspaceId);
+    await this.db.batch(this.defaultMailTemplates(workspaceId).map((template) => this.db.prepare(`INSERT OR IGNORE INTO workspace_mail_templates
+      (id, workspace_id, template_key, subject_template, body_text_template, body_html_template, status, locale)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(template.id, workspaceId, template.templateKey, template.subjectTemplate, template.bodyTextTemplate, template.bodyHtmlTemplate, template.status, template.locale)));
+  }
+
+  async mailSummary(workspaceId: string) {
+    await this.ensureMailTemplates(workspaceId);
+    const providers = await this.listMailProviders(workspaceId);
+    const templates = await this.listMailTemplates(workspaceId);
+    const events = await this.db.prepare(`SELECT id, provider_id, template_key, status, purpose, error_safe, created_at, completed_at
+      FROM mail_delivery_events WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 20`).bind(workspaceId)
+      .all<{ id: string; provider_id: string | null; template_key: string | null; status: string; purpose: string; error_safe: string | null; created_at: string; completed_at: string | null }>();
+    return { providers, templates, events: events.results, activeProvider: providers.find((provider) => provider.isDefaultTransactional && provider.enabled && provider.status === "active") ?? null };
+  }
+
+  async listMailProviders(workspaceId: string): Promise<MailProviderPublicSummary[]> {
+    const rows = await this.db.prepare(`SELECT id, workspace_id, kind, label, status, enabled, from_name, from_email, reply_to_email, safe_config_json, is_default_transactional, last_tested_at, last_test_status, last_error, created_at, updated_at
+      FROM workspace_mail_providers WHERE workspace_id = ? ORDER BY is_default_transactional DESC, label`).bind(workspaceId).all<MailProviderRow>();
+    return rows.results.map((row) => this.mailProviderRow(row));
+  }
+
+  async activeMailProvider(workspaceId: string): Promise<MailProviderPublicSummary | null> {
+    const row = await this.db.prepare(`SELECT id, workspace_id, kind, label, status, enabled, from_name, from_email, reply_to_email, safe_config_json, is_default_transactional, last_tested_at, last_test_status, last_error, created_at, updated_at
+      FROM workspace_mail_providers WHERE workspace_id = ? AND enabled = 1 AND status = 'active' AND is_default_transactional = 1 LIMIT 1`).bind(workspaceId).first<MailProviderRow>();
+    return row ? this.mailProviderRow(row) : null;
+  }
+
+  async configureMailProvider(workspaceId: string, input: MailProviderConfigure, actorId?: string) {
+    await this.ensureWorkspace(workspaceId);
+    const providerId = `${workspaceId}:mail:${crypto.randomUUID()}`;
+    const status = input.kind === "mock-development-only" ? "configured" : input.configurationRef ? "configured" : "draft";
+    await this.db.prepare(`INSERT INTO workspace_mail_providers
+      (id, workspace_id, kind, label, status, enabled, from_name, from_email, reply_to_email, configuration_ref, safe_config_json, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
+      .bind(providerId, workspaceId, input.kind, input.label, status, input.enabled ? 1 : 0, input.fromName, input.fromEmail, input.replyToEmail ?? null, input.configurationRef ?? null, JSON.stringify(input.safeConfig ?? {}))
+      .run();
+    await this.audit(workspaceId, "mail.provider.configure", { providerId, kind: input.kind, secretStoredAsRef: Boolean(input.configurationRef) }, actorId);
+    return this.mailSummary(workspaceId);
+  }
+
+  async activateMailProvider(workspaceId: string, providerId: string, actorId?: string) {
+    await this.db.batch([
+      this.db.prepare("UPDATE workspace_mail_providers SET is_default_transactional = 0, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?").bind(workspaceId),
+      this.db.prepare("UPDATE workspace_mail_providers SET status = 'active', enabled = 1, is_default_transactional = 1, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND id = ?").bind(workspaceId, providerId),
+    ]);
+    await this.audit(workspaceId, "mail.provider.activate", { providerId }, actorId);
+    return this.mailSummary(workspaceId);
+  }
+
+  async disableMailProvider(workspaceId: string, providerId: string, actorId?: string) {
+    await this.db.prepare("UPDATE workspace_mail_providers SET status = 'disabled', enabled = 0, is_default_transactional = 0, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND id = ?").bind(workspaceId, providerId).run();
+    await this.audit(workspaceId, "mail.provider.disable", { providerId }, actorId);
+    return this.mailSummary(workspaceId);
+  }
+
+  async listMailTemplates(workspaceId: string): Promise<MailTemplate[]> {
+    await this.ensureMailTemplates(workspaceId);
+    const rows = await this.db.prepare(`SELECT id, workspace_id, template_key, subject_template, body_text_template, body_html_template, status, locale, created_at, updated_at
+      FROM workspace_mail_templates WHERE workspace_id = ? ORDER BY template_key, locale`).bind(workspaceId)
+      .all<{ id: string; workspace_id: string; template_key: MailTemplate["templateKey"]; subject_template: string; body_text_template: string; body_html_template: string | null; status: MailTemplate["status"]; locale: string; created_at: string; updated_at: string }>();
+    return rows.results.map((row) => ({ id: row.id, workspaceId: row.workspace_id, templateKey: row.template_key, subjectTemplate: row.subject_template, bodyTextTemplate: row.body_text_template, bodyHtmlTemplate: row.body_html_template, status: row.status, locale: row.locale, createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
+  async sendMail(request: MailMessageRequest): Promise<MailDeliveryResult> {
+    const provider = await this.activeMailProvider(request.workspaceId);
+    const recipientHash = await this.sha256(request.to.toLowerCase());
+    const eventId = crypto.randomUUID();
+    if (!provider) {
+      await this.db.prepare(`INSERT INTO mail_delivery_events (id, workspace_id, provider_id, template_key, recipient_hash_or_safe_reference, status, purpose, error_safe, completed_at)
+        VALUES (?, ?, NULL, ?, ?, 'failed', ?, 'No active Core transactional mail provider is configured.', CURRENT_TIMESTAMP)`)
+        .bind(eventId, request.workspaceId, request.templateKey ?? null, recipientHash, request.purpose).run();
+      return { ok: false, status: "failed", providerId: null, eventId, errorSafe: "No active Core transactional mail provider is configured." };
+    }
+    const smtpReady = provider.kind === "smtp" && provider.safeConfig.passwordConfigured && provider.safeConfig.usernameConfigured;
+    const ok = provider.kind === "mock-development-only" || smtpReady;
+    const errorSafe = ok ? null : "SMTP secret reference is not fully configured.";
+    await this.db.prepare(`INSERT INTO mail_delivery_events (id, workspace_id, provider_id, template_key, recipient_hash_or_safe_reference, status, purpose, error_safe, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
+      .bind(eventId, request.workspaceId, provider.id, request.templateKey ?? null, recipientHash, ok ? "sent" : "failed", request.purpose, errorSafe).run();
+    return { ok, status: ok ? "sent" : "failed", providerId: provider.id, eventId, errorSafe };
+  }
+
+  async testMailProvider(workspaceId: string, providerId: string, to: string, actorId?: string) {
+    await this.activateMailProvider(workspaceId, providerId, actorId);
+    const result = await this.sendMail({ workspaceId, purpose: "test", to, subject: "Core mail provider test", text: "This is a Core Mail Runtime test.", variables: {} });
+    await this.db.prepare("UPDATE workspace_mail_providers SET last_tested_at = CURRENT_TIMESTAMP, last_test_status = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND id = ?")
+      .bind(result.ok ? "sent" : "failed", result.errorSafe, workspaceId, providerId).run();
+    await this.audit(workspaceId, "mail.provider.test", { providerId, ok: result.ok, eventId: result.eventId }, actorId);
+    return { ok: result.ok, status: result.ok ? "sent" as const : "failed" as const, providerId, message: result.errorSafe ?? "Mail provider test accepted by Core Mail Runtime.", eventId: result.eventId };
   }
 
   async saveLayout(workspaceId: string, layout: WorkspaceLayout) {
