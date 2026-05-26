@@ -112,13 +112,18 @@ const registry: Record<TemplateId, (props: TemplateRendererProps) => ReactElemen
   "public.chat": AdminChat,
 };
 
+function isNativePlatformSettingsPanel(contributionId: string): boolean {
+  return contributionId.startsWith("platform.settings.");
+}
+
 export function TemplateRenderer(props: TemplateRendererProps) {
   const [runtimeData, setRuntimeData] = useState<unknown>(props.data ?? props.page.data);
   const [status, setStatus] = useState<string | null>(null);
   const contributionId = props.runtime?.contributionId ?? props.page.id;
   const routeParams = props.runtime?.routeParams ?? {};
   const routeParamsKey = JSON.stringify(routeParams);
-  const dataSources = props.runtime?.public ? props.page.dataSources : props.page.dataSources.filter((dataSource) => dataSource.access !== "public-candidate");
+  const nativePlatformPanel = isNativePlatformSettingsPanel(contributionId);
+  const dataSources = nativePlatformPanel ? [] : props.runtime?.public ? props.page.dataSources : props.page.dataSources.filter((dataSource) => dataSource.access !== "public-candidate");
   const dataSourceKey = dataSources.map((dataSource) => dataSource.id).join("|");
 
   useEffect(() => {
@@ -165,6 +170,7 @@ export function TemplateRenderer(props: TemplateRendererProps) {
     }
   };
 
+  if (nativePlatformPanel) return null;
   const Template = registry[props.page.templateId];
   return <div className="template-runtime">
     {status ? <p className="message">{status}</p> : null}
