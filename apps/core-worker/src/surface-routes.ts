@@ -42,8 +42,14 @@ export function createSurfaceRoutes() {
     const surfaces = rows.results.map((row) => {
       const zone = row.zone_override ?? row.zone_id ?? "workspace.main";
       const schema = declarativePageContributionSchema.parse(JSON.parse(row.schema_json));
-      const kind = zone.startsWith("settings.") ? "settings" : zone === "assistant.right" ? "panel" : "page";
-      return { id: row.contribution_id, title: schema.title, zone, kind, renderer: { mode: "declarative", schema } } satisfies SurfaceContribution;
+      const kind: SurfaceContribution["kind"] = zone.startsWith("settings.") ? "settings" : zone === "assistant.right" ? "panel" : "page";
+      return {
+        id: row.contribution_id,
+        title: schema.title,
+        zone,
+        kind,
+        renderer: { mode: "declarative" as const, schema },
+      } satisfies SurfaceContribution;
     });
     return c.json({ surfaces });
   });
