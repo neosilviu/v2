@@ -3,12 +3,33 @@ import { z } from "zod";
 export const workspaceIdSchema = z.string().min(1);
 export const settingScopeSchema = z.union([z.literal("platform"), z.string().regex(/^plugin:[a-zA-Z0-9._-]+$/)]);
 export const pluginActivationRequestSchema = z.object({ workspaceId: workspaceIdSchema, pluginId: z.string().min(1) });
-export const pluginInstallRequestSchema = z.object({ workspaceId: workspaceIdSchema, bundle: z.unknown(), approved: z.boolean().default(false) });
+export const pluginInstallRequestSchema = z.object({ workspaceId: workspaceIdSchema, bundle: z.unknown().optional(), approvalId: z.string().min(1).optional() }).refine((value) => value.bundle !== undefined || value.approvalId, { message: "A plugin bundle or approvalId is required." });
 export const capabilityGrantRequestSchema = z.object({ workspaceId: workspaceIdSchema, pluginId: z.string().min(1), capabilities: z.array(z.string().min(1)) });
 export const toolExecutionRequestSchema = z.object({ workspaceId: workspaceIdSchema, toolId: z.string().min(1), input: z.unknown().optional(), approvalId: z.string().min(1).optional() });
 export const toolApprovalLookupRequestSchema = z.object({ workspaceId: workspaceIdSchema, approvalId: z.string().min(1) });
 export const toolApprovalDecisionRequestSchema = z.object({ workspaceId: workspaceIdSchema, approvalId: z.string().min(1), decision: z.enum(["approved", "denied"]) });
 export const toolApprovalSchema = z.object({ id: z.string().min(1), workspaceId: workspaceIdSchema, pluginId: z.string().min(1), toolId: z.string().min(1), risk: z.string().min(1), status: z.enum(["pending", "approved", "denied", "consumed"]), requestedAt: z.string(), decidedAt: z.string().nullable(), consumedAt: z.string().nullable() });
+export const approvalRequestKindSchema = z.enum(["tool_execute", "plugin_install", "plugin_update", "plugin_publish", "public_publish", "auth_config_publish"]);
+export const approvalRequestStatusSchema = z.enum(["pending", "approved", "denied", "expired", "consumed", "revoked"]);
+export const approvalRequestDecisionSchema = z.enum(["approved", "denied"]);
+export const approvalRequestSchema = z.object({
+  id: z.string().min(1),
+  workspaceId: workspaceIdSchema,
+  kind: approvalRequestKindSchema,
+  subjectId: z.string().min(1),
+  pluginId: z.string().min(1).nullable(),
+  risk: z.string().min(1),
+  payload: z.record(z.string(), z.unknown()),
+  status: approvalRequestStatusSchema,
+  requestedBy: z.string().nullable(),
+  decidedBy: z.string().nullable(),
+  requestedAt: z.string(),
+  decidedAt: z.string().nullable(),
+  expiresAt: z.string().nullable(),
+  consumedAt: z.string().nullable(),
+  reason: z.string().nullable(),
+});
+export const approvalRequestDecisionRequestSchema = z.object({ workspaceId: workspaceIdSchema, decision: approvalRequestDecisionSchema, reason: z.string().max(1000).optional() });
 export const toolExecutionResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("executed"), toolId: z.string(), approvalId: z.string().optional(), result: z.unknown().optional() }),
   z.object({ status: z.literal("approval-required"), toolId: z.string(), risk: z.string(), approvalId: z.string() }),
@@ -29,6 +50,9 @@ export type ToolExecutionRequest = z.output<typeof toolExecutionRequestSchema>;
 export type ToolApprovalLookupRequest = z.output<typeof toolApprovalLookupRequestSchema>;
 export type ToolApprovalDecisionRequest = z.output<typeof toolApprovalDecisionRequestSchema>;
 export type ToolApproval = z.output<typeof toolApprovalSchema>;
+export type ApprovalRequest = z.output<typeof approvalRequestSchema>;
+export type ApprovalRequestKind = z.output<typeof approvalRequestKindSchema>;
+export type ApprovalRequestDecisionRequest = z.output<typeof approvalRequestDecisionRequestSchema>;
 export type ToolExecutionResult = z.output<typeof toolExecutionResultSchema>;
 export type SettingScope = z.output<typeof settingScopeSchema>;
 export type WorkspaceLayout = z.output<typeof workspaceLayoutSchema>;

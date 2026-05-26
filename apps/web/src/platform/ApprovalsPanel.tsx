@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import type { ToolApproval } from "@v2/rpc-contracts";
+import type { ApprovalRequest, ToolApproval } from "@v2/rpc-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { approveToolApproval, denyToolApproval, loadCoreSession, loadPendingToolApprovals } from "../api";
+import { approveToolApproval, decideApprovalRequest, denyToolApproval, loadCoreSession, loadPendingApprovalRequests, loadPendingToolApprovals } from "../api";
 
 export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
   const [approvals, setApprovals] = useState<ToolApproval[]>([]);
+  const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [status, setStatus] = useState("Checking platform admin access...");
   const [isAdmin, setIsAdmin] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -25,11 +26,14 @@ export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
       return;
     }
     try {
-      const pending = await loadPendingToolApprovals();
+      const [pending, generic] = await Promise.all([loadPendingToolApprovals(), loadPendingApprovalRequests()]);
       setApprovals(pending);
-      setStatus(pending.length ? `${pending.length} pending approval${pending.length === 1 ? "" : "s"}` : "No pending approvals");
+      setRequests(generic);
+      const total = pending.length + generic.length;
+      setStatus(total ? `${total} pending approval${total === 1 ? "" : "s"}` : "No pending approvals");
     } catch {
       setApprovals([]);
+      setRequests([]);
       setStatus("Approvals require platform admin access");
     }
   };
@@ -47,6 +51,18 @@ export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
       setBusyId(null);
     }
   };
+  const decideGeneric = async (approvalId: string, decision: "approved" | "denied") => {
+    setBusyId(approvalId);
+    try {
+      await decideApprovalRequest(approvalId, decision);
+      await refresh();
+      onDecision?.();
+    } catch {
+      setStatus("Approval decision failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return <SurfaceCard className="approvals-panel">
     <div className="surface-header">
@@ -55,6 +71,18 @@ export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
     </div>
     <p>{status}</p>
     <div className="approval-list">
+      {requests.map((approval) => <div className="approval-row" key={approval.id}>
+        <div>
+          <strong>{approval.kind}</strong>
+          <small>{approval.pluginId ?? "platform"} · {approval.subjectId} · {approval.id.slice(0, 8)} · {new Date(approval.requestedAt).toLocaleTimeString()}</small>
+          {approval.kind.startsWith("plugin_") ? <small>{String(approval.payload.version ?? "")} · {String(approval.payload.sha256 ?? "").slice(0, 12)} · {(approval.payload.sensitiveCapabilities as string[] | undefined)?.join(", ") || "no sensitive capabilities listed"}</small> : null}
+        </div>
+        <Badge>{approval.risk}</Badge>
+        <div className="approval-actions">
+          <Button disabled={busyId === approval.id} onClick={() => void decideGeneric(approval.id, "denied")}>Deny</Button>
+          <Button disabled={busyId === approval.id} onClick={() => void decideGeneric(approval.id, "approved")}>Approve</Button>
+        </div>
+      </div>)}
       {approvals.map((approval) => <div className="approval-row" key={approval.id}>
         <div>
           <strong>{approval.toolId}</strong>

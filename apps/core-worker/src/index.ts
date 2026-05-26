@@ -1,11 +1,12 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { errorResponse, failure } from "@v2/feedback-runtime";
-import type { PublicContributionAccess } from "@v2/plugin-contracts";
+import type { PluginBundle, PublicContributionAccess } from "@v2/plugin-contracts";
 import { assessPluginBundle, unpackPluginZip } from "@v2/plugin-installer";
-import { capabilityGrantRequestSchema, layoutWriteRequestSchema, pluginActivationRequestSchema, pluginInstallRequestSchema, settingScopeSchema, settingWriteRequestSchema, toolApprovalDecisionRequestSchema, toolApprovalLookupRequestSchema, toolExecutionRequestSchema, type SettingScope } from "@v2/rpc-contracts";
+import { approvalRequestDecisionRequestSchema, capabilityGrantRequestSchema, layoutWriteRequestSchema, pluginActivationRequestSchema, pluginInstallRequestSchema, settingScopeSchema, settingWriteRequestSchema, toolApprovalDecisionRequestSchema, toolApprovalLookupRequestSchema, toolExecutionRequestSchema, type SettingScope } from "@v2/rpc-contracts";
 import { RuntimeKernel } from "@v2/runtime";
 import { allowedOrigins, isInternalRequest, isPlatformAdmin, readSession, type CoreSessionUser } from "./access";
+import { ApprovalRequestRepository } from "./approval-requests";
 import type { CoreEnv } from "./env";
 import { CoreRepository, type PublicationKind } from "./repository";
 import { ToolApprovalRepository } from "./tool-approvals";
@@ -33,14 +34,28 @@ function publicPublicationRequest(input: unknown): { workspaceId: string; plugin
   if (value.title !== undefined && typeof value.title !== "string") return null;
   return { workspaceId: value.workspaceId, pluginId: value.pluginId, contributionKind, contributionId: value.contributionId, ...(publicPath ? { publicPath } : {}), ...(value.title ? { title: value.title } : {}), ...(access ? { access } : {}) };
 }
-async function readApproved(c: CoreContext): Promise<boolean> {
-  if (!c.req.header("content-type")?.includes("application/json")) return false;
+async function readApprovalId(c: CoreContext): Promise<string | undefined> {
+  if (!c.req.header("content-type")?.includes("application/json")) return undefined;
   try {
-    const body = await c.req.json() as { approved?: unknown };
-    return body.approved === true;
+    const body = await c.req.json() as { approvalId?: unknown };
+    return typeof body.approvalId === "string" ? body.approvalId : undefined;
   } catch {
-    return false;
+    return undefined;
   }
+}
+function pluginInstallSubject(bundle: PluginBundle) { return `${bundle.manifest.id}@${bundle.manifest.version}:${bundle.package.sha256}`; }
+function pluginInstallRisk(assessment: ReturnType<typeof assessPluginBundle>) { return assessment.bundle.manifest.capabilities.some((item) => item.risk === "dangerous") || assessment.bundle.worker.isolation === "platform-worker" ? "dangerous" : "sensitive"; }
+function pluginInstallApprovalPayload(source: "marketplace" | "upload" | "direct", assessment: ReturnType<typeof assessPluginBundle>, extra: Record<string, unknown> = {}) {
+  return {
+    source,
+    pluginId: assessment.bundle.manifest.id,
+    version: assessment.bundle.manifest.version,
+    sha256: assessment.bundle.package.sha256,
+    packageObjectKey: assessment.bundle.package.objectKey,
+    sensitiveCapabilities: assessment.sensitiveCapabilities,
+    bundle: assessment.bundle,
+    ...extra,
+  };
 }
 app.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
 app.get("/session", (c) => {
@@ -109,25 +124,131 @@ app.post("/marketplace/plugins/:pluginId/install", async (c) => {
   if (denied) return denied;
   const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId;
   const repo = new CoreRepository(c.env.CORE_DB);
+  const approvals = new ApprovalRequestRepository(c.env.CORE_DB);
   const plugin = await repo.catalogPlugin(c.req.param("pluginId"));
   if (!plugin) return c.json(errorResponse(failure("not_found", "Marketplace plugin is not available.")), 404);
   const release = await repo.publishedCatalogRelease(plugin.manifest.id);
   if (!release) return c.json(errorResponse(failure("not_found", "Marketplace plugin has no published runtime release.")), 404);
-  const assessment = assessPluginBundle(repo.releaseBundle(release));
-  if (assessment.requiresApproval && !await readApproved(c)) return c.json({ status: "approval-required", bundle: assessment.bundle, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202);
+  let assessment = assessPluginBundle(repo.releaseBundle(release));
+  let consumedApprovalId: string | undefined;
+  if (assessment.requiresApproval) {
+    const approvalId = await readApprovalId(c);
+    if (!approvalId) {
+      await repo.ensureWorkspace(workspaceId);
+      const approval = await approvals.create({
+        workspaceId,
+        kind: "plugin_install",
+        subjectId: release.id,
+        pluginId: assessment.bundle.manifest.id,
+        risk: pluginInstallRisk(assessment),
+        payload: pluginInstallApprovalPayload("marketplace", assessment, { releaseId: release.id }),
+        requestedBy: c.get("user")?.id,
+      });
+      await repo.audit(workspaceId, "plugin.install.approval.requested", { approvalId: approval.id, pluginId: assessment.bundle.manifest.id, releaseId: release.id, sha256: release.sha256, sensitiveCapabilities: assessment.sensitiveCapabilities }, c.get("user")?.id);
+      return c.json({ status: "approval-required", approvalId: approval.id, releaseId: release.id, pluginId: assessment.bundle.manifest.id, version: release.version, sha256: release.sha256, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202);
+    }
+    const approved = await approvals.claimApproved({ workspaceId, approvalId, kind: "plugin_install", subjectId: release.id, pluginId: assessment.bundle.manifest.id });
+    if (!approved) {
+      await repo.audit(workspaceId, "plugin.install.approval.replay_or_missing", { approvalId, pluginId: assessment.bundle.manifest.id, releaseId: release.id }, c.get("user")?.id);
+      return c.json(errorResponse(failure("not_authorized", "A matching approved installation request is required.")), 403);
+    }
+    assessment = assessPluginBundle((approved.payload as { bundle?: unknown }).bundle);
+    consumedApprovalId = approved.id;
+    await repo.audit(workspaceId, "plugin.install.approval.consumed", { approvalId: approved.id, pluginId: assessment.bundle.manifest.id, releaseId: release.id }, c.get("user")?.id);
+  }
   await repo.ensureWorkspace(workspaceId);
   await repo.installManifest(assessment.bundle.manifest, assessment.bundle);
   await repo.activate(workspaceId, assessment.bundle.manifest.id);
-  await repo.audit(workspaceId, "marketplace.plugin.install", { pluginId: assessment.bundle.manifest.id, category: plugin.category, releaseId: release.id }, c.get("user")?.id);
+  await repo.audit(workspaceId, "marketplace.plugin.install", { pluginId: assessment.bundle.manifest.id, category: plugin.category, releaseId: release.id, approvalId: consumedApprovalId ?? null }, c.get("user")?.id);
   return c.json({ status: "installed", plugin: { ...plugin, manifest: assessment.bundle.manifest, installed: true, active: true } }, 201);
 });
-app.post("/plugins/upload", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const form = await c.req.formData(); const file = form.get("file"); if (!(file instanceof File) || !file.name.toLowerCase().endsWith(".zip")) return c.json(errorResponse(failure("validation_failed", "A ZIP plugin package is required.")), 400); if (file.size > 20 * 1024 * 1024) return c.json(errorResponse(failure("validation_failed", "Plugin package exceeds 20 MB.")), 413); const bytes = await file.arrayBuffer(); const key = `packages/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, "-")}`; const assessment = await unpackPluginZip(bytes, key); await c.env.PLUGIN_PACKAGES.put(key, bytes, { customMetadata: { pluginId: assessment.bundle.manifest.id, version: assessment.bundle.manifest.version, sha256: assessment.bundle.package.sha256 } }); const repo = new CoreRepository(c.env.CORE_DB); await repo.ensureWorkspace(defaultWorkspaceId); if (assessment.requiresApproval) { await repo.audit(defaultWorkspaceId, "plugin.install.approval_required", { pluginId: assessment.bundle.manifest.id }, c.get("user")?.id); return c.json({ status: "approval-required", bundle: assessment.bundle, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202); } await repo.installManifest(assessment.bundle.manifest, assessment.bundle); await repo.activate(defaultWorkspaceId, assessment.bundle.manifest.id); await repo.audit(defaultWorkspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id, source: "zip" }, c.get("user")?.id); return c.json({ status: "installed", manifest: assessment.bundle.manifest }, 201); });
-app.post("/plugins/install", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = pluginInstallRequestSchema.parse(await c.req.json()); const assessment = assessPluginBundle(request.bundle); if (assessment.requiresApproval && !request.approved) return c.json({ status: "approval-required", bundle: assessment.bundle, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202); const repo = new CoreRepository(c.env.CORE_DB); await repo.ensureWorkspace(request.workspaceId); await repo.installManifest(assessment.bundle.manifest, assessment.bundle); await repo.activate(request.workspaceId, assessment.bundle.manifest.id); await repo.audit(request.workspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id }, c.get("user")?.id); return c.json({ status: "installed", manifest: assessment.bundle.manifest }, 201); });
+app.post("/plugins/upload", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const form = await c.req.formData();
+  const file = form.get("file");
+  if (!(file instanceof File) || !file.name.toLowerCase().endsWith(".zip")) return c.json(errorResponse(failure("validation_failed", "A ZIP plugin package is required.")), 400);
+  if (file.size > 20 * 1024 * 1024) return c.json(errorResponse(failure("validation_failed", "Plugin package exceeds 20 MB.")), 413);
+  const bytes = await file.arrayBuffer();
+  const key = `packages/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
+  const assessment = await unpackPluginZip(bytes, key);
+  await c.env.PLUGIN_PACKAGES.put(key, bytes, { customMetadata: { pluginId: assessment.bundle.manifest.id, version: assessment.bundle.manifest.version, sha256: assessment.bundle.package.sha256 } });
+  const repo = new CoreRepository(c.env.CORE_DB);
+  await repo.ensureWorkspace(defaultWorkspaceId);
+  if (assessment.requiresApproval) {
+    const approval = await new ApprovalRequestRepository(c.env.CORE_DB).create({
+      workspaceId: defaultWorkspaceId,
+      kind: "plugin_install",
+      subjectId: pluginInstallSubject(assessment.bundle),
+      pluginId: assessment.bundle.manifest.id,
+      risk: pluginInstallRisk(assessment),
+      payload: pluginInstallApprovalPayload("upload", assessment),
+      requestedBy: c.get("user")?.id,
+    });
+    await repo.audit(defaultWorkspaceId, "plugin.install.approval.requested", { approvalId: approval.id, pluginId: assessment.bundle.manifest.id, sha256: assessment.bundle.package.sha256, source: "zip", sensitiveCapabilities: assessment.sensitiveCapabilities }, c.get("user")?.id);
+    return c.json({ status: "approval-required", approvalId: approval.id, pluginId: assessment.bundle.manifest.id, version: assessment.bundle.manifest.version, sha256: assessment.bundle.package.sha256, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202);
+  }
+  await repo.installManifest(assessment.bundle.manifest, assessment.bundle);
+  await repo.activate(defaultWorkspaceId, assessment.bundle.manifest.id);
+  await repo.audit(defaultWorkspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id, source: "zip", approvalId: null }, c.get("user")?.id);
+  return c.json({ status: "installed", manifest: assessment.bundle.manifest }, 201);
+});
+app.post("/plugins/install", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const request = pluginInstallRequestSchema.parse(await c.req.json());
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const approvals = new ApprovalRequestRepository(c.env.CORE_DB);
+  let assessment: ReturnType<typeof assessPluginBundle>;
+  let consumedApprovalId: string | undefined;
+  if (request.approvalId) {
+    const approved = await approvals.claimApproved({ workspaceId: request.workspaceId, approvalId: request.approvalId, kind: "plugin_install" });
+    if (!approved) {
+      await repo.audit(request.workspaceId, "plugin.install.approval.replay_or_missing", { approvalId: request.approvalId }, c.get("user")?.id);
+      return c.json(errorResponse(failure("not_authorized", "A matching approved installation request is required.")), 403);
+    }
+    assessment = assessPluginBundle((approved.payload as { bundle?: unknown }).bundle);
+    consumedApprovalId = approved.id;
+    await repo.audit(request.workspaceId, "plugin.install.approval.consumed", { approvalId: approved.id, pluginId: assessment.bundle.manifest.id, sha256: assessment.bundle.package.sha256 }, c.get("user")?.id);
+  } else {
+    assessment = assessPluginBundle(request.bundle);
+    if (assessment.requiresApproval) {
+      await repo.ensureWorkspace(request.workspaceId);
+      const approval = await approvals.create({
+        workspaceId: request.workspaceId,
+        kind: "plugin_install",
+        subjectId: pluginInstallSubject(assessment.bundle),
+        pluginId: assessment.bundle.manifest.id,
+        risk: pluginInstallRisk(assessment),
+        payload: pluginInstallApprovalPayload("direct", assessment),
+        requestedBy: c.get("user")?.id,
+      });
+      await repo.audit(request.workspaceId, "plugin.install.approval.requested", { approvalId: approval.id, pluginId: assessment.bundle.manifest.id, sha256: assessment.bundle.package.sha256, sensitiveCapabilities: assessment.sensitiveCapabilities }, c.get("user")?.id);
+      return c.json({ status: "approval-required", approvalId: approval.id, pluginId: assessment.bundle.manifest.id, version: assessment.bundle.manifest.version, sha256: assessment.bundle.package.sha256, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202);
+    }
+  }
+  await repo.ensureWorkspace(request.workspaceId);
+  await repo.installManifest(assessment.bundle.manifest, assessment.bundle);
+  await repo.activate(request.workspaceId, assessment.bundle.manifest.id);
+  await repo.audit(request.workspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id, approvalId: consumedApprovalId ?? null }, c.get("user")?.id);
+  return c.json({ status: "installed", manifest: assessment.bundle.manifest }, 201);
+});
 app.post("/plugins/activate", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = pluginActivationRequestSchema.parse(await c.req.json()); const state = await new CoreRepository(c.env.CORE_DB).activate(request.workspaceId, request.pluginId); return state ? c.json(state, 201) : c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404); });
 app.post("/plugins/deactivate", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = pluginActivationRequestSchema.parse(await c.req.json()); const state = await new CoreRepository(c.env.CORE_DB).deactivate(request.workspaceId, request.pluginId); return state ? c.json(state) : c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404); });
 app.post("/plugins/grants", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = capabilityGrantRequestSchema.parse(await c.req.json()); const repo = new CoreRepository(c.env.CORE_DB); if (!await repo.installedById(request.pluginId)) return c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404); const declared = new Set(await repo.declaredCapabilities(request.pluginId)); if (!request.capabilities.every((capability) => declared.has(capability))) return c.json(errorResponse(failure("validation_failed", "Capability is not declared by the plugin.")), 400); return c.json({ pluginId: request.pluginId, capabilities: await repo.grantCapabilities(request.workspaceId, request.pluginId, request.capabilities) }); });
 app.post("/publications", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = publicPublicationRequest(await c.req.json()); if (!request) return c.json(errorResponse(failure("validation_failed", "A valid public publication request is required.")), 400); const publication = await new CoreRepository(c.env.CORE_DB).publishWorkspaceContribution(request); return publication ? c.json({ publication }, 201) : c.json(errorResponse(failure("validation_failed", "The public contribution must be declared by an active installed plugin.")), 400); });
 app.get("/workspaces/:workspaceId/tool-approvals", async (c) => { const denied = requireAdmin(c); if (denied) return denied; return c.json({ approvals: await new ToolApprovalRepository(c.env.CORE_DB).listPending(c.req.param("workspaceId")) }); });
+app.get("/workspaces/:workspaceId/approval-requests", async (c) => { const denied = requireAdmin(c); if (denied) return denied; return c.json({ approvals: await new ApprovalRequestRepository(c.env.CORE_DB).listPending(c.req.param("workspaceId")) }); });
+app.post("/approval-requests/:approvalId/decision", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const request = approvalRequestDecisionRequestSchema.parse(await c.req.json());
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const approval = await new ApprovalRequestRepository(c.env.CORE_DB).decide(request.workspaceId, c.req.param("approvalId"), request.decision, c.get("user")?.id, request.reason);
+  if (!approval) return c.json(errorResponse(failure("conflict", "Approval is not pending.")), 409);
+  await repo.audit(request.workspaceId, `approval.${request.decision}`, { approvalId: approval.id, kind: approval.kind, subjectId: approval.subjectId, pluginId: approval.pluginId }, c.get("user")?.id);
+  return c.json({ approval });
+});
 app.get("/tool-approvals/:approvalId", async (c) => { const denied = c.get("internal") ? undefined : requireAdmin(c); if (denied) return denied; const request = toolApprovalLookupRequestSchema.parse({ workspaceId: c.req.query("workspaceId"), approvalId: c.req.param("approvalId") }); const approval = await new ToolApprovalRepository(c.env.CORE_DB).getForWorkspace(request.workspaceId, request.approvalId); return approval ? c.json({ approval }) : c.json(errorResponse(failure("not_found", "Approval is not available.")), 404); });
 app.post("/tool-approvals/decision", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = toolApprovalDecisionRequestSchema.parse(await c.req.json()); const approval = await new ToolApprovalRepository(c.env.CORE_DB).decide(request.workspaceId, request.approvalId, request.decision, c.get("user")?.id); if (!approval) return c.json(errorResponse(failure("conflict", "Approval is not pending.")), 409); await new CoreRepository(c.env.CORE_DB).audit(request.workspaceId, `tool.approval.${request.decision}`, { approvalId: approval.id, toolId: approval.toolId }, c.get("user")?.id); return c.json({ approval }); });
 app.post("/tools/execute", async (c) => { const denied = requireRead(c); if (denied) return denied; const request = toolExecutionRequestSchema.parse(await c.req.json()); const repo = new CoreRepository(c.env.CORE_DB); const approvals = new ToolApprovalRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const owner = runtime.plugins.all().find((plugin) => plugin.contributes.tools.some((tool) => tool.id === request.toolId)); const tool = runtime.tools.get(request.toolId); if (!owner || !tool) return c.json({ status: "denied", toolId: request.toolId, reason: "Tool not registered" }, 404); const active = new Set(await repo.activePlugins(request.workspaceId)); if (!active.has(owner.id)) return c.json({ status: "denied", toolId: tool.id, reason: "Plugin is not active in workspace" }, 403); const permissions = new Set(await repo.grantedCapabilities(request.workspaceId, owner.id)); const initialDecision = runtime.canExecuteTool(tool.id, { permissions }); if (initialDecision === "deny") return c.json({ status: "denied", toolId: tool.id, reason: "Capability has not been granted" }, 403); let executionInput = request.input; let consumedApprovalId: string | undefined; if (initialDecision === "require-approval") { if (!request.approvalId) { const approval = await approvals.create(request.workspaceId, owner.id, tool.id, tool.risk, request.input, c.get("user")?.id); await repo.audit(request.workspaceId, "tool.approval.requested", { approvalId: approval.id, toolId: tool.id, pluginId: owner.id }, c.get("user")?.id); return c.json({ status: "approval-required", toolId: tool.id, risk: tool.risk, approvalId: approval.id }, 202); } const approved = await approvals.approvedInput(request.workspaceId, request.approvalId, owner.id, tool.id); if (!approved) return c.json({ status: "denied", toolId: tool.id, reason: "Approval is missing, expired or already consumed" }, 403); executionInput = approved.input; consumedApprovalId = approved.approval.id; } await runtime.events.emit("tool.executed", { workspaceId: request.workspaceId, toolId: tool.id, input: executionInput }); if (consumedApprovalId) await approvals.consume(consumedApprovalId); await repo.audit(request.workspaceId, "tool.execute", { toolId: tool.id, pluginId: owner.id, approvalId: consumedApprovalId ?? null }, c.get("user")?.id); return c.json({ status: "executed", toolId: tool.id, ...(consumedApprovalId ? { approvalId: consumedApprovalId } : {}), result: { accepted: true } }); });

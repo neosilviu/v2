@@ -35,6 +35,23 @@ export const workspaceUiActivations = sqliteTable("workspace_ui_activations", {
 }, (table) => [primaryKey({ columns: [table.workspaceId, table.pluginId, table.contributionId] }), index("workspace_ui_activations_workspace_idx").on(table.workspaceId, table.enabled)]);
 export const workspaceCapabilityGrants = sqliteTable("workspace_capability_grants", { workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }), capabilityId: text("capability_id").notNull(), grantedAt: text("granted_at").notNull().default(now) }, (table) => [primaryKey({ columns: [table.workspaceId, table.pluginId, table.capabilityId] })]);
 export const toolApprovals = sqliteTable("tool_approvals", { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }), toolId: text("tool_id").notNull(), risk: text("risk").notNull(), inputJson: text("input_json"), status: text("status", { enum: ["pending", "approved", "denied", "consumed"] }).notNull().default("pending"), requestedBy: text("requested_by"), decidedBy: text("decided_by"), requestedAt: text("requested_at").notNull().default(now), decidedAt: text("decided_at"), consumedAt: text("consumed_at") }, (table) => [index("tool_approvals_workspace_status_idx").on(table.workspaceId, table.status, table.requestedAt), index("tool_approvals_tool_idx").on(table.toolId, table.requestedAt)]);
+export const approvalRequests = sqliteTable("approval_requests", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["tool_execute", "plugin_install", "plugin_update", "plugin_publish", "public_publish", "auth_config_publish"] }).notNull(),
+  subjectId: text("subject_id").notNull(),
+  pluginId: text("plugin_id"),
+  risk: text("risk").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  status: text("status", { enum: ["pending", "approved", "denied", "expired", "consumed", "revoked"] }).notNull().default("pending"),
+  requestedBy: text("requested_by"),
+  decidedBy: text("decided_by"),
+  requestedAt: text("requested_at").notNull().default(now),
+  decidedAt: text("decided_at"),
+  expiresAt: text("expires_at"),
+  consumedAt: text("consumed_at"),
+  reason: text("reason"),
+}, (table) => [index("approval_requests_workspace_status_idx").on(table.workspaceId, table.status, table.requestedAt), index("approval_requests_kind_subject_idx").on(table.kind, table.subjectId), index("approval_requests_plugin_idx").on(table.pluginId, table.status)]);
 export const workspaceSettings = sqliteTable("workspace_settings", { workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), scope: text("scope").notNull(), key: text("key").notNull(), valueJson: text("value_json").notNull(), updatedAt: text("updated_at").notNull().default(now) }, (table) => [primaryKey({ columns: [table.workspaceId, table.scope, table.key] })]);
 export const workspaceLayouts = sqliteTable("workspace_layouts", { workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }), layoutJson: text("layout_json").notNull(), updatedAt: text("updated_at").notNull().default(now) });
 export const publicAccessPolicies = sqliteTable("public_access_policies", { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), name: text("name").notNull(), access: text("access", { enum: ["anonymous", "authenticated"] }).notNull().default("anonymous"), authenticationMode: text("authentication_mode", { enum: ["anonymous", "customer", "verified"] }).notNull().default("anonymous"), rulesJson: text("rules_json"), allowedOperationsJson: text("allowed_operations_json").notNull().default("[]"), rateLimitPolicy: text("rate_limit_policy"), cachePolicy: text("cache_policy"), enabled: integer("enabled", { mode: "boolean" }).notNull().default(true), createdAt: text("created_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) }, (table) => [index("public_access_policies_workspace_idx").on(table.workspaceId), index("public_access_policies_enabled_idx").on(table.workspaceId, table.enabled)]);

@@ -1,6 +1,6 @@
 import type { PluginBundle, PluginManifest, ToolContribution } from "@v2/plugin-contracts";
 import type { SurfaceContribution } from "@v2/plugin-contracts";
-import type { ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
+import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 import type { DeclarativePageContribution } from "@v2/ui-schema";
 const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
@@ -25,7 +25,7 @@ export type MarketplacePlugin = {
 };
 export type PluginInstallResult =
   | { status: "installed"; plugin: MarketplacePlugin }
-  | { status: "approval-required"; bundle: PluginBundle; sensitiveCapabilities: string[] };
+  | { status: "approval-required"; approvalId: string; pluginId: string; version: string; sha256: string; sensitiveCapabilities: string[] };
 export async function loadCoreSession(): Promise<CoreSession> { return json<CoreSession>("/session"); }
 export function runtimeSurfaceUrl(surfaceId: string): string { return `${coreUrl}/runtime/ui/surfaces/${encodeURIComponent(surfaceId)}?workspaceId=${encodeURIComponent(workspaceId)}`; }
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(`/workspaces/${workspaceId}/layout`)).layout; }
@@ -42,10 +42,12 @@ export async function decideToolApproval(approvalId: string, decision: "approved
 export async function loadPendingToolApprovals(): Promise<ToolApproval[]> { return (await json<{ approvals: ToolApproval[] }>(`/workspaces/${workspaceId}/tool-approvals`)).approvals; }
 export async function approveToolApproval(approvalId: string): Promise<ToolApproval> { return decideToolApproval(approvalId, "approved"); }
 export async function denyToolApproval(approvalId: string): Promise<ToolApproval> { return decideToolApproval(approvalId, "denied"); }
+export async function loadPendingApprovalRequests(): Promise<ApprovalRequest[]> { return (await json<{ approvals: ApprovalRequest[] }>(`/workspaces/${workspaceId}/approval-requests`)).approvals; }
+export async function decideApprovalRequest(approvalId: string, decision: "approved" | "denied"): Promise<ApprovalRequest> { return (await json<{ approval: ApprovalRequest }>(`/approval-requests/${encodeURIComponent(approvalId)}/decision`, { method: "POST", body: JSON.stringify({ workspaceId, decision }) })).approval; }
 export async function loadInstalledPlugins(): Promise<PluginManifest[]> { return (await json<{ plugins: PluginManifest[] }>("/plugins/installed")).plugins; }
 export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> { return (await json<{ plugins: MarketplacePlugin[] }>(`/marketplace/plugins?workspaceId=${workspaceId}`)).plugins; }
-export async function installMarketplacePlugin(pluginId: string, approved = false): Promise<PluginInstallResult> {
-  return json<PluginInstallResult>(`/marketplace/plugins/${encodeURIComponent(pluginId)}/install?workspaceId=${workspaceId}`, approved ? { method: "POST", body: JSON.stringify({ approved: true }) } : { method: "POST" });
+export async function installMarketplacePlugin(pluginId: string, approvalId?: string): Promise<PluginInstallResult> {
+  return json<PluginInstallResult>(`/marketplace/plugins/${encodeURIComponent(pluginId)}/install?workspaceId=${workspaceId}`, approvalId ? { method: "POST", body: JSON.stringify({ approvalId }) } : { method: "POST" });
 }
 export async function publishMarketplaceRelease(pluginId: string, file: File, fields?: { category?: string; source?: string; status?: "draft" | "published" | "deprecated"; demoAvailable?: boolean }): Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }> {
   const body = new FormData();
@@ -60,6 +62,6 @@ export async function publishMarketplaceRelease(pluginId: string, file: File, fi
   return response.json() as Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }>;
 }
 export async function loadRuntimeTools(): Promise<ToolContribution[]> { return (await json<{ tools: ToolContribution[] }>(`/runtime/tools?workspaceId=${workspaceId}`)).tools; }
-export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body, credentials: "include" }); if (!response.ok && response.status !== 202) throw new Error(`Plugin upload failed: ${response.status}`); return response.json() as Promise<{ status: string; manifest?: PluginManifest; bundle?: PluginBundle; sensitiveCapabilities?: string[] }>; }
-export async function approveInstall(bundle: PluginBundle): Promise<PluginManifest> { return (await json<{ status: string; manifest: PluginManifest }>("/plugins/install", { method: "POST", body: JSON.stringify({ workspaceId, bundle, approved: true }) })).manifest; }
+export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body, credentials: "include" }); if (!response.ok && response.status !== 202) throw new Error(`Plugin upload failed: ${response.status}`); return response.json() as Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }>; }
+export async function approveInstall(approvalId: string): Promise<PluginManifest> { return (await json<{ status: string; manifest: PluginManifest }>("/plugins/install", { method: "POST", body: JSON.stringify({ workspaceId, approvalId }) })).manifest; }
 export async function grantCapabilities(pluginId: string, capabilities: string[]): Promise<void> { await json("/plugins/grants", { method: "POST", body: JSON.stringify({ workspaceId, pluginId, capabilities }) }); }

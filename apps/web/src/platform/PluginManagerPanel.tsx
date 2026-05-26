@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PluginBundle, PluginManifest } from "@v2/plugin-contracts";
+import type { PluginManifest } from "@v2/plugin-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { activatePlugin, approveInstall, deactivatePlugin, installMarketplacePlugin, loadActivePlugins, loadInstalledPlugins, loadMarketplacePlugins, uploadPlugin, type MarketplacePlugin } from "../api";
 
@@ -8,7 +8,7 @@ export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, o
   const [plugins, setPlugins] = useState(initialPlugins);
   const [active, setActive] = useState(activePluginIds);
   const [marketplace, setMarketplace] = useState<MarketplacePlugin[]>([]);
-  const [pendingBundle, setPendingBundle] = useState<PluginBundle | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<{ approvalId: string; pluginId: string; marketplace: boolean; title: string; sha256: string } | null>(null);
   const [pendingMarketplaceId, setPendingMarketplaceId] = useState<string | null>(null);
   const [uploadState, setUploadState] = useState("Official plugins start uninstalled. Install them from Marketplace when this workspace needs them.");
   const workspaceInstalled = [
@@ -30,9 +30,9 @@ export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, o
     try {
       const result = await installMarketplacePlugin(item.manifest.id);
       if (result.status === "approval-required") {
-        setPendingBundle(result.bundle);
+        setPendingApproval({ approvalId: result.approvalId, pluginId: result.pluginId, marketplace: true, title: item.manifest.name, sha256: result.sha256 });
         setPendingMarketplaceId(item.manifest.id);
-        setUploadState(`Approval required for ${result.bundle.manifest.name}`);
+        setUploadState(`Persistent approval required for ${item.manifest.name}. Use Approvals to approve it, then resume install.`);
         return;
       }
       await refresh();
@@ -58,25 +58,30 @@ export function PluginManagerPanel({ plugins: initialPlugins, activePluginIds, o
     setUploadState(`Uploading ${file.name}…`);
     try {
       const result = await uploadPlugin(file);
-      if (result.status === "approval-required" && result.bundle) { setPendingBundle(result.bundle); setPendingMarketplaceId(null); setUploadState(`Approval required for ${result.bundle.manifest.name}`); return; }
+      if (result.status === "approval-required" && result.approvalId && result.pluginId) {
+        setPendingApproval({ approvalId: result.approvalId, pluginId: result.pluginId, marketplace: false, title: result.pluginId, sha256: result.sha256 ?? "" });
+        setPendingMarketplaceId(null);
+        setUploadState(`Persistent approval required for ${result.pluginId}. Use Approvals to approve it, then resume install.`);
+        return;
+      }
       setUploadState(`Installed ${result.manifest?.name ?? file.name}`); await refresh();
     } catch { setUploadState("Upload failed. Core worker unavailable or package invalid."); }
   };
-  const approve = async () => {
-    if (!pendingBundle) return;
-    if (pendingMarketplaceId) {
-      const result = await installMarketplacePlugin(pendingMarketplaceId, true);
+  const resumeInstall = async () => {
+    if (!pendingApproval) return;
+    if (pendingApproval.marketplace && pendingMarketplaceId) {
+      const result = await installMarketplacePlugin(pendingMarketplaceId, pendingApproval.approvalId);
       if (result.status === "installed") setUploadState(`Installed and activated ${result.plugin.manifest.name}`);
     } else {
-      const manifest = await approveInstall(pendingBundle);
+      const manifest = await approveInstall(pendingApproval.approvalId);
       setUploadState(`Installed and activated ${manifest.name}`);
     }
-    setPendingBundle(null); setPendingMarketplaceId(null); await refresh();
+    setPendingApproval(null); setPendingMarketplaceId(null); await refresh();
   };
   return <SurfaceCard className="manager-panel">
     <div className="surface-header"><div><small>core</small><h2>Plugin Manager</h2></div><Button onClick={() => inputRef.current?.click()}>Upload ZIP</Button></div>
     <p>{uploadState}</p><input ref={inputRef} className="hidden-file" type="file" accept=".zip,application/zip" onChange={(event) => void upload(event.target.files?.[0])} />
-    {pendingBundle ? <div className="approval-inline"><p>{pendingBundle.manifest.capabilities.length} requested capabilities</p><Button onClick={() => void approve()}>Approve & Install</Button></div> : null}
+    {pendingApproval ? <div className="approval-inline"><p>{pendingApproval.title} awaits approval {pendingApproval.approvalId.slice(0, 8)} · {pendingApproval.sha256.slice(0, 12)}</p><Button onClick={() => void resumeInstall()}>Resume approved install</Button></div> : null}
     <div className="section-title"><h2>Marketplace</h2><Badge>{marketplace.length}</Badge></div>
     <div className="plugin-list">{marketplace.length ? marketplace.map((item) => <div className="plugin-row" key={item.manifest.id}>
       <div><strong>{item.manifest.name}</strong><small>{item.category} · {item.manifest.data.mode} storage · {item.demoAvailable ? "demo pack available" : "no demo seed"}</small></div>
