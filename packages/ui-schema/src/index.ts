@@ -19,6 +19,7 @@ export const templateIdSchema = z.enum([
 
 export const accessModeSchema = z.enum(["private", "public-candidate", "authenticated", "permission-gated"]);
 export const operationIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+export const publicRoutePatternSchema = z.string().regex(/^\/$|^\/(?:[a-zA-Z0-9_-]+|:[a-zA-Z][a-zA-Z0-9_]*)(?:\/(?:[a-zA-Z0-9_-]+|:[a-zA-Z][a-zA-Z0-9_]*))*$/);
 
 export const dataSourceDefinitionSchema = z.object({
   id: operationIdSchema,
@@ -86,7 +87,7 @@ export const declarativePageContributionSchema = z.object({
 export const publicRouteContributionSchema = z.object({
   id: operationIdSchema,
   title: z.string().min(1),
-  path: z.string().regex(/^\/[a-zA-Z0-9/_-]*$/),
+  path: publicRoutePatternSchema,
   pageId: operationIdSchema,
   access: accessModeSchema.default("public-candidate"),
 });
@@ -100,3 +101,4 @@ export type ColumnDefinition = z.output<typeof columnDefinitionSchema>;
 export type SlotContribution = z.output<typeof slotContributionSchema>;
 export type DeclarativePageContribution = z.output<typeof declarativePageContributionSchema>;
 export type PublicRouteContribution = z.output<typeof publicRouteContributionSchema>;
+export type PublicRoutePattern = z.output<typeof publicRoutePatternSchema>;

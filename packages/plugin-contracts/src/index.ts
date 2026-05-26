@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { declarativePageContributionSchema } from "@v2/ui-schema";
+import { declarativePageContributionSchema, publicRoutePatternSchema } from "@v2/ui-schema";
 
 export const riskSchema = z.enum(["safe", "reversible", "sensitive", "dangerous"]);
 export const exposureSchema = z.enum(["agent-ai", "mcp", "command"]);
@@ -26,9 +26,9 @@ export const providerSchema = z.object({
 });
 export const channelSchema = z.object({ id: z.string().min(1), title: z.string(), tools: z.array(z.string()).default([]), providers: z.array(z.string()).default([]) });
 export const publicContributionAccessSchema = z.enum(["anonymous", "authenticated"]);
-export const publicRouteContributionSchema = z.object({ id: z.string().min(1), title: z.string(), path: z.string().regex(/^\/[a-zA-Z0-9/_-]*$/), surfaceId: z.string().min(1).optional(), access: publicContributionAccessSchema.default("anonymous") });
-export const publicSurfaceContributionSchema = z.object({ id: z.string().min(1), title: z.string(), surfaceId: z.string().min(1), path: z.string().regex(/^\/[a-zA-Z0-9/_-]*$/), access: publicContributionAccessSchema.default("anonymous") });
-export const publicToolContributionSchema = z.object({ id: z.string().min(1), title: z.string(), toolId: z.string().min(1), path: z.string().regex(/^\/[a-zA-Z0-9/_-]*$/), access: publicContributionAccessSchema.default("authenticated") });
+export const publicRouteContributionSchema = z.object({ id: z.string().min(1), title: z.string(), path: publicRoutePatternSchema, surfaceId: z.string().min(1).optional(), access: publicContributionAccessSchema.default("anonymous") });
+export const publicSurfaceContributionSchema = z.object({ id: z.string().min(1), title: z.string(), surfaceId: z.string().min(1), path: publicRoutePatternSchema, access: publicContributionAccessSchema.default("anonymous") });
+export const publicToolContributionSchema = z.object({ id: z.string().min(1), title: z.string(), toolId: z.string().min(1), path: publicRoutePatternSchema, access: publicContributionAccessSchema.default("authenticated") });
 export const declarativeUiBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string(), tone: z.enum(["default", "muted", "accent"]).default("default") }),
   z.object({ type: z.literal("metric"), label: z.string(), value: z.string(), detail: z.string().optional() }),

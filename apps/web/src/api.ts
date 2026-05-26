@@ -32,7 +32,7 @@ export async function loadLayout(): Promise<WorkspaceLayout | null> { return (aw
 export async function saveLayout(state: ShellState): Promise<void> { await json("/layouts", { method: "PUT", body: JSON.stringify({ workspaceId, layout: { zones: state.zones, placements: state.placements } }) }); }
 export async function loadActivePlugins(): Promise<string[]> { return (await json<{ active: string[] }>(`/workspaces/${workspaceId}/plugins`)).active; }
 export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> { return (await json<{ surfaces: SurfaceContribution[] }>(`/workspaces/${workspaceId}/ui/surfaces`)).surfaces; }
-export async function loadPublicPage(pathname: string): Promise<{ page: DeclarativePageContribution }> { return json<{ page: DeclarativePageContribution }>(pathname); }
+export async function loadPublicPage(pathname: string): Promise<{ page: DeclarativePageContribution; routeParams: Record<string, string> }> { return json<{ page: DeclarativePageContribution; routeParams: Record<string, string> }>(pathname); }
 export async function activatePlugin(pluginId: string): Promise<void> { await json("/plugins/activate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); }
 export async function deactivatePlugin(pluginId: string): Promise<void> { await json("/plugins/deactivate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); }
 export async function loadSettings(scope: "platform" | `plugin:${string}`): Promise<Record<string, unknown>> { return (await json<{ settings: Record<string, unknown> }>(`/workspaces/${workspaceId}/settings/${encodeURIComponent(scope)}`)).settings; }

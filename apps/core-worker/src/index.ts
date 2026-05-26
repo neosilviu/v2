@@ -30,7 +30,7 @@ function publicPublicationRequest(input: unknown): { workspaceId: string; plugin
   if (typeof value.workspaceId !== "string" || typeof value.pluginId !== "string" || typeof value.contributionId !== "string") return null;
   if (contributionKind !== "route" && contributionKind !== "surface" && contributionKind !== "tool") return null;
   if (access !== undefined && access !== "anonymous" && access !== "authenticated") return null;
-  if (publicPath !== undefined && (typeof publicPath !== "string" || !/^\/[a-zA-Z0-9/_-]*$/.test(publicPath))) return null;
+  if (publicPath !== undefined && (typeof publicPath !== "string" || !(/^\/$|^\/(?:[a-zA-Z0-9_-]+|:[a-zA-Z][a-zA-Z0-9_]*)(?:\/(?:[a-zA-Z0-9_-]+|:[a-zA-Z][a-zA-Z0-9_]*))*$/.test(publicPath)))) return null;
   if (value.title !== undefined && typeof value.title !== "string") return null;
   return { workspaceId: value.workspaceId, pluginId: value.pluginId, contributionKind, contributionId: value.contributionId, ...(publicPath ? { publicPath } : {}), ...(value.title ? { title: value.title } : {}), ...(access ? { access } : {}) };
 }
@@ -72,7 +72,7 @@ app.get("/public/:workspaceId/*", async (c) => {
     const denied = requireRead(c);
     if (denied) return denied;
   }
-  return c.json({ publication: delivery.publication, plugin: delivery.manifest ? { id: delivery.manifest.id, name: delivery.manifest.name, version: delivery.manifest.version } : null, contribution: delivery.contribution ?? null, page: delivery.page });
+  return c.json({ publication: delivery.publication, plugin: delivery.manifest ? { id: delivery.manifest.id, name: delivery.manifest.name, version: delivery.manifest.version } : null, contribution: delivery.contribution ?? null, page: delivery.page, routeParams: delivery.routeParams });
 });
 app.get("/runtime/plugins", async (c) => { const denied = requireRead(c); if (denied) return denied; return c.json({ plugins: await new CoreRepository(c.env.CORE_DB).installed() }); });
 app.get("/runtime/tools", async (c) => { const denied = requireRead(c); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const active = new Set(await repo.activePlugins(c.req.query("workspaceId") ?? defaultWorkspaceId)); return c.json({ tools: runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.tools) }); });

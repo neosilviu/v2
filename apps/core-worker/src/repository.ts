@@ -1,6 +1,6 @@
 import { declarativeUiSchema, pluginManifestSchema, type PluginBundle, type PluginManifest, type PublicContributionAccess, type PublicRouteContribution, type PublicSurfaceContribution, type PublicToolContribution, type SurfaceContribution } from "@v2/plugin-contracts";
 import type { SettingScope, WorkspaceLayout } from "@v2/rpc-contracts";
-import { declarativePageContributionSchema, type AccessMode, type DeclarativePageContribution } from "@v2/ui-schema";
+import { declarativePageContributionSchema, publicRoutePatternSchema, type AccessMode, type DeclarativePageContribution } from "@v2/ui-schema";
 
 export type PluginWorkspaceState = {
   workspaceId: string;
@@ -60,6 +60,10 @@ export type WorkspacePublication = {
   publicationType?: "route" | "surface" | "tool" | "content";
   contributionId: string;
   publicPath: string;
+  routePattern?: string;
+  routeKind?: "exact" | "parameterized";
+  routePriority?: number;
+  parameterNames?: string[];
   title: string;
   templateId?: string;
   schema?: DeclarativePageContribution;
@@ -73,7 +77,58 @@ export type PublicDelivery = {
   manifest?: PluginManifest | undefined;
   contribution?: PublicContribution | undefined;
   page: DeclarativePageContribution;
+  routeParams: Record<string, string>;
 };
+
+type PublicDeliveryRow = {
+  id: string;
+  workspace_id: string;
+  plugin_id: string;
+  contribution_kind: PublicationKind;
+  publication_type: "route" | "surface" | "tool" | "content";
+  contribution_id: string;
+  public_path: string;
+  route_pattern: string;
+  route_kind: "exact" | "parameterized";
+  route_priority: number;
+  parameter_names_json: string | null;
+  title: string;
+  template_id: string;
+  schema_json: string;
+  status: PublicationStatus;
+  policy_id: string | null;
+  access: PublicContributionAccess;
+  authentication_mode: "anonymous" | "customer" | "verified";
+  policy_enabled: number;
+  manifest_json: string;
+};
+
+function routeMetadata(pattern: string) {
+  const parsed = publicRoutePatternSchema.parse(pattern);
+  const parameterNames = parsed.split("/").filter((part) => part.startsWith(":")).map((part) => part.slice(1));
+  return {
+    pattern: parsed,
+    kind: parameterNames.length ? "parameterized" as const : "exact" as const,
+    parameterNames,
+    staticSegments: parsed.split("/").filter((part) => part && !part.startsWith(":")).length,
+  };
+}
+
+function matchRoutePattern(pattern: string, path: string): Record<string, string> | undefined {
+  const route = routeMetadata(pattern);
+  const patternSegments = route.pattern === "/" ? [] : route.pattern.slice(1).split("/");
+  const pathSegments = path === "/" ? [] : path.slice(1).split("/");
+  if (patternSegments.length !== pathSegments.length) return undefined;
+  const params: Record<string, string> = {};
+  for (let index = 0; index < patternSegments.length; index += 1) {
+    const expected = patternSegments[index]!;
+    const actual = pathSegments[index]!;
+    if (!/^[a-zA-Z0-9_-]+$/.test(actual)) return undefined;
+    if (expected.startsWith(":")) params[expected.slice(1)] = actual;
+    else if (expected !== actual) return undefined;
+  }
+  return params;
+}
 
 export class CoreRepository {
   constructor(private readonly db: D1Database) {}
@@ -313,6 +368,7 @@ export class CoreRepository {
     const contribution = this.findPublicContribution(manifest, input.contributionKind, input.contributionId);
     if (!contribution && !uiContribution) return undefined;
     const publicPath = input.publicPath ?? contribution?.path ?? `/${input.contributionId.replace(/[^a-zA-Z0-9/_-]/g, "-")}`;
+    const route = routeMetadata(publicPath);
     const title = input.title ?? contribution?.title ?? uiContribution?.schema.title ?? input.contributionId;
     const access = input.access ?? contribution?.access ?? "anonymous";
     const templateId = uiContribution?.templateId ?? "public.contentPage";
@@ -325,10 +381,14 @@ export class CoreRepository {
         ON CONFLICT(id) DO UPDATE SET name = excluded.name, access = excluded.access, authentication_mode = excluded.authentication_mode, rules_json = excluded.rules_json, allowed_operations_json = excluded.allowed_operations_json, enabled = 1, updated_at = CURRENT_TIMESTAMP`)
         .bind(policyId, input.workspaceId, `${title} public access`, access, access === "authenticated" ? "verified" : "anonymous", JSON.stringify({ contributionId: input.contributionId, contributionKind: input.contributionKind }), JSON.stringify([input.contributionId])),
       this.db.prepare(`INSERT INTO workspace_publications
-        (id, workspace_id, plugin_id, contribution_kind, publication_type, contribution_id, public_path, title, template_id, schema_json, status, policy_id, published_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        (id, workspace_id, plugin_id, contribution_kind, publication_type, contribution_id, public_path, route_pattern, route_priority, route_kind, parameter_names_json, title, template_id, schema_json, status, policy_id, published_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
           public_path = excluded.public_path,
+          route_pattern = excluded.route_pattern,
+          route_priority = excluded.route_priority,
+          route_kind = excluded.route_kind,
+          parameter_names_json = excluded.parameter_names_json,
           title = excluded.title,
           publication_type = excluded.publication_type,
           template_id = excluded.template_id,
@@ -337,31 +397,46 @@ export class CoreRepository {
           policy_id = excluded.policy_id,
           published_at = COALESCE(workspace_publications.published_at, CURRENT_TIMESTAMP),
           updated_at = CURRENT_TIMESTAMP`)
-        .bind(publicationId, input.workspaceId, input.pluginId, input.contributionKind, input.contributionKind, input.contributionId, publicPath, title, templateId, schemaJson, policyId),
+        .bind(publicationId, input.workspaceId, input.pluginId, input.contributionKind, input.contributionKind, input.contributionId, publicPath, route.pattern, 0, route.kind, JSON.stringify(route.parameterNames), title, templateId, schemaJson, policyId),
     ]);
     await this.audit(input.workspaceId, "public.publication.publish", { pluginId: input.pluginId, contributionKind: input.contributionKind, contributionId: input.contributionId, publicPath });
-    return { id: publicationId, workspaceId: input.workspaceId, pluginId: input.pluginId, contributionKind: input.contributionKind, publicationType: input.contributionKind, contributionId: input.contributionId, publicPath, title, templateId, schema: JSON.parse(schemaJson) as DeclarativePageContribution, status: "published", policyId, access };
+    return { id: publicationId, workspaceId: input.workspaceId, pluginId: input.pluginId, contributionKind: input.contributionKind, publicationType: input.contributionKind, contributionId: input.contributionId, publicPath, routePattern: route.pattern, routeKind: route.kind, routePriority: 0, parameterNames: route.parameterNames, title, templateId, schema: JSON.parse(schemaJson) as DeclarativePageContribution, status: "published", policyId, access };
   }
 
   async publicDelivery(workspaceId: string, publicPath: string): Promise<PublicDelivery | undefined> {
-    const row = await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.publication_type, p.contribution_id, p.public_path, p.title, p.template_id, p.schema_json, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, COALESCE(policy.authentication_mode, 'anonymous') AS authentication_mode, COALESCE(policy.enabled, 1) AS policy_enabled, installed.manifest_json
+    const exact = await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.publication_type, p.contribution_id, p.public_path, p.route_pattern, p.route_kind, p.route_priority, p.parameter_names_json, p.title, p.template_id, p.schema_json, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, COALESCE(policy.authentication_mode, 'anonymous') AS authentication_mode, COALESCE(policy.enabled, 1) AS policy_enabled, installed.manifest_json
       FROM workspace_publications p
       INNER JOIN workspace_plugins active ON active.workspace_id = p.workspace_id AND active.plugin_id = p.plugin_id AND active.active = 1
       INNER JOIN installed_plugins installed ON installed.id = p.plugin_id
       LEFT JOIN public_access_policies policy ON policy.id = p.policy_id
-      WHERE p.workspace_id = ? AND p.public_path = ? AND p.status = 'published' AND COALESCE(policy.enabled, 1) = 1
+      WHERE p.workspace_id = ? AND p.public_path = ? AND p.route_kind = 'exact' AND p.status = 'published' AND COALESCE(policy.enabled, 1) = 1
+      ORDER BY p.route_priority DESC
       LIMIT 1`)
       .bind(workspaceId, publicPath)
-      .first<{ id: string; workspace_id: string; plugin_id: string; contribution_kind: PublicationKind; publication_type: "route" | "surface" | "tool" | "content"; contribution_id: string; public_path: string; title: string; template_id: string; schema_json: string; status: PublicationStatus; policy_id: string | null; access: PublicContributionAccess; authentication_mode: "anonymous" | "customer" | "verified"; policy_enabled: number; manifest_json: string }>();
-    if (!row) return undefined;
+      .first<PublicDeliveryRow>();
+    const candidates = exact ? [] : (await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.publication_type, p.contribution_id, p.public_path, p.route_pattern, p.route_kind, p.route_priority, p.parameter_names_json, p.title, p.template_id, p.schema_json, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, COALESCE(policy.authentication_mode, 'anonymous') AS authentication_mode, COALESCE(policy.enabled, 1) AS policy_enabled, installed.manifest_json
+      FROM workspace_publications p
+      INNER JOIN workspace_plugins active ON active.workspace_id = p.workspace_id AND active.plugin_id = p.plugin_id AND active.active = 1
+      INNER JOIN installed_plugins installed ON installed.id = p.plugin_id
+      LEFT JOIN public_access_policies policy ON policy.id = p.policy_id
+      WHERE p.workspace_id = ? AND p.route_kind = 'parameterized' AND p.status = 'published' AND COALESCE(policy.enabled, 1) = 1`)
+      .bind(workspaceId)
+      .all<PublicDeliveryRow>()).results
+      .map((row) => ({ row, params: matchRoutePattern(row.route_pattern, publicPath), meta: routeMetadata(row.route_pattern) }))
+      .filter((item): item is { row: PublicDeliveryRow; params: Record<string, string>; meta: ReturnType<typeof routeMetadata> } => Boolean(item.params))
+      .sort((left, right) => right.meta.staticSegments - left.meta.staticSegments || left.meta.parameterNames.length - right.meta.parameterNames.length || right.row.route_priority - left.row.route_priority);
+    const matched = exact ? { row: exact, params: {} } : candidates[0];
+    if (!matched) return undefined;
+    const row = matched.row;
     const manifest = pluginManifestSchema.parse(JSON.parse(row.manifest_json));
     const contribution = this.findPublicContribution(manifest, row.contribution_kind, row.contribution_id);
     const page = declarativePageContributionSchema.parse(JSON.parse(row.schema_json));
     return {
-      publication: { id: row.id, workspaceId: row.workspace_id, pluginId: row.plugin_id, contributionKind: row.contribution_kind, publicationType: row.publication_type, contributionId: row.contribution_id, publicPath: row.public_path, title: row.title, templateId: row.template_id, schema: page, status: row.status, policyId: row.policy_id, access: row.access, authenticationMode: row.authentication_mode },
+      publication: { id: row.id, workspaceId: row.workspace_id, pluginId: row.plugin_id, contributionKind: row.contribution_kind, publicationType: row.publication_type, contributionId: row.contribution_id, publicPath: row.public_path, routePattern: row.route_pattern, routeKind: row.route_kind, routePriority: row.route_priority, parameterNames: row.parameter_names_json ? JSON.parse(row.parameter_names_json) as string[] : [], title: row.title, templateId: row.template_id, schema: page, status: row.status, policyId: row.policy_id, access: row.access, authenticationMode: row.authentication_mode },
       manifest,
       contribution,
       page,
+      routeParams: matched.params,
     };
   }
 

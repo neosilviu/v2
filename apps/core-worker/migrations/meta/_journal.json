@@ -43,6 +43,13 @@
       "when": 1779780363866,
       "tag": "0005_flat_justin_hammer",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1779780693432,
+      "tag": "0006_solid_jack_flag",
+      "breakpoints": true
     }
   ]
 }
