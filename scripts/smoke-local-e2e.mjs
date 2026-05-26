@@ -82,6 +82,27 @@ ON CONFLICT(id) DO UPDATE SET status = 'enabled', public_visible = 1, display_or
   record("local Auth D1 passkey method published", "ok", "local only");
 }
 
+function coreSqlLocal(sql) {
+  const result = spawnSync("pnpm", ["--dir", "apps/core-worker", "exec", "wrangler", "d1", "execute", "v2-core", "--local", "--command", sql], { encoding: "utf8", stdio: "pipe" });
+  if (result.status !== 0) throw new Error((result.stderr || result.stdout || "wrangler d1 execute failed").trim());
+  return result.stdout;
+}
+
+function provisionWorkspaceLocal() {
+  const result = spawnSync("node", ["scripts/provision-workspace.mjs", "--local", "--workspace", workspaceId, "--name", "Local Smoke Workspace", "--owner", email, "--ttl-hours", "2"], { encoding: "utf8", stdio: "pipe" });
+  if (result.status !== 0) throw new Error((result.stderr || result.stdout || "workspace provisioning failed").trim());
+  const match = result.stdout.match(/One-time setup URL: \/setup\/owner\?token=([^\s]+)/);
+  if (!match?.[1]) throw new Error(`provisioning output did not include a setup token: ${result.stdout}`);
+  record("Workspace provisioning request created", "ok", "local only");
+  return decodeURIComponent(match[1]);
+}
+
+function assertNoOwnerLocal() {
+  const output = coreSqlLocal(`SELECT COUNT(*) AS count FROM workspace_member_roles WHERE workspace_id = '${workspaceId.replaceAll("'", "''")}' AND role_id = '${`${workspaceId}:owner`.replaceAll("'", "''")}';`);
+  if (!/"count":\s*0/.test(output)) throw new Error(`workspace owner was created implicitly: ${output}`);
+  record("No implicit workspace Owner was created", "ok");
+}
+
 async function ensureSignedIn() {
   const signup = await request(authUrl, "/api/auth/sign-up/email", {
     method: "POST",
@@ -103,13 +124,13 @@ async function ensureSignedIn() {
 }
 
 async function exerciseAuthPublication() {
-  const summary = await request(authUrl, `/admin/auth/security-summary?workspaceId=${encodeURIComponent(workspaceId)}`);
+  const summary = await request(coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/auth/security-summary`);
   if (summary.response.status === 403) {
     if (!prepareAuthDb) {
-      record("Auth admin publication smoke", "skip", "set PLATFORM_ADMIN_EMAILS in apps/auth-worker/.dev.vars to run this part");
+      record("Auth admin publication smoke", "skip", "owner RBAC is required to run this part");
       return;
     }
-    record("Auth admin publication smoke", "skip", "using local D1 publication because PLATFORM_ADMIN_EMAILS is not configured");
+    record("Auth admin publication smoke", "skip", "using local D1 publication fallback");
     publishPasskeyLocalOnly();
     const first = await expectOk("Public login config after local passkey publish", request(authUrl, `/public/auth/login-config?workspaceId=${encodeURIComponent(workspaceId)}`));
     const second = await expectOk("Public login config second read", request(authUrl, `/public/auth/login-config?workspaceId=${encodeURIComponent(workspaceId)}`));
@@ -121,13 +142,13 @@ async function exerciseAuthPublication() {
   }
   if (!summary.response.ok) throw new Error(`Auth admin summary failed: ${summary.response.status}`);
   record("Auth admin security summary", "ok");
-  await expectOk("Auth registration/passkey policy update", request(authUrl, "/admin/auth/policy", {
+  await expectOk("Auth registration/passkey policy update", request(coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/auth/policy`, {
     method: "PUT",
-    body: JSON.stringify({ workspaceId: null, registrationMode: "open", requireEmailVerification: false, allowPasskeyRegistration: true, allowPasskeySignin: true }),
+    body: JSON.stringify({ registrationMode: "open", requireEmailVerification: false, allowPasskeyRegistration: true, allowPasskeySignin: true }),
   }));
-  await expectOk("Auth passkey method publication", request(authUrl, "/admin/auth/methods/passkey", {
+  await expectOk("Auth passkey method publication", request(coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/auth/methods/passkey`, {
     method: "PUT",
-    body: JSON.stringify({ workspaceId: null, type: "passkey", providerId: null, title: "Passkey", status: "enabled", publicVisible: true, displayOrder: 30 }),
+    body: JSON.stringify({ type: "passkey", providerId: null, title: "Passkey", status: "enabled", publicVisible: true, displayOrder: 30 }),
   }));
   const first = await expectOk("Public login config after passkey publish", request(authUrl, `/public/auth/login-config?workspaceId=${encodeURIComponent(workspaceId)}`));
   const second = await expectOk("Public login config second read", request(authUrl, `/public/auth/login-config?workspaceId=${encodeURIComponent(workspaceId)}`));
@@ -178,6 +199,12 @@ async function main() {
   if (prepareAuthDb) prepareAuthPolicyOpen();
   await ensureSignedIn();
   await expectOk("Core session with Better Auth cookie", request(coreUrl, "/session"));
+  const unprovisionedSettings = await request(coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/tabs`);
+  if (unprovisionedSettings.response.status !== 403) throw new Error(`unprovisioned user settings should be 403, got ${unprovisionedSettings.response.status}`);
+  record("Normal signed-in user cannot administer unprovisioned workspace", "ok");
+  assertNoOwnerLocal();
+  const setupToken = provisionWorkspaceLocal();
+  await expectOk("Owner setup consumed explicitly", request(coreUrl, "/setup/owner/consume", { method: "POST", body: JSON.stringify({ token: setupToken }) }));
   await expectOk("Runtime Settings tabs with session", request(coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/tabs`));
   await exerciseAuthPublication();
   if (installPlugins) await exerciseMarketplace();
