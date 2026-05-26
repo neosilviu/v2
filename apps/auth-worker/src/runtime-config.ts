@@ -191,19 +191,25 @@ export class AuthRuntimeRepository {
       ORDER BY display_order, slot`)
       .bind(workspace)
       .all<AuthUiContributionRow>();
-    return rows.results.map((row) => authUiContributionSchema.parse({
-      id: row.id,
-      workspaceId: row.workspace_id,
-      contributionId: row.contribution_id,
-      slot: row.slot,
-      templateId: row.template_id,
-      schema: JSON.parse(row.schema_json),
-      renderer: JSON.parse(row.renderer_json),
-      status: row.status,
-      displayOrder: row.display_order,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    return rows.results.map((row) => {
+      const rawSchema = JSON.parse(row.schema_json) as Record<string, unknown>;
+      const schema = typeof rawSchema.id === "string" && typeof rawSchema.slot === "string"
+        ? rawSchema
+        : { id: row.contribution_id, slot: row.slot, displayOrder: row.display_order, blocks: [] };
+      return authUiContributionSchema.parse({
+        id: row.id,
+        workspaceId: row.workspace_id,
+        contributionId: row.contribution_id,
+        slot: row.slot,
+        templateId: row.template_id,
+        schema,
+        renderer: JSON.parse(row.renderer_json),
+        status: row.status,
+        displayOrder: row.display_order,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+    });
   }
 
   async securitySummary(workspaceId?: string | null, providerState: RuntimeAuthProviderState = { github: false }) {
