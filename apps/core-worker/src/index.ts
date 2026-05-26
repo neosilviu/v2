@@ -54,6 +54,17 @@ function publicPublicationRequest(input: unknown): { workspaceId: string; plugin
   if (value.title !== undefined && typeof value.title !== "string") return null;
   return { workspaceId: value.workspaceId, pluginId: value.pluginId, contributionKind, contributionId: value.contributionId, ...(publicPath ? { publicPath } : {}), ...(value.title ? { title: value.title } : {}), ...(access ? { access } : {}) };
 }
+type DomainInput = { hostname: string; kind: "admin" | "auth" | "website" | "storefront" | "public-chat"; verificationMethod?: "manual" | "dns-txt" | "dns-cname"; isPrimary?: boolean };
+function domainInput(input: unknown): DomainInput | null {
+  const value = input as Record<string, unknown>;
+  const hostname = typeof value.hostname === "string" ? value.hostname.trim().toLowerCase() : "";
+  const kind = value.kind;
+  const method = value.verificationMethod;
+  if (!/^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$/.test(hostname)) return null;
+  if (kind !== "admin" && kind !== "auth" && kind !== "website" && kind !== "storefront" && kind !== "public-chat") return null;
+  if (method !== undefined && method !== "manual" && method !== "dns-txt" && method !== "dns-cname") return null;
+  return { hostname, kind, ...(method ? { verificationMethod: method } : {}), ...(value.isPrimary === true ? { isPrimary: true } : {}) };
+}
 async function readApprovalId(c: CoreContext): Promise<string | undefined> {
   if (!c.req.header("content-type")?.includes("application/json")) return undefined;
   try {
@@ -306,6 +317,8 @@ app.post("/runtime/ui/data", async (c) => {
   if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
   const dataSource = resolved.page.dataSources.find((item) => item.id === request.dataSourceId);
   if (!dataSource) return c.json({ status: "denied", data: null, error: "Data source is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  if (resolved.pluginId === "platform" && dataSource.id === "platform.settings.general.read") return c.json({ status: "ok", data: await repo.generalSettings(request.workspaceId), error: null, approvalId: null, auditEventId: null });
+  if (resolved.pluginId === "platform" && dataSource.id === "platform.settings.domains.list") return c.json({ status: "ok", data: { rows: await repo.listDomains(request.workspaceId) }, error: null, approvalId: null, auditEventId: null });
   if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor(resolved.page.data, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
   await repo.audit(request.workspaceId, "runtime.ui.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
@@ -319,6 +332,10 @@ app.post("/runtime/ui/actions", async (c) => {
   if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
   const action = resolved.page.actions.find((item) => item.id === request.actionId);
   if (!action) return c.json({ status: "denied", data: null, error: "Action is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  if (resolved.pluginId === "platform" && action.id === "platform.settings.general.save") {
+    const data = await repo.saveGeneralSettings(request.workspaceId, request.input && typeof request.input === "object" ? request.input as Record<string, unknown> : {}, c.get("user")?.id);
+    return c.json({ status: "ok", data, error: null, approvalId: null, auditEventId: null });
+  }
   const approval = await maybeActionApproval(c, repo, action, request.workspaceId, resolved.pluginId, request.contributionId, request.input);
   if (approval) return c.json(approval, 202);
   await repo.audit(request.workspaceId, "runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
@@ -407,6 +424,12 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
 });
 app.get("/workspaces/:workspaceId/settings/:scope", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read"); if (denied) return denied; const scope = settingScopeSchema.parse(c.req.param("scope")) as SettingScope; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).listSettings(c.req.param("workspaceId"), scope) }); });
 app.put("/settings", async (c) => { const request = settingWriteRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "workspace.settings.write"); if (denied) return denied; await new CoreRepository(c.env.CORE_DB).setSetting(request.workspaceId, request.scope as SettingScope, request.key, request.value); return c.json({ saved: true }); });
+app.get("/workspaces/:workspaceId/domains", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.read"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).listDomains(c.req.param("workspaceId")) }); });
+app.post("/workspaces/:workspaceId/domains", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; const input = domainInput(await c.req.json()); if (!input) return c.json(errorResponse(failure("validation_failed", "A valid hostname, kind and verification method are required.")), 400); return c.json({ domains: await new CoreRepository(c.env.CORE_DB).createDomain(c.req.param("workspaceId"), input, c.get("user")?.id) }, 201); });
+app.put("/workspaces/:workspaceId/domains/:domainId", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; const input = await c.req.json() as { status?: string }; if (input.status !== "draft" && input.status !== "verifying" && input.status !== "verified" && input.status !== "active" && input.status !== "disabled") return c.json(errorResponse(failure("validation_failed", "A valid domain status is required.")), 400); return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), input.status, c.get("user")?.id) }); });
+app.post("/workspaces/:workspaceId/domains/:domainId/verify", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.verify"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "verified", c.get("user")?.id) }); });
+app.post("/workspaces/:workspaceId/domains/:domainId/activate", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "active", c.get("user")?.id) }); });
+app.post("/workspaces/:workspaceId/domains/:domainId/disable", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "disabled", c.get("user")?.id) }); });
 app.get("/workspaces/:workspaceId/layout", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "layout.read"); if (denied) return denied; return c.json({ layout: (await new CoreRepository(c.env.CORE_DB).getLayout(c.req.param("workspaceId"))) ?? null }); });
 app.put("/layouts", async (c) => { const request = layoutWriteRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "layout.write"); if (denied) return denied; await new CoreRepository(c.env.CORE_DB).saveLayout(request.workspaceId, request.layout); return c.json({ saved: true, layout: request.layout }); });
 export default app;

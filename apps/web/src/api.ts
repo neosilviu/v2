@@ -28,7 +28,23 @@ export type PluginInstallResult =
   | { status: "approval-required"; approvalId: string; pluginId: string; version: string; sha256: string; sensitiveCapabilities: string[] };
 export type RuntimeSettingsTab = SettingsTabContribution & { ownerName: string; orderIndex: number };
 export type RuntimeSettingsTabResolution = { tab: RuntimeSettingsTab; panel: SettingsPanelContribution };
+export type RbacMe = { user: { id: string; email: string; name?: string | null } | null; roles: string[]; permissions: string[]; recoveryAdmin: boolean };
+export type WorkspaceDomain = {
+  id: string;
+  workspaceId: string;
+  hostname: string;
+  kind: "admin" | "auth" | "website" | "storefront" | "public-chat";
+  status: "draft" | "verifying" | "verified" | "active" | "disabled";
+  verificationMethod: "manual" | "dns-txt" | "dns-cname";
+  verificationInstructions: Record<string, unknown> | null;
+  publicationId: string | null;
+  isPrimary: boolean;
+  createdAt: string;
+  verifiedAt: string | null;
+  updatedAt: string;
+};
 export async function loadCoreSession(): Promise<CoreSession> { return json<CoreSession>("/session"); }
+export async function loadCurrentRbac(): Promise<RbacMe> { return json<RbacMe>(`/workspaces/${workspaceId}/rbac/me`); }
 export function runtimeSurfaceUrl(surfaceId: string): string { return `${coreUrl}/runtime/ui/surfaces/${encodeURIComponent(surfaceId)}?workspaceId=${encodeURIComponent(workspaceId)}`; }
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(`/workspaces/${workspaceId}/layout`)).layout; }
 export async function saveLayout(state: ShellState): Promise<void> { await json("/layouts", { method: "PUT", body: JSON.stringify({ workspaceId, layout: { zones: state.zones, placements: state.placements } }) }); }
@@ -46,6 +62,11 @@ export async function activatePlugin(pluginId: string): Promise<void> { await js
 export async function deactivatePlugin(pluginId: string): Promise<void> { await json("/plugins/deactivate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); }
 export async function loadSettings(scope: "platform" | `plugin:${string}`): Promise<Record<string, unknown>> { return (await json<{ settings: Record<string, unknown> }>(`/workspaces/${workspaceId}/settings/${encodeURIComponent(scope)}`)).settings; }
 export async function saveSetting(scope: "platform" | `plugin:${string}`, key: string, value: unknown): Promise<void> { await json("/settings", { method: "PUT", body: JSON.stringify({ workspaceId, scope, key, value }) }); }
+export async function loadDomains(): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${workspaceId}/domains`)).domains; }
+export async function createDomain(input: { hostname: string; kind: WorkspaceDomain["kind"]; verificationMethod: WorkspaceDomain["verificationMethod"]; isPrimary?: boolean }): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${workspaceId}/domains`, { method: "POST", body: JSON.stringify(input) })).domains; }
+export async function verifyDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${workspaceId}/domains/${encodeURIComponent(domainId)}/verify`, { method: "POST" })).domains; }
+export async function activateDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${workspaceId}/domains/${encodeURIComponent(domainId)}/activate`, { method: "POST" })).domains; }
+export async function disableDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${workspaceId}/domains/${encodeURIComponent(domainId)}/disable`, { method: "POST" })).domains; }
 export async function executeTool(toolId: string, approvalId?: string): Promise<ToolExecutionResult> { return json<ToolExecutionResult>("/tools/execute", { method: "POST", body: JSON.stringify({ workspaceId, toolId, ...(approvalId ? { approvalId } : {}) }) }); }
 export async function decideToolApproval(approvalId: string, decision: "approved" | "denied"): Promise<ToolApproval> { return (await json<{ approval: ToolApproval }>("/tool-approvals/decision", { method: "POST", body: JSON.stringify({ workspaceId, approvalId, decision }) })).approval; }
 export async function loadPendingToolApprovals(): Promise<ToolApproval[]> { return (await json<{ approvals: ToolApproval[] }>(`/workspaces/${workspaceId}/tool-approvals`)).approvals; }

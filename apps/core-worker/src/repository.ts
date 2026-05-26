@@ -90,6 +90,20 @@ export type SettingsTabResolution = {
   tab: SettingsTabContribution & { ownerName: string; orderIndex: number };
   panel: SettingsPanelContribution;
 };
+export type WorkspaceDomain = {
+  id: string;
+  workspaceId: string;
+  hostname: string;
+  kind: "admin" | "auth" | "website" | "storefront" | "public-chat";
+  status: "draft" | "verifying" | "verified" | "active" | "disabled";
+  verificationMethod: "manual" | "dns-txt" | "dns-cname";
+  verificationInstructions: Record<string, unknown> | null;
+  publicationId: string | null;
+  isPrimary: boolean;
+  createdAt: string;
+  verifiedAt: string | null;
+  updatedAt: string;
+};
 export const workspacePermissions = [
   "workspace.read", "workspace.admin", "workspace.members.manage", "workspace.settings.read", "workspace.settings.write",
   "auth.read", "auth.admin", "domains.read", "domains.write", "domains.verify",
@@ -311,14 +325,18 @@ export class CoreRepository {
 
   private platformSettingsTabs(): SettingsTabResolution[] {
     const specs = [
-      { id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read" as const, templateId: "admin.form" as const, fields: [
+      { id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read" as const, templateId: "admin.form" as const, dataSourceId: "platform.settings.general.read", actionId: "platform.settings.general.save", fields: [
         { id: "workspaceName", label: "Workspace name", type: "text" as const, required: true },
+        { id: "businessDisplayName", label: "Business display name", type: "text" as const },
         { id: "locale", label: "Locale", type: "text" as const },
         { id: "timezone", label: "Timezone", type: "text" as const },
         { id: "currency", label: "Currency", type: "text" as const },
+        { id: "contactEmailPublic", label: "Public contact email", type: "email" as const },
+        { id: "contactPhonePublic", label: "Public contact phone", type: "text" as const },
+        { id: "communicationLanguage", label: "Default communication language", type: "text" as const },
       ], slots: [{ id: "general.status", slot: "header", blocks: [{ type: "text" as const, text: "Workspace metadata, regional defaults, sender status and service health are managed here.", tone: "muted" as const }] }] },
       { id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.admin" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "security.summary", slot: "header", blocks: [{ type: "text" as const, text: "Auth methods, registration policy, passkeys, sessions and approvals are protected Auth/Core administration controls.", tone: "muted" as const }] }] },
-      { id: "platform.settings.domains", label: "Domains", icon: "globe", order: 30, permission: "domains.read" as const, templateId: "admin.table" as const, fields: [], slots: [{ id: "domains.boundary", slot: "header", blocks: [{ type: "text" as const, text: "Only verified active domains may become public delivery or Auth trust candidates.", tone: "muted" as const }] }] },
+      { id: "platform.settings.domains", label: "Domains", icon: "globe", order: 30, permission: "domains.read" as const, templateId: "admin.table" as const, dataSourceId: "platform.settings.domains.list", fields: [], slots: [{ id: "domains.boundary", slot: "header", blocks: [{ type: "text" as const, text: "Only verified active domains may become public delivery or Auth trust candidates.", tone: "muted" as const }] }] },
       { id: "platform.settings.marketplace", label: "Marketplace", icon: "package", order: 40, permission: "marketplace.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "marketplace.lifecycle", slot: "header", blocks: [{ type: "text" as const, text: "Catalog releases, package uploads, installs and persistent approvals live in this platform tab.", tone: "muted" as const }] }] },
       { id: "platform.settings.interface", label: "Interface", icon: "layout", order: 50, permission: "layout.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "interface.runtime", slot: "header", blocks: [{ type: "text" as const, text: "Shell zones, placements and theme tokens are runtime configuration, not plugin-specific Web code.", tone: "muted" as const }] }] },
     ];
@@ -332,6 +350,8 @@ export class CoreRepository {
         access: "private",
         fields: spec.fields,
         slots: spec.slots,
+        dataSources: spec.dataSourceId ? [{ id: spec.dataSourceId, title: spec.label, kind: "resource", resource: spec.dataSourceId, access: "permission-gated" }] : [],
+        actions: spec.actionId ? [{ id: spec.actionId, title: "Save", commandId: spec.actionId, intent: "submit", variant: "primary", access: "permission-gated" }] : [],
         data: { workspaceName: "Default Workspace", locale: "ro-RO", timezone: "Europe/Bucharest", currency: "RON" },
       });
       const panel = settingsPanelContributionSchema.parse({ id: panelId, pluginId: "platform", tabId: spec.id, templateId: spec.templateId, schema, requiredPermission: spec.permission });
@@ -820,6 +840,84 @@ export class CoreRepository {
   async listSettings(workspaceId: string, scope: SettingScope): Promise<Record<string, unknown>> {
     const rows = await this.db.prepare("SELECT key, value_json FROM workspace_settings WHERE workspace_id = ? AND scope = ?").bind(workspaceId, scope).all<{ key: string; value_json: string }>();
     return Object.fromEntries(rows.results.map((row) => [row.key, JSON.parse(row.value_json) as unknown]));
+  }
+
+  async generalSettings(workspaceId: string) {
+    await this.ensureWorkspace(workspaceId);
+    const workspace = await this.db.prepare("SELECT name FROM workspaces WHERE id = ?").bind(workspaceId).first<{ name: string }>();
+    const settings = await this.listSettings(workspaceId, "platform");
+    return {
+      workspaceName: settings.workspaceName ?? workspace?.name ?? "Default Workspace",
+      businessDisplayName: settings.businessDisplayName ?? "",
+      locale: settings.locale ?? "ro-RO",
+      timezone: settings.timezone ?? "Europe/Bucharest",
+      currency: settings.currency ?? "RON",
+      contactEmailPublic: settings.contactEmailPublic ?? "",
+      contactPhonePublic: settings.contactPhonePublic ?? "",
+      communicationLanguage: settings.communicationLanguage ?? "ro-RO",
+      emailDeliveryStatus: "unavailable",
+      serviceHealth: { core: "ok", auth: "external", marketplace: "ok" },
+    };
+  }
+
+  async saveGeneralSettings(workspaceId: string, input: Record<string, unknown>, actorId?: string) {
+    const allowed = ["workspaceName", "businessDisplayName", "locale", "timezone", "currency", "contactEmailPublic", "contactPhonePublic", "communicationLanguage"];
+    await this.ensureWorkspace(workspaceId);
+    const statements = allowed.map((key) => this.db.prepare("INSERT INTO workspace_settings (workspace_id, scope, key, value_json, updated_at) VALUES (?, 'platform', ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(workspace_id, scope, key) DO UPDATE SET value_json = excluded.value_json, updated_at = CURRENT_TIMESTAMP")
+      .bind(workspaceId, key, JSON.stringify(input[key] ?? "")));
+    if (typeof input.workspaceName === "string" && input.workspaceName.trim()) statements.push(this.db.prepare("UPDATE workspaces SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(input.workspaceName.trim(), workspaceId));
+    await this.db.batch(statements);
+    await this.audit(workspaceId, "settings.general.save", { keys: allowed }, actorId);
+    return this.generalSettings(workspaceId);
+  }
+
+  private domainRow(row: { id: string; workspace_id: string; hostname: string; kind: WorkspaceDomain["kind"]; status: WorkspaceDomain["status"]; verification_method: WorkspaceDomain["verificationMethod"]; verification_instructions_json: string | null; publication_id: string | null; is_primary: number; created_at: string; verified_at: string | null; updated_at: string }): WorkspaceDomain {
+    return {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      hostname: row.hostname,
+      kind: row.kind,
+      status: row.status,
+      verificationMethod: row.verification_method,
+      verificationInstructions: row.verification_instructions_json ? JSON.parse(row.verification_instructions_json) as Record<string, unknown> : null,
+      publicationId: row.publication_id,
+      isPrimary: row.is_primary === 1,
+      createdAt: row.created_at,
+      verifiedAt: row.verified_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async listDomains(workspaceId: string): Promise<WorkspaceDomain[]> {
+    const rows = await this.db.prepare(`SELECT id, workspace_id, hostname, kind, status, verification_method, verification_instructions_json, publication_id, is_primary, created_at, verified_at, updated_at
+      FROM workspace_domains WHERE workspace_id = ? ORDER BY kind, hostname`).bind(workspaceId).all<Parameters<typeof this.domainRow>[0]>();
+    return rows.results.map((row) => this.domainRow(row));
+  }
+
+  async createDomain(workspaceId: string, input: { hostname: string; kind: WorkspaceDomain["kind"]; verificationMethod?: WorkspaceDomain["verificationMethod"]; isPrimary?: boolean }, actorId?: string) {
+    await this.ensureWorkspace(workspaceId);
+    const hostname = input.hostname.trim().toLowerCase();
+    const token = crypto.randomUUID();
+    const instructions = { method: input.verificationMethod ?? "manual", txtRecord: `_v2-verify.${hostname}`, token };
+    await this.db.prepare(`INSERT INTO workspace_domains
+      (id, workspace_id, hostname, kind, status, verification_method, verification_token_hash, verification_instructions_json, is_primary, updated_at)
+      VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
+      .bind(crypto.randomUUID(), workspaceId, hostname, input.kind, input.verificationMethod ?? "manual", await this.sha256(token), JSON.stringify(instructions), input.isPrimary ? 1 : 0)
+      .run();
+    await this.audit(workspaceId, "domain.create", { hostname, kind: input.kind }, actorId);
+    return this.listDomains(workspaceId);
+  }
+
+  async updateDomainStatus(workspaceId: string, domainId: string, status: WorkspaceDomain["status"], actorId?: string) {
+    const verifiedAt = status === "verified" || status === "active" ? ", verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)" : "";
+    await this.db.prepare(`UPDATE workspace_domains SET status = ?, updated_at = CURRENT_TIMESTAMP${verifiedAt} WHERE workspace_id = ? AND id = ?`).bind(status, workspaceId, domainId).run();
+    await this.audit(workspaceId, `domain.${status}`, { domainId }, actorId);
+    return this.listDomains(workspaceId);
+  }
+
+  private async sha256(value: string) {
+    const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+    return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
   async saveLayout(workspaceId: string, layout: WorkspaceLayout) {

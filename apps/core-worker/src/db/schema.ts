@@ -53,6 +53,21 @@ export const serviceIdentities = sqliteTable("service_identities", {
   createdAt: text("created_at").notNull().default(now),
   updatedAt: text("updated_at").notNull().default(now),
 }, (table) => [index("service_identities_workspace_idx").on(table.workspaceId, table.status), index("service_identities_kind_idx").on(table.workspaceId, table.kind)]);
+export const workspaceDomains = sqliteTable("workspace_domains", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  hostname: text("hostname").notNull(),
+  kind: text("kind", { enum: ["admin", "auth", "website", "storefront", "public-chat"] }).notNull(),
+  status: text("status", { enum: ["draft", "verifying", "verified", "active", "disabled"] }).notNull().default("draft"),
+  verificationMethod: text("verification_method", { enum: ["manual", "dns-txt", "dns-cname"] }).notNull().default("manual"),
+  verificationTokenHash: text("verification_token_hash"),
+  verificationInstructionsJson: text("verification_instructions_json"),
+  publicationId: text("publication_id"),
+  isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().default(now),
+  verifiedAt: text("verified_at"),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => [uniqueIndex("workspace_domains_hostname_idx").on(table.workspaceId, table.hostname), index("workspace_domains_status_idx").on(table.workspaceId, table.status), index("workspace_domains_kind_idx").on(table.workspaceId, table.kind)]);
 export const pluginCatalog = sqliteTable("plugin_catalog", { pluginId: text("plugin_id").primaryKey(), name: text("name").notNull(), version: text("version").notNull(), manifestJson: text("manifest_json").notNull(), category: text("category").notNull(), demoAvailable: integer("demo_available", { mode: "boolean" }).notNull().default(false), source: text("source").notNull().default("official"), createdAt: text("created_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) }, (table) => [index("plugin_catalog_source_idx").on(table.source), index("plugin_catalog_category_idx").on(table.category)]);
 export const pluginCatalogReleases = sqliteTable("plugin_catalog_releases", { id: text("id").primaryKey(), pluginId: text("plugin_id").notNull().references(() => pluginCatalog.pluginId, { onDelete: "cascade" }), version: text("version").notNull(), manifestJson: text("manifest_json").notNull(), packageObjectKey: text("package_object_key").notNull(), sha256: text("sha256").notNull(), sizeBytes: integer("size_bytes").notNull(), format: text("format").notNull(), workerIsolation: text("worker_isolation").notNull().default("none"), uiMode: text("ui_mode").notNull().default("declarative"), status: text("status", { enum: ["draft", "published", "deprecated"] }).notNull().default("draft"), source: text("source").notNull().default("official"), createdAt: text("created_at").notNull().default(now), publishedAt: text("published_at"), updatedAt: text("updated_at").notNull().default(now) }, (table) => [uniqueIndex("plugin_catalog_releases_identity_idx").on(table.pluginId, table.version, table.sha256), index("plugin_catalog_releases_plugin_status_idx").on(table.pluginId, table.status), index("plugin_catalog_releases_source_idx").on(table.source)]);
 export const installedPlugins = sqliteTable("installed_plugins", { id: text("id").primaryKey(), name: text("name").notNull(), version: text("version").notNull(), manifestJson: text("manifest_json").notNull(), packageObjectKey: text("package_object_key"), packageSha256: text("package_sha256"), packageSizeBytes: integer("package_size_bytes"), packageFormat: text("package_format"), workerIsolation: text("worker_isolation").notNull().default("none"), uiMode: text("ui_mode").notNull().default("declarative"), installedAt: text("installed_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) });

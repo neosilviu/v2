@@ -51,11 +51,18 @@ function Actions({ actions, callbacks }: { actions: ActionDefinition[]; callback
   return <div className="actions">{actions.map((action) => <Button key={action.id} className={action.variant === "primary" ? "primary" : action.variant === "danger" ? "danger" : ""} onClick={() => void callbacks?.onAction?.(action)}>{action.title}</Button>)}</div>;
 }
 
-function Field({ field }: { field: FieldDefinition }) {
-  if (field.type === "textarea") return <label>{field.label}<textarea name={field.id} required={field.required} readOnly={field.readOnly} /></label>;
-  if (field.type === "select") return <label>{field.label}<select name={field.id} required={field.required} disabled={field.readOnly}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
-  if (field.type === "boolean") return <label className="template-check"><input name={field.id} type="checkbox" disabled={field.readOnly} />{field.label}</label>;
-  return <label>{field.label}<input name={field.id} type={field.type === "password" ? "password" : field.type === "email" ? "email" : field.type === "number" ? "number" : field.type === "date" ? "date" : field.type === "color" ? "color" : "text"} required={field.required} readOnly={field.readOnly} autoComplete={field.autocomplete} /></label>;
+function fieldValue(data: unknown, id: string) {
+  if (!data || typeof data !== "object") return undefined;
+  return (data as Record<string, unknown>)[id];
+}
+
+function Field({ field, data }: { field: FieldDefinition; data?: unknown }) {
+  const value = fieldValue(data, field.id);
+  const defaultValue = value === undefined || value === null ? "" : String(value);
+  if (field.type === "textarea") return <label>{field.label}<textarea name={field.id} required={field.required} readOnly={field.readOnly} defaultValue={defaultValue} /></label>;
+  if (field.type === "select") return <label>{field.label}<select name={field.id} required={field.required} disabled={field.readOnly} defaultValue={defaultValue}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
+  if (field.type === "boolean") return <label className="template-check"><input name={field.id} type="checkbox" disabled={field.readOnly} defaultChecked={value === true || value === "true"} />{field.label}</label>;
+  return <label>{field.label}<input name={field.id} type={field.type === "password" ? "password" : field.type === "email" ? "email" : field.type === "number" ? "number" : field.type === "date" ? "date" : field.type === "color" ? "color" : "text"} required={field.required} readOnly={field.readOnly} autoComplete={field.autocomplete} defaultValue={defaultValue} /></label>;
 }
 
 function AdminTable({ page, data, callbacks }: TemplateRendererProps) {
@@ -63,12 +70,12 @@ function AdminTable({ page, data, callbacks }: TemplateRendererProps) {
   return <SurfaceCard className="template-page template-table"><div className="surface-header"><div><small>{page.templateId}</small><h2>{page.title}</h2></div><Badge>{rows.length}</Badge></div><Slot slots={page.slots} slot="header" /><div className="template-table-wrap"><table><thead><tr>{page.columns.map((column) => <th key={column.id}>{column.label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{page.columns.map((column) => <td key={column.id}>{valueAt(row, column.field)}</td>)}</tr>)}</tbody></table></div><Actions actions={page.actions} callbacks={callbacks} /></SurfaceCard>;
 }
 
-function AdminForm({ page, callbacks }: TemplateRendererProps) {
+function AdminForm({ page, data, callbacks }: TemplateRendererProps) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void callbacks?.onSubmit?.(page, Object.fromEntries(new FormData(event.currentTarget)));
   };
-  return <SurfaceCard className="template-page template-form"><div className="surface-header"><div><small>{page.templateId}</small><h2>{page.title}</h2></div><Badge>{page.fields.length}</Badge></div><Slot slots={page.slots} slot="header" /><form onSubmit={submit}>{page.fields.map((field) => <Field key={field.id} field={field} />)}<Actions actions={page.actions} callbacks={callbacks} /></form></SurfaceCard>;
+  return <SurfaceCard className="template-page template-form"><div className="surface-header"><div><small>{page.templateId}</small><h2>{page.title}</h2></div><Badge>{page.fields.length}</Badge></div><Slot slots={page.slots} slot="header" /><form onSubmit={submit}>{page.fields.map((field) => <Field key={`${field.id}:${fieldValue(data, field.id) ?? ""}`} field={field} data={data} />)}<Actions actions={page.actions} callbacks={callbacks} /></form></SurfaceCard>;
 }
 
 function AdminSettings(props: TemplateRendererProps) {
