@@ -5,7 +5,7 @@ const args = new Set(process.argv.slice(2));
 const authUrl = process.env.V2_AUTH_URL ?? "http://localhost:8788";
 const coreUrl = process.env.V2_CORE_URL ?? "http://localhost:8787";
 const webUrl = process.env.V2_WEB_URL ?? "http://localhost:5173";
-const workspaceId = process.env.V2_WORKSPACE_ID ?? "default";
+const workspaceId = process.env.V2_WORKSPACE_ID ?? `smoke-${Date.now()}`;
 const email = process.env.V2_SMOKE_EMAIL ?? "owner@example.local";
 const password = process.env.V2_SMOKE_PASSWORD ?? "LocalDevPassword123!";
 const prepareAuthDb = args.has("--prepare-auth-db") || process.env.V2_SMOKE_PREPARE_AUTH === "1";
