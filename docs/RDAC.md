@@ -23,6 +23,9 @@ Runtime-first is a hard platform rule:
 - Auth method configuration is admin/RBAC protected and audit-bound. Provider secrets and configuration references stay server-side and never appear in manifests, browser payloads or Core generic metadata.
 - Future auth extensions require privileged capabilities such as `auth.ui.contribute`, `auth.method.social.configure`, `auth.method.passkey.configure` and `auth.policy.admin`, with explicit approval.
 - Plugin install/update approval is persistent and one-shot. Browser booleans such as `approved: true` are not authorization; Core must store the exact release/package identity, SHA, workspace and sensitive capability list before an admin decision.
+- New workspaces start with platform seed only. Core/Web/Auth/Settings data required for workspace operation may be seeded when the workspace is created, but feature plugins must remain uninstalled and inactive until an explicit Marketplace/install action.
+- Plugin seed belongs to the plugin lifecycle. Some plugins may need idempotent default metadata, schemas, settings, internal records or operational fixtures; those are applied by the plugin install/update path for the target workspace, not by generic workspace creation.
+- Demo data is opt-in. Development fixtures and demo content may be available for local testing or Marketplace demo installs, but they must not be installed automatically with a new workspace or hidden inside platform bootstrap.
 - Public delivery routes may be exact or parameterized (`/:slug`, `/products/:id`) through validated route patterns only. Regexes, code and feature-specific host routes are not allowed.
 - Declarative templates may request data sources and actions only through generic Core endpoints. Core validates activation/publication/policy and blocks execution unless a declared runtime worker dispatch boundary exists.
 - Auth method server support is not public UI publication. Password signin can bootstrap as public; passkey, social and signup require explicit runtime Auth DB policy/publication.
@@ -143,6 +146,15 @@ Auth configuration uses the same bootstrap rule until RBAC is available: tempora
 - Keep plugin-owned data and migrations in plugin domains. Core owns only generic control-plane state.
 
 Official plugin lists in local scripts are development seed helpers only. Runtime Marketplace publish/install must be possible through Core endpoints and release metadata.
+
+Seed lifecycle is explicit:
+
+- Workspace creation seeds only platform-owned operational contracts: workspace row, RBAC roles, built-in Settings tabs, shell/layout defaults, Auth/login policy defaults and other Core/Web/Auth metadata needed for an empty workspace to function.
+- Marketplace catalog/release seed is a development convenience and makes plugins available for install, not installed. Catalog rows, ZIP/R2 release metadata and package availability must not create `workspace_plugins` rows or activate plugin UI.
+- Plugin install/update applies plugin-owned seed for that plugin and workspace after release validation and approval checks. This can include required default settings, declarative UI contributions, plugin-owned schema/bootstrap records and non-demo operational defaults.
+- Demo/sample data is a separate Marketplace action or explicit dev script. It can depend on an installed plugin, but must remain manually requested and auditable.
+- Development helpers may seed richer local data, following the v1 split between `bootstrap:workspace:dev` and `provision:workspace:prod`; production provisioning stays minimal, idempotent and non-destructive.
+- Generated/local plugin registries may synthesize catalog entries during development, but install and activation state remain workspace-scoped and materialized only by Marketplace or plugin install/update flows.
 
 ## Faza 3.5 - Public Delivery Foundation
 

@@ -18,6 +18,11 @@ import { SettingsPage } from "./SettingsPage";
 
 type Page = "overview" | "plugins" | "approvals" | "settings" | `plugin:${string}`;
 type PendingApproval = { tool: ToolContribution; approvalId: string };
+type AuthStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
+
+function protectedRedirectTarget() {
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
 
 function RuntimeSurface({ surface }: { surface: SurfaceContribution }) {
   if (surface.renderer.mode === "declarative" && surface.renderer.schema) return <DeclarativeSurface surface={surface} schema={surface.renderer.schema} />;
@@ -70,12 +75,13 @@ function PluginPage({ plugin, surfaces }: { plugin: PluginManifest; surfaces: Su
   </div>;
 }
 
-function AuthRequiredPage() {
-  return <SurfaceCard className="auth-required">
-    <small>core access</small>
-    <h2>Authentication required</h2>
-    <p>Workspace runtime data is protected. Sign in through the Auth service to load installed plugins, active surfaces, tools, settings and layout.</p>
-  </SurfaceCard>;
+function SessionCheckPage({ unavailable = false }: { unavailable?: boolean }) {
+  return <main className="login-page">
+    <SurfaceCard className="login-panel">
+      <div className="surface-header"><div><small>core access</small><h2>{unavailable ? "Authentication unavailable" : "Checking session"}</h2></div><Badge>protected</Badge></div>
+      <p className="login-status">{unavailable ? "The protected workspace cannot be shown until Core confirms the current session." : "Validating access before loading the workspace shell."}</p>
+    </SurfaceCard>
+  </main>;
 }
 
 export function App() {
@@ -88,7 +94,7 @@ export function App() {
   const [shell, setShell] = useState<ShellState>(emptyShell);
   const [activePage, setActivePage] = useState<Page>(window.location.pathname === "/settings" || window.location.pathname === "/marketplace" ? "settings" : "overview");
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [authRequired, setAuthRequired] = useState(false);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [notice, setNotice] = useState("runtime ready · no feature plugin required");
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -98,12 +104,11 @@ export function App() {
   useEffect(() => {
     void loadCoreSession().then((session) => {
       if (!session.authenticated) {
-        setAuthRequired(true);
+        setAuthStatus("anonymous");
         setNotice("auth required · workspace runtime data locked");
-        emit(notification("warning", "Authentication required", "Sign in to load workspace runtime data."));
         return null;
       }
-      setAuthRequired(false);
+      setAuthStatus("authenticated");
       return Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadRuntimeTools(), loadLayout(), loadWorkspaceUiSurfaces()]);
     }).then((result) => {
       if (!result) return;
@@ -116,13 +121,12 @@ export function App() {
       setShell(layout ? { ...composed, zones: layout.zones, placements: layout.placements } : composed);
     }).catch((error) => {
       if (isCoreAuthRequiredError(error)) {
-        setAuthRequired(true);
+        setAuthStatus("anonymous");
         setNotice("auth required · workspace runtime data locked");
-        emit(notification("warning", "Authentication required", "Sign in to load workspace runtime data."));
         return;
       }
-      setNotice("core offline · generic empty shell mode");
-      emit(notification("warning", "Core unavailable", "The platform shell is running without runtime data."));
+      setAuthStatus("unavailable");
+      setNotice("core offline · protected shell locked");
     });
   }, []);
 
@@ -132,8 +136,8 @@ export function App() {
   const pluginId = activePage.startsWith("plugin:") ? activePage.slice(7) : null;
   const selectedPlugin = activePlugins.find((plugin) => plugin.id === pluginId) ?? null;
   const selectedPluginSurfaces = selectedPlugin ? shell.surfaces.filter((surface) => surface.id.startsWith(`${selectedPlugin.id}.`)) : [];
-  const title = authRequired ? "Authentication Required" : selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : "Dashboard");
-  const subtitle = authRequired ? "Sign in before loading workspace runtime data" : selectedPlugin ? "Native plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Runtime-composed platform and plugin administration" : "Runtime overview and active workspace";
+  const title = selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : "Dashboard");
+  const subtitle = selectedPlugin ? "Native plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Runtime-composed platform and plugin administration" : "Runtime overview and active workspace";
 
   const runTool = async (tool: ToolContribution, approvalId?: string) => {
     setPaletteOpen(false);
@@ -189,6 +193,10 @@ export function App() {
     }
   };
 
+  if (authStatus === "checking") return <SessionCheckPage />;
+  if (authStatus === "anonymous") return <LoginPage redirectTo={protectedRedirectTarget()} />;
+  if (authStatus === "unavailable") return <SessionCheckPage unavailable />;
+
   return <>
     <div className="app-shell">
       <header className="topbar">
@@ -211,12 +219,11 @@ export function App() {
           <div><h1>{title}</h1><p>{subtitle}</p></div>
           <div className="header-actions"><Badge>workspace/default</Badge><Button onClick={persistLayout}>Save layout</Button></div>
         </div>
-        {authRequired ? <AuthRequiredPage /> : null}
-        {!authRequired && activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} onOpenPlugins={() => setActivePage("plugins")} /> : null}
-        {!authRequired && activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} onChanged={() => void refreshPlugins()} /></div> : null}
-        {!authRequired && activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
-        {!authRequired && activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
-        {!authRequired && selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
+        {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} onOpenPlugins={() => setActivePage("plugins")} /> : null}
+        {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} onChanged={() => void refreshPlugins()} /></div> : null}
+        {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
+        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
+        {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
       </main>
       <aside className="assistant">{assistant.length ? assistant.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <div className="message">No assistant plugin surface installed.</div>}</aside>
       <footer className="statusbar"><span>{notice}</span><span>{activePluginIds.size}/{plugins.length} plugins active</span><span>Core workspace/default</span></footer>

@@ -74,7 +74,7 @@ export async function approveToolApproval(approvalId: string): Promise<ToolAppro
 export async function denyToolApproval(approvalId: string): Promise<ToolApproval> { return decideToolApproval(approvalId, "denied"); }
 export async function loadPendingApprovalRequests(): Promise<ApprovalRequest[]> { return (await json<{ approvals: ApprovalRequest[] }>(`/workspaces/${workspaceId}/approval-requests`)).approvals; }
 export async function decideApprovalRequest(approvalId: string, decision: "approved" | "denied"): Promise<ApprovalRequest> { return (await json<{ approval: ApprovalRequest }>(`/approval-requests/${encodeURIComponent(approvalId)}/decision`, { method: "POST", body: JSON.stringify({ workspaceId, decision }) })).approval; }
-export async function loadInstalledPlugins(): Promise<PluginManifest[]> { return (await json<{ plugins: PluginManifest[] }>("/plugins/installed")).plugins; }
+export async function loadInstalledPlugins(): Promise<PluginManifest[]> { return (await json<{ plugins: PluginManifest[] }>(`/plugins/installed?workspaceId=${workspaceId}`)).plugins; }
 export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> { return (await json<{ plugins: MarketplacePlugin[] }>(`/marketplace/plugins?workspaceId=${workspaceId}`)).plugins; }
 export async function installMarketplacePlugin(pluginId: string, approvalId?: string): Promise<PluginInstallResult> {
   return json<PluginInstallResult>(`/marketplace/plugins/${encodeURIComponent(pluginId)}/install?workspaceId=${workspaceId}`, approvalId ? { method: "POST", body: JSON.stringify({ approvalId }) } : { method: "POST" });

@@ -4,5 +4,5 @@
   "compatibility_date": "2026-05-25",
   "compatibility_flags": ["nodejs_als"],
   "d1_databases": [{ "binding": "AUTH_DB", "database_name": "v2-auth", "database_id": "a941a86e-5414-41f8-8910-291c1264b3ed" }],
-  "vars": { "DEPLOYMENT_ENV": "development", "BETTER_AUTH_URL": "http://localhost:8787", "APP_ORIGIN": "http://localhost:5173", "TRUSTED_ORIGINS": "" }
+  "vars": { "DEPLOYMENT_ENV": "development", "BETTER_AUTH_URL": "http://localhost:8787", "APP_ORIGIN": "http://localhost:5173,http://127.0.0.1:5173", "TRUSTED_ORIGINS": "" }
 }

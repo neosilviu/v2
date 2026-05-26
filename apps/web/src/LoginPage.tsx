@@ -18,8 +18,8 @@ const loginSlots: LoginSlot[] = [
 ];
 type PublicLoginMethod = AuthPublicLoginConfig["methods"][number];
 
-function safeRedirectTarget() {
-  const target = new URLSearchParams(window.location.search).get("redirectTo");
+function safeRedirectTarget(redirectTo?: string) {
+  const target = redirectTo ?? new URLSearchParams(window.location.search).get("redirectTo");
   if (!target || !target.startsWith("/") || target.startsWith("//") || target.includes("\\") || target.startsWith("/public/")) return "/";
   return target;
 }
@@ -34,7 +34,7 @@ function SlotRenderer({ slot, contributions }: { slot: LoginSlot; contributions:
   return <div className="login-slot" data-slot={slot}>{items.map((item) => <DeclarativeBlocks key={item.contributionId} schema={item.renderer} />)}</div>;
 }
 
-function PasswordMethod({ method, passkeyAvailable, allowSignup }: { method: PublicLoginMethod; passkeyAvailable: boolean; allowSignup: boolean }) {
+function PasswordMethod({ method, passkeyAvailable, allowSignup, redirectTo }: { method: PublicLoginMethod; passkeyAvailable: boolean; allowSignup: boolean; redirectTo: string | undefined }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -56,7 +56,7 @@ function PasswordMethod({ method, passkeyAvailable, allowSignup }: { method: Pub
       return;
     }
     setStatus("signed in");
-    window.location.assign(safeRedirectTarget());
+    window.location.assign(safeRedirectTarget(redirectTo));
   };
 
   return <form className="login-method password-method" onSubmit={(event) => void submit(event)}>
@@ -69,18 +69,18 @@ function PasswordMethod({ method, passkeyAvailable, allowSignup }: { method: Pub
   </form>;
 }
 
-function SocialMethod({ method }: { method: PublicLoginMethod }) {
+function SocialMethod({ method, redirectTo }: { method: PublicLoginMethod; redirectTo: string | undefined }) {
   if (!method.providerId) return null;
   const provider = method.providerId;
   const signIn = async () => {
-    await authClient.signIn.social({ provider, callbackURL: safeRedirectTarget() });
+    await authClient.signIn.social({ provider, callbackURL: safeRedirectTarget(redirectTo) });
   };
   return <button className="login-method social-method" type="button" onClick={() => void signIn()}>
     <span>{method.title}</span><Badge>{method.providerId}</Badge>
   </button>;
 }
 
-function PasskeyMethod({ method, supported }: { method: PublicLoginMethod; supported: boolean }) {
+function PasskeyMethod({ method, supported, redirectTo }: { method: PublicLoginMethod; supported: boolean; redirectTo: string | undefined }) {
   const [status, setStatus] = useState<string | null>(null);
   const signIn = async () => {
     setStatus("checking passkey");
@@ -90,7 +90,7 @@ function PasskeyMethod({ method, supported }: { method: PublicLoginMethod; suppo
       return;
     }
     setStatus("signed in");
-    window.location.assign(safeRedirectTarget());
+    window.location.assign(safeRedirectTarget(redirectTo));
   };
   return <div className="login-method passkey-method">
     <div className="method-header"><strong>{method.title}</strong><Badge>{supported ? "available" : "unsupported"}</Badge></div>
@@ -99,7 +99,7 @@ function PasskeyMethod({ method, supported }: { method: PublicLoginMethod; suppo
   </div>;
 }
 
-function LoginMethods({ config }: { config: AuthPublicLoginConfig }) {
+function LoginMethods({ config, redirectTo }: { config: AuthPublicLoginConfig; redirectTo: string | undefined }) {
   const [passkeySupported, setPasskeySupported] = useState(false);
   useEffect(() => {
     setPasskeySupported(typeof window !== "undefined" && "PublicKeyCredential" in window);
@@ -109,14 +109,14 @@ function LoginMethods({ config }: { config: AuthPublicLoginConfig }) {
   const byType = (type: PublicLoginMethod["type"]) => methods.filter((method) => method.type === type);
 
   return <>
-    {byType("password").map((method) => <PasswordMethod key={method.id} method={method} passkeyAvailable={passkeySupported && config.features.passkey} allowSignup={config.policy.registrationMode === "open"} />)}
+    {byType("password").map((method) => <PasswordMethod key={method.id} method={method} passkeyAvailable={passkeySupported && config.features.passkey} allowSignup={config.policy.registrationMode === "open"} redirectTo={redirectTo} />)}
     {config.policy.registrationMode === "invitation-only" ? <div className="login-method"><div className="method-header"><strong>Invitation required</strong><Badge>registration</Badge></div><p className="login-status">Account creation is available only through an invitation.</p></div> : null}
-    {byType("social").map((method) => <SocialMethod key={method.id} method={method} />)}
-    {byType("passkey").map((method) => <PasskeyMethod key={method.id} method={method} supported={passkeySupported} />)}
+    {byType("social").map((method) => <SocialMethod key={method.id} method={method} redirectTo={redirectTo} />)}
+    {byType("passkey").map((method) => <PasskeyMethod key={method.id} method={method} supported={passkeySupported} redirectTo={redirectTo} />)}
   </>;
 }
 
-export function LoginPage() {
+export function LoginPage({ redirectTo }: { redirectTo?: string | undefined } = {}) {
   const [config, setConfig] = useState<AuthPublicLoginConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -132,9 +132,9 @@ export function LoginPage() {
       {config ? loginSlots.map((slot) => {
         if (slot === "login.password" || slot === "login.socialMethods" || slot === "login.passkey") return <div key={slot} className="login-slot">
           <SlotRenderer slot={slot} contributions={config.uiContributions} />
-          {slot === "login.password" ? <LoginMethods config={{ ...config, methods: config.methods.filter((method) => method.type === "password") }} /> : null}
-          {slot === "login.socialMethods" ? <LoginMethods config={{ ...config, methods: config.methods.filter((method) => method.type === "social") }} /> : null}
-          {slot === "login.passkey" ? <LoginMethods config={{ ...config, methods: config.methods.filter((method) => method.type === "passkey") }} /> : null}
+          {slot === "login.password" ? <LoginMethods config={{ ...config, methods: config.methods.filter((method) => method.type === "password") }} redirectTo={redirectTo} /> : null}
+          {slot === "login.socialMethods" ? <LoginMethods config={{ ...config, methods: config.methods.filter((method) => method.type === "social") }} redirectTo={redirectTo} /> : null}
+          {slot === "login.passkey" ? <LoginMethods config={{ ...config, methods: config.methods.filter((method) => method.type === "passkey") }} redirectTo={redirectTo} /> : null}
         </div>;
         return <SlotRenderer key={slot} slot={slot} contributions={config.uiContributions} />;
       }) : null}

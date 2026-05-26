@@ -521,6 +521,18 @@ export class CoreRepository {
     return rows.results.map((row) => pluginManifestSchema.parse(JSON.parse(row.manifest_json)));
   }
 
+  async workspaceInstalled(workspaceId: string): Promise<PluginManifest[]> {
+    await this.ensurePlatformSettingsContributions(workspaceId);
+    const rows = await this.db.prepare(`SELECT installed.manifest_json
+      FROM workspace_plugins workspace
+      INNER JOIN installed_plugins installed ON installed.id = workspace.plugin_id
+      WHERE workspace.workspace_id = ? AND workspace.plugin_id != 'platform'
+      ORDER BY installed.name`)
+      .bind(workspaceId)
+      .all<{ manifest_json: string }>();
+    return rows.results.map((row) => pluginManifestSchema.parse(JSON.parse(row.manifest_json)));
+  }
+
   async installedById(pluginId: string): Promise<PluginManifest | undefined> {
     const row = await this.db.prepare("SELECT manifest_json FROM installed_plugins WHERE id = ?").bind(pluginId).first<{ manifest_json: string }>();
     return row ? pluginManifestSchema.parse(JSON.parse(row.manifest_json)) : undefined;
@@ -758,12 +770,14 @@ export class CoreRepository {
   deactivate(workspaceId: string, pluginId: string) { return this.setActive(workspaceId, pluginId, false); }
 
   async activePlugins(workspaceId: string): Promise<string[]> {
-    const rows = await this.db.prepare("SELECT plugin_id FROM workspace_plugins WHERE workspace_id = ? AND active = 1").bind(workspaceId).all<{ plugin_id: string }>();
+    await this.ensurePlatformSettingsContributions(workspaceId);
+    const rows = await this.db.prepare("SELECT plugin_id FROM workspace_plugins WHERE workspace_id = ? AND active = 1 AND plugin_id != 'platform'").bind(workspaceId).all<{ plugin_id: string }>();
     return rows.results.map((row) => row.plugin_id);
   }
 
   async workspacePlugins(workspaceId: string): Promise<PluginWorkspaceState[]> {
-    const rows = await this.db.prepare("SELECT workspace_id, plugin_id, active, updated_at FROM workspace_plugins WHERE workspace_id = ?").bind(workspaceId).all<{ workspace_id: string; plugin_id: string; active: number; updated_at: string }>();
+    await this.ensurePlatformSettingsContributions(workspaceId);
+    const rows = await this.db.prepare("SELECT workspace_id, plugin_id, active, updated_at FROM workspace_plugins WHERE workspace_id = ? AND plugin_id != 'platform'").bind(workspaceId).all<{ workspace_id: string; plugin_id: string; active: number; updated_at: string }>();
     return rows.results.map((row) => ({ workspaceId: row.workspace_id, pluginId: row.plugin_id, active: row.active === 1, updatedAt: row.updated_at }));
   }
 

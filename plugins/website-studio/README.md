@@ -14,6 +14,16 @@ All UI, worker routes, D1 schema and migrations belong in this plugin. Core stor
 
 Editing and publishing require manifest-declared capabilities. AI context is opt-in through `website_context_shares`; it contains only explicitly readable fields and allowed tool identifiers, never arbitrary DOM or private site data.
 
+## Seed lifecycle
+
+Website Studio follows the v2 RDAC seed split:
+
+- Workspace creation does not install this plugin and does not write Website Studio rows.
+- Marketplace/plugin install materializes the manifest and declarative contributions for the target workspace.
+- `POST /workspaces/:workspaceId/seed/defaults` installs non-demo operational defaults for an installed workspace.
+- `POST /workspaces/:workspaceId/demo/install` installs sample pages explicitly for development or Marketplace demo flows.
+- Demo rows are plugin-owned data in `WEBSITE_DB`; Core stores only generic install, activation, publication and approval metadata.
+
 ## Status
 
-Implemented: package, manifest, D1 schema/migration and minimal worker. Remaining: runtime-loaded editor surface, repositories, publishing flow, asset upload and Agent AI context dispatch.
+Implemented: package, manifest, D1 schema/migration, declarative editor/settings surfaces, public route candidates, page/section worker routes, operational seed and explicit demo install. Remaining: authenticated service boundary for plugin worker calls, Core runtime dispatch to plugin data/actions, asset upload and Agent AI context dispatch.
