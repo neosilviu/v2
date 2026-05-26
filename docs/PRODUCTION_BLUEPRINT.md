@@ -45,6 +45,12 @@ Core owns workspace domain metadata and verification state. Auth must trust only
 
 - Built-in Settings tabs are seeded by Core as runtime contributions and resolved through authenticated Core APIs.
 - Plugin Settings tabs and panels are contract-supported through `@v2/ui-schema`, `@v2/plugin-contracts` and `@v2/plugin-sdk`.
+- Core now enforces workspace RBAC for production administration using workspace members, roles, role permissions, member roles, invitations and service identities.
+- General Settings load/save workspace metadata through Core runtime data/actions.
+- Security Settings consume protected Auth admin APIs for runtime auth methods, registration policy, session/passkey summary and RBAC summary.
+- Domains Settings persist workspace domains and support draft, verified, active and disabled states with manual verification for the local vertical slice.
+- Settings surfaces contributed by plugins are promoted into runtime Settings tabs after install/activation, without Web hardcoding.
+- Local Node exists as a testable plugin slice with contracts, a Settings tab, a Local Production surface and a development mock runner.
 - Web Settings uses a runtime tab registry and generic `TemplateRenderer`; standard plugin Settings tabs do not require Web rebuilds.
 - Auth administration has protected APIs for methods, policy, login UI contribution publication, security summary and sessions summary.
 - Login is public and runtime-driven; passkey/social/signup visibility follows Auth DB publication and policy.
@@ -53,6 +59,6 @@ Core owns workspace domain metadata and verification state. Auth must trust only
 Not yet complete:
 
 - Production domain verification and trusted-origin replication.
-- Full workspace RBAC.
 - Auth-owned persistent audit table for admin changes.
 - Dynamic Marketplace Worker execution via Dispatch Namespace or Workers for Platforms.
+- Real Local Node printing, Gmail and WhatsApp integrations.

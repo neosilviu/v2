@@ -74,7 +74,11 @@ Current foundation status:
 
 - Core exposes authenticated runtime Settings composition endpoints for tab registry, tab panel resolution, ordering and settings-scoped runtime data/actions.
 - Core seeds the five built-in platform Settings tabs as runtime contributions in the existing D1 contribution/activation model.
+- Core now has minimal workspace RBAC tables and permission checks for production administration routes.
+- General, Security and Domains Settings have real runtime-backed panels for workspace metadata, Auth policy/method publication and workspace domain lifecycle.
 - Plugin manifests can declare Settings tab and panel contributions through shared Zod contracts.
+- Plugin Settings surfaces are also promoted into runtime Settings tabs after install/activation so existing declarative settings surfaces become visible without Web changes.
+- Local Node has a vertical slice with typed contracts, runtime Settings contribution, Local Production surface and a mock-development-only runner health endpoint.
 - Web renders `/settings?tab=<tabId>` from the Core Settings registry and treats `/marketplace` as the Marketplace tab alias.
 - Marketplace and Interface administration are reachable through platform Settings tabs while their underlying platform components are still trusted built-in optimizations.
 - Auth Worker exposes protected admin APIs for methods, policy, login UI contributions, security summary and sessions summary.

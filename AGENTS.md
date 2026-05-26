@@ -29,7 +29,7 @@
 - Auth public login methods must come from Auth DB publication state and policy. Server-side support for passkey or OAuth does not make the method public.
 - Production administration closure is part of Faza 0. Settings must be a runtime-composed hub before operational plugins are expanded.
 - Built-in Settings tabs are `General`, `Security`, `Domains`, `Marketplace` and `Interface`; they must use the same contribution model as plugin tabs.
-- Plugin settings tabs must come from installed and active plugin release contributions. Web must not hardcode plugin tabs or require rebuilds for standard plugin settings UI.
+- Plugin settings tabs must come from installed and active plugin release contributions. Settings surfaces may be promoted into runtime tabs generically by Core, but Web must not hardcode plugin tabs or require rebuilds for standard plugin settings UI.
 - Auth/account security, domain trust, Marketplace lifecycle and interface composition must be configurable through protected administration surfaces with audit and approval awareness for sensitive mutations.
 - When updating production administration, keep Settings tabs contract-based and add generated guard coverage for new runtime contribution types.
 - Keep D1 migrations incremental. Do not rewrite existing migration history, apply remote migrations from local work, or change assigned D1 identifiers.
@@ -65,4 +65,4 @@
 
 ## Planned plugins
 
-`agent-ai`, `ai-providers`, `theme-studio`, `website-studio` and `commerce` are feature plugins. The plugin manager remains native platform functionality.
+`agent-ai`, `ai-providers`, `theme-studio`, `website-studio`, `commerce` and `local-node` are feature plugins. The plugin manager remains native platform functionality.
