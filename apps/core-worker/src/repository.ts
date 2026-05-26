@@ -66,11 +66,13 @@ export type WorkspacePublication = {
   status: PublicationStatus;
   policyId: string | null;
   access: PublicContributionAccess;
+  authenticationMode?: "anonymous" | "customer" | "verified";
 };
 export type PublicDelivery = {
   publication: WorkspacePublication;
-  manifest: PluginManifest;
-  contribution: PublicContribution;
+  manifest?: PluginManifest | undefined;
+  contribution?: PublicContribution | undefined;
+  page: DeclarativePageContribution;
 };
 
 export class CoreRepository {
@@ -307,14 +309,14 @@ export class CoreRepository {
     if (!manifest) return undefined;
     const active = await this.activePlugins(input.workspaceId);
     if (!active.includes(input.pluginId)) return undefined;
-    const contribution = this.findPublicContribution(manifest, input.contributionKind, input.contributionId);
-    if (!contribution) return undefined;
-    const publicPath = input.publicPath ?? contribution.path;
-    const title = input.title ?? contribution.title;
-    const access = input.access ?? contribution.access;
     const uiContribution = await this.pluginUiContribution(input.pluginId, input.contributionId);
+    const contribution = this.findPublicContribution(manifest, input.contributionKind, input.contributionId);
+    if (!contribution && !uiContribution) return undefined;
+    const publicPath = input.publicPath ?? contribution?.path ?? `/${input.contributionId.replace(/[^a-zA-Z0-9/_-]/g, "-")}`;
+    const title = input.title ?? contribution?.title ?? uiContribution?.schema.title ?? input.contributionId;
+    const access = input.access ?? contribution?.access ?? "anonymous";
     const templateId = uiContribution?.templateId ?? "public.contentPage";
-    const schemaJson = JSON.stringify(uiContribution?.schema ?? {});
+    const schemaJson = JSON.stringify(uiContribution?.schema ?? declarativePageContributionSchema.parse({ id: input.contributionId, title, templateId, access: "public-candidate", slots: [{ id: `${input.contributionId}.body`, slot: "body", blocks: [{ type: "text", text: title }] }] }));
     const publicationId = `${input.workspaceId}:${input.pluginId}:${input.contributionKind}:${input.contributionId}`;
     const policyId = `${publicationId}:policy`;
     await this.db.batch([
@@ -338,27 +340,28 @@ export class CoreRepository {
         .bind(publicationId, input.workspaceId, input.pluginId, input.contributionKind, input.contributionKind, input.contributionId, publicPath, title, templateId, schemaJson, policyId),
     ]);
     await this.audit(input.workspaceId, "public.publication.publish", { pluginId: input.pluginId, contributionKind: input.contributionKind, contributionId: input.contributionId, publicPath });
-    return { id: publicationId, workspaceId: input.workspaceId, pluginId: input.pluginId, contributionKind: input.contributionKind, contributionId: input.contributionId, publicPath, title, status: "published", policyId, access };
+    return { id: publicationId, workspaceId: input.workspaceId, pluginId: input.pluginId, contributionKind: input.contributionKind, publicationType: input.contributionKind, contributionId: input.contributionId, publicPath, title, templateId, schema: JSON.parse(schemaJson) as DeclarativePageContribution, status: "published", policyId, access };
   }
 
   async publicDelivery(workspaceId: string, publicPath: string): Promise<PublicDelivery | undefined> {
-    const row = await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.contribution_id, p.public_path, p.title, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, installed.manifest_json
+    const row = await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.publication_type, p.contribution_id, p.public_path, p.title, p.template_id, p.schema_json, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, COALESCE(policy.authentication_mode, 'anonymous') AS authentication_mode, COALESCE(policy.enabled, 1) AS policy_enabled, installed.manifest_json
       FROM workspace_publications p
       INNER JOIN workspace_plugins active ON active.workspace_id = p.workspace_id AND active.plugin_id = p.plugin_id AND active.active = 1
       INNER JOIN installed_plugins installed ON installed.id = p.plugin_id
       LEFT JOIN public_access_policies policy ON policy.id = p.policy_id
-      WHERE p.workspace_id = ? AND p.public_path = ? AND p.status = 'published'
+      WHERE p.workspace_id = ? AND p.public_path = ? AND p.status = 'published' AND COALESCE(policy.enabled, 1) = 1
       LIMIT 1`)
       .bind(workspaceId, publicPath)
-      .first<{ id: string; workspace_id: string; plugin_id: string; contribution_kind: PublicationKind; contribution_id: string; public_path: string; title: string; status: PublicationStatus; policy_id: string | null; access: PublicContributionAccess; manifest_json: string }>();
+      .first<{ id: string; workspace_id: string; plugin_id: string; contribution_kind: PublicationKind; publication_type: "route" | "surface" | "tool" | "content"; contribution_id: string; public_path: string; title: string; template_id: string; schema_json: string; status: PublicationStatus; policy_id: string | null; access: PublicContributionAccess; authentication_mode: "anonymous" | "customer" | "verified"; policy_enabled: number; manifest_json: string }>();
     if (!row) return undefined;
     const manifest = pluginManifestSchema.parse(JSON.parse(row.manifest_json));
     const contribution = this.findPublicContribution(manifest, row.contribution_kind, row.contribution_id);
-    if (!contribution) return undefined;
+    const page = declarativePageContributionSchema.parse(JSON.parse(row.schema_json));
     return {
-      publication: { id: row.id, workspaceId: row.workspace_id, pluginId: row.plugin_id, contributionKind: row.contribution_kind, contributionId: row.contribution_id, publicPath: row.public_path, title: row.title, status: row.status, policyId: row.policy_id, access: row.access },
+      publication: { id: row.id, workspaceId: row.workspace_id, pluginId: row.plugin_id, contributionKind: row.contribution_kind, publicationType: row.publication_type, contributionId: row.contribution_id, publicPath: row.public_path, title: row.title, templateId: row.template_id, schema: page, status: row.status, policyId: row.policy_id, access: row.access, authenticationMode: row.authentication_mode },
       manifest,
       contribution,
+      page,
     };
   }
 

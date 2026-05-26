@@ -53,11 +53,11 @@ app.get("/public/:workspaceId/*", async (c) => {
   const publicPath = new URL(c.req.url).pathname.slice(prefix.length) || "/";
   const delivery = await new CoreRepository(c.env.CORE_DB).publicDelivery(workspaceId, publicPath);
   if (!delivery) return c.json(errorResponse(failure("not_found", "Public resource is not available.")), 404);
-  if (delivery.publication.access === "authenticated") {
+  if (delivery.publication.access === "authenticated" || delivery.publication.authenticationMode === "customer" || delivery.publication.authenticationMode === "verified") {
     const denied = requireRead(c);
     if (denied) return denied;
   }
-  return c.json({ publication: delivery.publication, plugin: { id: delivery.manifest.id, name: delivery.manifest.name, version: delivery.manifest.version }, contribution: delivery.contribution });
+  return c.json({ publication: delivery.publication, plugin: delivery.manifest ? { id: delivery.manifest.id, name: delivery.manifest.name, version: delivery.manifest.version } : null, contribution: delivery.contribution ?? null, page: delivery.page });
 });
 app.get("/runtime/plugins", async (c) => { const denied = requireRead(c); if (denied) return denied; return c.json({ plugins: await new CoreRepository(c.env.CORE_DB).installed() }); });
 app.get("/runtime/tools", async (c) => { const denied = requireRead(c); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const active = new Set(await repo.activePlugins(c.req.query("workspaceId") ?? defaultWorkspaceId)); return c.json({ tools: runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.tools) }); });

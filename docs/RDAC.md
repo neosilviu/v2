@@ -14,6 +14,7 @@ Runtime-first is a hard platform rule:
 - The public delivery router is generic. It resolves published routes, surfaces and tool candidates from Core persistence and plugin manifests.
 - Declarative UI schema contributions are the standard runtime UI path for Marketplace plugins. The Web shell must render them generically with `@v2/ui-kit` without a rebuild.
 - The frontend standard is template-driven. Web owns only the shell, route guards, the generic renderer and a small catalog of reusable templates; standard plugins provide pages, surfaces, routes, data sources and actions declaratively at runtime.
+- Declarative UI, activations, publications, policies and theme tokens are persisted in D1 as validated contracts and metadata. D1 must never store React components, executable JavaScript, ZIP payloads, OAuth secrets, API keys or provider tokens.
 - Trusted React UI discovered at build time is only a deployment optimization for included first-party plugins, not the runtime Marketplace standard.
 - `sandbox-frame` is reserved for external plugins that ship arbitrary unknown UI and therefore need browser isolation.
 - Dynamic plugin Worker logic must use a separate execution model compatible with Cloudflare Workers for Platforms / Dispatch Namespace. Hardcoded service bindings remain appropriate only for services known at deploy time, such as Core, Auth and official deployed services.
@@ -102,6 +103,9 @@ Official plugin lists in local scripts are development seed helpers only. Runtim
 - Use reusable templates such as admin dashboard, table, detail, form, settings, approvals, chat, auth login and public content/product/cart/checkout/chat views.
 - Keep the visual identity consistent for all declarative plugin UI.
 - Resolve private and public routing from manifests, workspace activation, publications and policies. A `public-candidate` route is never public until explicitly published for a workspace.
+- Persist declarative contributions in Core D1 through `plugin_ui_contributions`, `workspace_ui_activations`, `workspace_publications`, `public_access_policies` and `workspace_theme_tokens`.
+- Auth-owned runtime login configuration is persisted separately in Auth D1 through `auth_methods` and `auth_ui_contributions`; Auth passkey data remains in Auth D1 through the Better Auth passkey schema.
+- Plugin installation stores validated declarative contributions. Workspace activation enables private surfaces. Public publication is a separate permission-gated operation and never happens automatically.
 - Allow first-party trusted React surfaces only as an optimization when the plugin is included in the deployment.
 - Keep sandbox iframe rendering only for arbitrary external UI.
 

@@ -14,7 +14,10 @@
 - Declarative UI schema rendered by Web is the standard Marketplace UI mechanism. Trusted React registries are deploy-time optimizations for included first-party plugins only.
 - The frontend standard is template-driven and runtime-rendered. Web may contain the shell, route guards, generic renderer and a small reusable template catalog, but not plugin-specific pages or route switches.
 - Standard plugins contribute surfaces, pages, routes, data sources and actions declaratively through manifests/packages so Marketplace installs can appear without rebuilding Web.
+- Persist declarative UI, workspace activations, publications, policies, login config and theme tokens in owner D1 databases as validated contracts and metadata only.
+- Do not persist React components, executable JavaScript, ZIP/assets, OAuth secrets, API keys or provider tokens in D1 UI schema or public metadata. ZIP/assets belong in R2; secrets resolve server-side through configuration refs.
 - Private/public routing is resolved from workspace activation, publications and policies. Public-candidate declarations are not public until explicitly published.
+- Core D1 owns plugin UI contributions, workspace UI activations, workspace publications, public access policies and theme tokens. Auth D1 owns auth methods, login UI contributions and Better Auth passkey storage.
 - `sandbox-frame` is only for external arbitrary UI that needs isolation.
 - Dynamic Worker execution for Marketplace code must be modeled separately, for example through Cloudflare Workers for Platforms / Dispatch Namespace; do not add per-plugin service bindings for runtime-installed plugins.
 - Auth Worker is a privileged service boundary. Do not treat login, session, OAuth, password or passkey handling as ordinary plugin code.
