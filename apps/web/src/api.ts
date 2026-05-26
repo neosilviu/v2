@@ -50,6 +50,13 @@ export type MailSummary = {
   events: { id: string; provider_id: string | null; template_key: string | null; status: string; purpose: string; error_safe: string | null; created_at: string; completed_at: string | null }[];
   activeProvider: MailProviderPublicSummary | null;
 };
+type ShellBootstrap = { plugins: PluginManifest[]; active: string[]; tools: ToolContribution[]; surfaces: SurfaceContribution[] };
+let shellBootstrap: Promise<ShellBootstrap> | null = null;
+function resetShellBootstrap() { shellBootstrap = null; }
+function loadShellBootstrap(): Promise<ShellBootstrap> {
+  if (!shellBootstrap) shellBootstrap = json<ShellBootstrap>(`/runtime/ui/bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`).catch((error) => { shellBootstrap = null; throw error; });
+  return shellBootstrap;
+}
 export async function loadCoreSession(): Promise<CoreSession> { return json<CoreSession>("/session"); }
 export async function loadOwnerSetup(token: string): Promise<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }> { return json<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }>(`/setup/owner?token=${encodeURIComponent(token)}`); }
 export async function consumeOwnerSetup(token: string): Promise<{ status: "consumed"; workspaceId: string }> { return json<{ status: "consumed"; workspaceId: string }>("/setup/owner/consume", { method: "POST", body: JSON.stringify({ token }) }); }
@@ -57,8 +64,8 @@ export async function loadCurrentRbac(): Promise<RbacMe> { return json<RbacMe>(`
 export function runtimeSurfaceUrl(surfaceId: string): string { return `${coreUrl}/runtime/ui/surfaces/${encodeURIComponent(surfaceId)}?workspaceId=${encodeURIComponent(workspaceId)}`; }
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(`/workspaces/${workspaceId}/layout`)).layout; }
 export async function saveLayout(state: ShellState): Promise<void> { await json("/layouts", { method: "PUT", body: JSON.stringify({ workspaceId, layout: { zones: state.zones, placements: state.placements } }) }); }
-export async function loadActivePlugins(): Promise<string[]> { return (await json<{ active: string[] }>(`/workspaces/${workspaceId}/plugins`)).active; }
-export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> { return (await json<{ surfaces: SurfaceContribution[] }>(`/runtime/ui/surfaces?workspaceId=${encodeURIComponent(workspaceId)}`)).surfaces; }
+export async function loadActivePlugins(): Promise<string[]> { return (await loadShellBootstrap()).active; }
+export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> { return (await loadShellBootstrap()).surfaces; }
 export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> { return (await json<{ tabs: RuntimeSettingsTab[] }>(`/workspaces/${workspaceId}/settings/tabs`)).tabs; }
 export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTabResolution> { return json<RuntimeSettingsTabResolution>(`/workspaces/${workspaceId}/settings/tabs/${encodeURIComponent(tabId)}`); }
 export async function saveSettingsTabOrder(tabIds: string[]): Promise<void> { await json(`/workspaces/${workspaceId}/settings/tabs/order`, { method: "POST", body: JSON.stringify({ tabIds }) }); }
@@ -67,8 +74,8 @@ export async function loadRuntimeData(contributionId: string, dataSourceId: stri
 export async function executeRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>("/runtime/ui/actions", { method: "POST", body: JSON.stringify({ workspaceId, contributionId, actionId, input, routeParams }) }); }
 export async function loadPublicRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}, publicWorkspaceId = workspaceId): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>(`/public/${encodeURIComponent(publicWorkspaceId)}/runtime/data`, { method: "POST", body: JSON.stringify({ contributionId, dataSourceId, routeParams }) }); }
 export async function executePublicRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}, publicWorkspaceId = workspaceId): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>(`/public/${encodeURIComponent(publicWorkspaceId)}/runtime/actions`, { method: "POST", body: JSON.stringify({ contributionId, actionId, input, routeParams }) }); }
-export async function activatePlugin(pluginId: string): Promise<void> { await json("/plugins/activate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); }
-export async function deactivatePlugin(pluginId: string): Promise<void> { await json("/plugins/deactivate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); }
+export async function activatePlugin(pluginId: string): Promise<void> { await json("/plugins/activate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); resetShellBootstrap(); }
+export async function deactivatePlugin(pluginId: string): Promise<void> { await json("/plugins/deactivate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); resetShellBootstrap(); }
 export async function loadSettings(scope: "platform" | `plugin:${string}`): Promise<Record<string, unknown>> { return (await json<{ settings: Record<string, unknown> }>(`/workspaces/${workspaceId}/settings/${encodeURIComponent(scope)}`)).settings; }
 export async function saveSetting(scope: "platform" | `plugin:${string}`, key: string, value: unknown): Promise<void> { await json("/settings", { method: "PUT", body: JSON.stringify({ workspaceId, scope, key, value }) }); }
 export async function loadDomains(): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${workspaceId}/domains`)).domains; }
@@ -88,24 +95,11 @@ export async function approveToolApproval(approvalId: string): Promise<ToolAppro
 export async function denyToolApproval(approvalId: string): Promise<ToolApproval> { return decideToolApproval(approvalId, "denied"); }
 export async function loadPendingApprovalRequests(): Promise<ApprovalRequest[]> { return (await json<{ approvals: ApprovalRequest[] }>(`/workspaces/${workspaceId}/approval-requests`)).approvals; }
 export async function decideApprovalRequest(approvalId: string, decision: "approved" | "denied"): Promise<ApprovalRequest> { return (await json<{ approval: ApprovalRequest }>(`/approval-requests/${encodeURIComponent(approvalId)}/decision`, { method: "POST", body: JSON.stringify({ workspaceId, decision }) })).approval; }
-export async function loadInstalledPlugins(): Promise<PluginManifest[]> { return (await json<{ plugins: PluginManifest[] }>(`/plugins/installed?workspaceId=${workspaceId}`)).plugins; }
+export async function loadInstalledPlugins(): Promise<PluginManifest[]> { return (await loadShellBootstrap()).plugins; }
 export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> { return (await json<{ plugins: MarketplacePlugin[] }>(`/marketplace/plugins?workspaceId=${workspaceId}`)).plugins; }
-export async function installMarketplacePlugin(pluginId: string, approvalId?: string): Promise<PluginInstallResult> {
-  return json<PluginInstallResult>(`/marketplace/plugins/${encodeURIComponent(pluginId)}/install?workspaceId=${workspaceId}`, approvalId ? { method: "POST", body: JSON.stringify({ approvalId }) } : { method: "POST" });
-}
-export async function publishMarketplaceRelease(pluginId: string, file: File, fields?: { category?: string; source?: string; status?: "draft" | "published" | "deprecated"; demoAvailable?: boolean }): Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }> {
-  const body = new FormData();
-  body.append("file", file);
-  if (fields?.category) body.append("category", fields.category);
-  if (fields?.source) body.append("source", fields.source);
-  if (fields?.status) body.append("status", fields.status);
-  if (fields?.demoAvailable !== undefined) body.append("demoAvailable", String(fields.demoAvailable));
-  const response = await fetch(`${coreUrl}/marketplace/plugins/${encodeURIComponent(pluginId)}/releases`, { method: "POST", body, credentials: "include" });
-  if (response.status === 401) throw new CoreAuthRequiredError();
-  if (!response.ok) throw new Error(`Marketplace release publish failed: ${response.status}`);
-  return response.json() as Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }>;
-}
-export async function loadRuntimeTools(): Promise<ToolContribution[]> { return (await json<{ tools: ToolContribution[] }>(`/runtime/tools?workspaceId=${workspaceId}`)).tools; }
-export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body, credentials: "include" }); if (!response.ok && response.status !== 202) throw new Error(`Plugin upload failed: ${response.status}`); return response.json() as Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }>; }
-export async function approveInstall(approvalId: string): Promise<PluginManifest> { return (await json<{ status: string; manifest: PluginManifest }>("/plugins/install", { method: "POST", body: JSON.stringify({ workspaceId, approvalId }) })).manifest; }
+export async function installMarketplacePlugin(pluginId: string, approvalId?: string): Promise<PluginInstallResult> { const result = await json<PluginInstallResult>(`/marketplace/plugins/${encodeURIComponent(pluginId)}/install?workspaceId=${workspaceId}`, approvalId ? { method: "POST", body: JSON.stringify({ approvalId }) } : { method: "POST" }); resetShellBootstrap(); return result; }
+export async function publishMarketplaceRelease(pluginId: string, file: File, fields?: { category?: string; source?: string; status?: "draft" | "published" | "deprecated"; demoAvailable?: boolean }): Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }> { const body = new FormData(); body.append("file", file); if (fields?.category) body.append("category", fields.category); if (fields?.source) body.append("source", fields.source); if (fields?.status) body.append("status", fields.status); if (fields?.demoAvailable !== undefined) body.append("demoAvailable", String(fields.demoAvailable)); const response = await fetch(`${coreUrl}/marketplace/plugins/${encodeURIComponent(pluginId)}/releases`, { method: "POST", body, credentials: "include" }); if (response.status === 401) throw new CoreAuthRequiredError(); if (!response.ok) throw new Error(`Marketplace release publish failed: ${response.status}`); return response.json() as Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }>; }
+export async function loadRuntimeTools(): Promise<ToolContribution[]> { return (await loadShellBootstrap()).tools; }
+export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const response = await fetch(`${coreUrl}/plugins/upload`, { method: "POST", body, credentials: "include" }); if (!response.ok && response.status !== 202) throw new Error(`Plugin upload failed: ${response.status}`); resetShellBootstrap(); return response.json() as Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }>; }
+export async function approveInstall(approvalId: string): Promise<PluginManifest> { const manifest = (await json<{ status: string; manifest: PluginManifest }>("/plugins/install", { method: "POST", body: JSON.stringify({ workspaceId, approvalId }) })).manifest; resetShellBootstrap(); return manifest; }
 export async function grantCapabilities(pluginId: string, capabilities: string[]): Promise<void> { await json("/plugins/grants", { method: "POST", body: JSON.stringify({ workspaceId, pluginId, capabilities }) }); }
