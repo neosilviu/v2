@@ -61,6 +61,10 @@ export async function updateAuthProfile(input: { name: string }): Promise<void> 
   await authJson<unknown>("/api/auth/update-user", { method: "POST", body: JSON.stringify({ name: input.name.trim() || null }) });
 }
 
+export async function ownerSetupSignUp(input: { token: string; email: string; name: string; password: string }): Promise<void> {
+  await authJson<unknown>("/setup/owner/sign-up/email", { method: "POST", body: JSON.stringify(input) });
+}
+
 export async function signOutAuth(): Promise<void> {
   const response = await fetch(new URL("/api/auth/sign-out", authUrl), { method: "POST", credentials: "include", headers: { "content-type": "application/json" } });
   if (!response.ok) throw new Error(`Auth sign out failed: ${response.status}`);

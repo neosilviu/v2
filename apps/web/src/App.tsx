@@ -5,7 +5,8 @@ import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
 import { consumeOwnerSetup, decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadLayout, loadOwnerSetup, loadRuntimeTools, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe } from "./api";
-import { signOutAuth, updateAuthProfile } from "./auth-api";
+import { ownerSetupSignUp, signOutAuth, updateAuthProfile } from "./auth-api";
+import { authClient } from "./auth-client";
 import { composeShellFromSurfaces, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { CommandPalette } from "./platform/CommandPalette";
@@ -352,6 +353,11 @@ function OwnerSetupPage() {
   const [session, setSession] = useState<CoreSession | null>(null);
   const [setup, setSetup] = useState<{ workspaceId: string; ownerEmail: string; status: string; expiresAt: string } | null>(null);
   const [status, setStatus] = useState("Checking owner setup link...");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [existingPassword, setExistingPassword] = useState("");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     void Promise.all([loadCoreSession().catch(() => null), token ? loadOwnerSetup(token) : Promise.reject(new Error("missing"))])
@@ -374,6 +380,53 @@ function OwnerSetupPage() {
     }
   };
 
+  const createOwner = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!setup || setup.status !== "pending") return;
+    if (password.length < 8) {
+      setStatus("Choose a password with at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setStatus("Password confirmation does not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      setStatus("Creating owner account...");
+      await ownerSetupSignUp({ token, email: setup.ownerEmail, name: name.trim() || setup.ownerEmail, password });
+      setStatus("Owner account created. Opening workspace...");
+      window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(setup.workspaceId)}`);
+    } catch {
+      setStatus("Owner account could not be created. If the account already exists, sign in below and activate the setup link.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signInExisting = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!setup || setup.status !== "pending") return;
+    setBusy(true);
+    try {
+      setStatus("Signing in owner account...");
+      const result = await authClient.signIn.email({ email: setup.ownerEmail, password: existingPassword });
+      if (result.error) {
+        setStatus("Sign-in failed for the authorized owner email.");
+        return;
+      }
+      const nextSession = await loadCoreSession();
+      setSession(nextSession);
+      await consumeOwnerSetup(token);
+      setStatus("Owner activated. Opening workspace...");
+      window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(setup.workspaceId)}`);
+    } catch {
+      setStatus("Existing owner account could not activate this setup link.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const signedInEmail = session?.user?.email ?? "";
   const canConsume = Boolean(setup && setup.status === "pending" && session?.authenticated && signedInEmail.toLowerCase() === setup.ownerEmail.toLowerCase());
   const loginTarget = `/login?redirectTo=${encodeURIComponent(`/setup/owner?token=${encodeURIComponent(token)}`)}`;
@@ -387,7 +440,22 @@ function OwnerSetupPage() {
         <p>Owner email: {setup.ownerEmail}</p>
         <p>Expires: {new Date(setup.expiresAt).toLocaleString()}</p>
       </div> : null}
-      {session?.authenticated ? <p className="login-status">Signed in as {signedInEmail}</p> : <div className="actions"><Button onClick={() => window.location.assign(loginTarget)}>Sign in to continue</Button></div>}
+      {setup?.status === "expired" ? <p className="login-status">This setup token expired. Ask an administrator to issue a new provisioning request.</p> : null}
+      {setup?.status === "consumed" ? <p className="login-status">This setup token was already consumed. Sign in to the workspace owner account.</p> : null}
+      {setup?.status === "revoked" ? <p className="login-status">This setup token was revoked. Use the latest owner setup email.</p> : null}
+      {setup?.status === "pending" && !session?.authenticated ? <form className="profile-form" onSubmit={(event) => void createOwner(event)}>
+        <label className="field">Authorized email<input type="email" value={setup.ownerEmail} readOnly /></label>
+        <label className="field">Name<input value={name} onChange={(event) => setName(event.currentTarget.value)} autoComplete="name" /></label>
+        <label className="field">Password<input type="password" value={password} onChange={(event) => setPassword(event.currentTarget.value)} autoComplete="new-password" required /></label>
+        <label className="field">Confirm password<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.currentTarget.value)} autoComplete="new-password" required /></label>
+        <div className="actions"><Button className="primary" type="submit" disabled={busy}>Create owner account</Button></div>
+      </form> : null}
+      {setup?.status === "pending" && !session?.authenticated ? <form className="profile-form" onSubmit={(event) => void signInExisting(event)}>
+        <p className="login-status">Already have this account?</p>
+        <label className="field">Password<input type="password" value={existingPassword} onChange={(event) => setExistingPassword(event.currentTarget.value)} autoComplete="current-password" required /></label>
+        <div className="actions"><Button type="submit" disabled={busy}>Sign in and activate</Button><Button type="button" onClick={() => window.location.assign(loginTarget)}>Use full sign-in page</Button></div>
+      </form> : null}
+      {session?.authenticated ? <p className="login-status">Signed in as {signedInEmail}</p> : null}
       {session?.authenticated && setup && signedInEmail.toLowerCase() !== setup.ownerEmail.toLowerCase() ? <p className="login-status">Sign in with the invited owner email to activate this workspace.</p> : null}
       <div className="actions"><Button className="primary" disabled={!canConsume} onClick={() => void consume()}>Activate owner access</Button></div>
     </SurfaceCard>
