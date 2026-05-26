@@ -23,6 +23,8 @@ const ttlHours = Number(value("--ttl-hours", "24")) || 24;
 const local = flag("--local");
 const execute = flag("--execute") || local;
 const printToken = flag("--print-token") || flag("--break-glass-print-token");
+const coreUrl = value("--core-url", process.env.CORE_PROVISION_URL || "");
+const provisioningSecret = value("--provisioning-secret", process.env.CORE_PROVISIONING_SECRET || "");
 
 if (!ownerEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ownerEmail)) {
   console.error("Missing or invalid --owner email.");
@@ -34,6 +36,32 @@ const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
 const requestId = crypto.randomUUID();
 const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
 const setupUrl = `/setup/owner?token=${encodeURIComponent(token)}`;
+
+if (!local && coreUrl) {
+  const response = await fetch(new URL("/internal/provision/workspace", coreUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(provisioningSecret ? { "x-v2-provisioning-secret": provisioningSecret } : {}) },
+    body: JSON.stringify({ workspaceId, workspaceName, ownerEmail, ttlHours, setupBaseUrl: value("--setup-base-url", process.env.SETUP_BASE_URL || ""), breakGlassPrintToken: printToken }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error(JSON.stringify(payload, null, 2));
+    process.exit(1);
+  }
+  console.log("Workspace provisioning request created through Core.");
+  console.log(`Workspace: ${workspaceId}`);
+  console.log(`Owner: ${ownerEmail}`);
+  console.log(`Expires: ${payload.expiresAt ?? expiresAt}`);
+  console.log(`Mail event: ${payload.mailEventId ?? "unknown"}`);
+  if (printToken && payload.setupUrl) console.log(`Break-glass one-time setup URL: ${payload.setupUrl}`);
+  else console.log("One-time setup URL suppressed. Core Mail Runtime sent owner_setup.");
+  process.exit(0);
+}
+
+if (!local && !coreUrl) {
+  console.error("Production provisioning must call Core. Set --core-url or CORE_PROVISION_URL. Use --local only for development D1 bootstrap.");
+  process.exit(1);
+}
 
 const permissions = [
   "workspace.read", "workspace.admin", "workspace.members.manage", "workspace.settings.read", "workspace.settings.write",

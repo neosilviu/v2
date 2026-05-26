@@ -61,6 +61,18 @@ async function expectOk(name, promise, accept = (status) => status >= 200 && sta
     throw error;
   }
 }
+async function waitForService(name, base, path) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      const response = await fetch(new URL(path, base));
+      if (response.ok) return;
+    } catch {
+      // local wrangler can briefly restart while migrations/catalog seed run
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`${name} did not become ready after local setup`);
+}
 
 function prepareAuthPolicyOpen() {
   const sql = `INSERT INTO auth_policies (id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin, created_at, updated_at)
@@ -87,9 +99,26 @@ function coreSqlLocal(sql) {
   if (result.status !== 0) throw new Error((result.stderr || result.stdout || "wrangler d1 execute failed").trim());
   return result.stdout;
 }
+function authSqlLocal(sql) {
+  const result = spawnSync("pnpm", ["--dir", "apps/auth-worker", "exec", "wrangler", "d1", "execute", "v2-auth", "--local", "--command", sql], { encoding: "utf8", stdio: "pipe" });
+  if (result.status !== 0) throw new Error((result.stderr || result.stdout || "wrangler d1 execute failed").trim());
+  return result.stdout;
+}
+function applyLocalMigrations() {
+  for (const [directory, database] of [["apps/auth-worker", "v2-auth"], ["apps/core-worker", "v2-core"], ["plugins/website-studio", "v2-website-studio"]]) {
+    const result = spawnSync("pnpm", ["--dir", directory, "exec", "wrangler", "d1", "migrations", "apply", database, "--local"], { encoding: "utf8", stdio: "pipe" });
+    if (result.status !== 0) throw new Error((result.stderr || result.stdout || `local migrations failed for ${database}`).trim());
+  }
+  record("Local D1 migrations applied", "ok");
+}
+function syncLocalMarketplace() {
+  const result = spawnSync("pnpm", ["marketplace:sync"], { encoding: "utf8", stdio: "pipe" });
+  if (result.status !== 0) throw new Error((result.stderr || result.stdout || "marketplace sync failed").trim());
+  record("Local Marketplace catalog synced", "ok");
+}
 
-function provisionWorkspaceLocal() {
-  const result = spawnSync("node", ["scripts/provision-workspace.mjs", "--local", "--break-glass-print-token", "--workspace", workspaceId, "--name", "Local Smoke Workspace", "--owner", email, "--ttl-hours", "2"], { encoding: "utf8", stdio: "pipe" });
+function provisionWorkspaceLocal(targetWorkspaceId = workspaceId, owner = email) {
+  const result = spawnSync("node", ["scripts/provision-workspace.mjs", "--local", "--break-glass-print-token", "--workspace", targetWorkspaceId, "--name", "Local Smoke Workspace", "--owner", owner, "--ttl-hours", "2"], { encoding: "utf8", stdio: "pipe" });
   if (result.status !== 0) throw new Error((result.stderr || result.stdout || "workspace provisioning failed").trim());
   const match = result.stdout.match(/Break-glass one-time setup URL: \/setup\/owner\?token=([^\s]+)/);
   if (!match?.[1]) throw new Error(`provisioning output did not include a setup token: ${result.stdout}`);
@@ -185,7 +214,66 @@ async function exerciseMarketplace() {
     else throw new Error(`Plugin ${pluginId} install failed: ${install.response.status} ${JSON.stringify(install.body).slice(0, 240)}`);
     await expectOk(`Plugin ${pluginId} deactivate`, request(coreUrl, "/plugins/deactivate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }));
     await expectOk(`Plugin ${pluginId} reactivate`, request(coreUrl, "/plugins/activate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }));
+    if (pluginId === "website-studio") await exerciseWebsiteStudioRuntime();
   }
+}
+
+async function exerciseWebsiteStudioRuntime() {
+  await expectOk("Website Studio capability grants separated from RBAC", request(coreUrl, "/plugins/grants", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId, pluginId: "website-studio", capabilities: ["website.pages.read", "website.pages.write", "website.publish", "website.context.share"] }),
+  }));
+  const defaults = await expectOk("Website Studio defaults through generic runtime dispatch", request(coreUrl, "/tools/execute", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId, toolId: "website.installDefaults" }),
+  }));
+  const pageId = defaults.body?.result?.page?.id;
+  if (!pageId) throw new Error(`Website defaults did not return a page id: ${JSON.stringify(defaults.body).slice(0, 240)}`);
+  await expectOk("Website Studio list through generic runtime dispatch", request(coreUrl, "/tools/execute", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId, toolId: "website.listPages" }),
+  }));
+  const publish = await request(coreUrl, "/tools/execute", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId, toolId: "website.publishPage", input: { pageId } }),
+  });
+  if (publish.response.status !== 202 || !publish.body?.approvalId) throw new Error(`Website publish should require approval, got ${publish.response.status} ${JSON.stringify(publish.body).slice(0, 240)}`);
+  record("Website publish requires approval", "ok", publish.body.approvalId);
+  await expectOk("Website publish approval decision", request(coreUrl, "/tool-approvals/decision", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId, approvalId: publish.body.approvalId, decision: "approved" }),
+  }));
+  await expectOk("Website publish executes after approval", request(coreUrl, "/tools/execute", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId, toolId: "website.publishPage", input: { pageId }, approvalId: publish.body.approvalId }),
+  }));
+  const replay = await request(coreUrl, "/tools/execute", {
+    method: "POST",
+    body: JSON.stringify({ workspaceId, toolId: "website.publishPage", input: { pageId }, approvalId: publish.body.approvalId }),
+  });
+  if (replay.response.status !== 403) throw new Error(`Website publish approval replay should be 403, got ${replay.response.status}`);
+  record("Website publish approval replay denied", "ok");
+}
+
+async function exerciseOwnerSetupSignupWithRegistrationDisabled() {
+  const targetWorkspace = `${workspaceId}-new-owner`;
+  const ownerEmail = `new-${Date.now()}@example.local`;
+  const ownerPassword = "LocalDevPassword456!";
+  authSqlLocal(`INSERT INTO auth_policies (id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin, created_at, updated_at)
+VALUES ('global', NULL, 'disabled', 0, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO UPDATE SET registration_mode = 'disabled', updated_at = CURRENT_TIMESTAMP;`);
+  cookies.clear();
+  const token = provisionWorkspaceLocal(targetWorkspace, ownerEmail);
+  await expectOk("Owner setup API creates account with registration disabled", request(authUrl, "/setup/owner/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ token, email: ownerEmail, name: "New Smoke Owner", password: ownerPassword }),
+  }));
+  await expectOk("New owner session reaches Core", request(coreUrl, "/session"));
+  const replay = await request(coreUrl, "/setup/owner/consume", { method: "POST", body: JSON.stringify({ token }) });
+  if (replay.response.status !== 409) throw new Error(`owner setup replay should be 409, got ${replay.response.status}`);
+  record("Owner setup token replay denied", "ok");
+  cookies.clear();
+  if (prepareAuthDb) prepareAuthPolicyOpen();
 }
 
 async function main() {
@@ -193,6 +281,10 @@ async function main() {
   await expectOk("Web /login route", fetch(new URL("/login", webUrl)).then(async (response) => ({ response, body: await response.text() })));
   await expectOk("Core health", request(coreUrl, "/health"));
   await expectOk("Auth public login config", request(authUrl, `/public/auth/login-config?workspaceId=${encodeURIComponent(workspaceId)}`));
+  applyLocalMigrations();
+  if (installPlugins) syncLocalMarketplace();
+  await waitForService("Core", coreUrl, "/health");
+  await waitForService("Auth", authUrl, "/health");
   const anonymousSettings = await request(coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/tabs`);
   if (anonymousSettings.response.status !== 401) throw new Error(`anonymous settings tabs should be 401, got ${anonymousSettings.response.status}`);
   record("Anonymous Settings is private-by-default", "ok");
@@ -205,6 +297,8 @@ async function main() {
   assertNoOwnerLocal();
   const setupToken = provisionWorkspaceLocal();
   await expectOk("Owner setup consumed explicitly", request(coreUrl, "/setup/owner/consume", { method: "POST", body: JSON.stringify({ token: setupToken }) }));
+  await exerciseOwnerSetupSignupWithRegistrationDisabled();
+  await ensureSignedIn();
   await expectOk("Runtime Settings tabs with session", request(coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/tabs`));
   await exerciseAuthPublication();
   if (installPlugins) await exerciseMarketplace();

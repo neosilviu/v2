@@ -22,6 +22,21 @@ jobs:
       - run: pnpm build:analyze
       - run: pnpm test:generated -- --check-migrations
       - run: pnpm guard:architecture
+      - name: Production-like local smoke
+        run: |
+          pnpm dev > /tmp/v2-dev.log 2>&1 &
+          echo $! > /tmp/v2-dev.pid
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8787/health >/dev/null && curl -fsS http://localhost:8788/health >/dev/null && curl -fsS http://localhost:5173/login >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          pnpm smoke:local -- --prepare-auth-db
+        shell: bash
+      - name: Stop local smoke services
+        if: always()
+        run: pnpm dev:stop || true
       - name: Upload build analysis report
         if: always()
         uses: actions/upload-artifact@v4

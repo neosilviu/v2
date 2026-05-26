@@ -132,6 +132,8 @@ function testRuntimeFirstArchitecture() {
     }
   }
   const coreIndex = fs.readFileSync(path.join(root, "apps/core-worker/src/index.ts"), "utf8");
+  const coreEnv = fs.readFileSync(path.join(root, "apps/core-worker/src/env.ts"), "utf8");
+  const coreWrangler = fs.readFileSync(path.join(root, "apps/core-worker/wrangler.jsonc"), "utf8");
   for (const route of ["/runtime/plugins", "/runtime/tools", "/runtime/providers", "/plugins/installed", "/workspaces/:workspaceId/plugins", "/workspaces/:workspaceId/settings/:scope", "/workspaces/:workspaceId/layout"]) {
     const routePosition = coreIndex.indexOf(`app.get("${route}"`);
     if (routePosition < 0) fail(`Core route ${route} is missing from static auth matrix`);
@@ -141,6 +143,10 @@ function testRuntimeFirstArchitecture() {
     }
   }
   if (coreIndex.includes("requireShellRead")) fail("Core still contains requireShellRead origin-based read bypass");
+  for (const forbidden of ["WEBSITE_RUNTIME", "websiteStudioDispatch", "website.listPages", "website.publishPage", "website.updateSection", "website.installDemoData", "website.readPageContext"]) {
+    if (coreIndex.includes(forbidden) || coreEnv.includes(forbidden) || coreWrangler.includes(forbidden)) fail(`Core contains feature-specific runtime dispatch artifact '${forbidden}'`);
+  }
+  if (!coreEnv.includes("PLUGIN_RUNTIME") || !coreIndex.includes("pluginRuntimeDispatch")) fail("Core is missing the generic plugin runtime dispatch boundary");
   for (const route of ["/workspaces/:workspaceId/settings/tabs", "/workspaces/:workspaceId/settings/tabs/:tabId", "/workspaces/:workspaceId/settings/runtime/data", "/workspaces/:workspaceId/settings/runtime/actions"]) {
     if (!coreIndex.includes(route)) fail(`Core runtime Settings route ${route} is missing`);
   }
@@ -207,6 +213,7 @@ function testProductionRuntimeHardening() {
   }
   if (!coreIndex.includes("verifyDnsDomain") || !coreIndex.includes("cloudflare-dns.com/dns-query") || coreIndex.includes("input.status !== \"draft\" && input.status !== \"verifying\" && input.status !== \"verified\"")) fail("Domain verification can still bypass DNS verification");
   if (!websiteWorker.includes("plugin-runtime.internal") || !websiteWorker.includes("not_authorized")) fail("Website Studio worker is not restricted to the internal runtime binding");
+  if (coreIndex.includes("websiteStudioDispatch") || coreIndex.includes("WEBSITE_RUNTIME") || coreIndex.includes("website.publishPage")) fail("Core contains Website Studio feature-specific dispatch");
   pass("Production runtime hardening source scan completed");
 }
 
