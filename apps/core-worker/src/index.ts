@@ -64,6 +64,7 @@ app.get("/runtime/tools", async (c) => { const denied = requireRead(c); if (deni
 app.get("/runtime/providers", async (c) => { const denied = requireRead(c); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const active = new Set(await repo.activePlugins(c.req.query("workspaceId") ?? defaultWorkspaceId)); return c.json({ providers: runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.providers) }); });
 app.get("/plugins/installed", async (c) => { const denied = requireRead(c); if (denied) return denied; return c.json({ plugins: await new CoreRepository(c.env.CORE_DB).installed() }); });
 app.get("/workspaces/:workspaceId/plugins", async (c) => { const denied = requireRead(c); if (denied) return denied; return c.json({ active: await new CoreRepository(c.env.CORE_DB).activePlugins(c.req.param("workspaceId")) }); });
+app.get("/workspaces/:workspaceId/ui/surfaces", async (c) => { const denied = requireRead(c); if (denied) return denied; return c.json({ surfaces: await new CoreRepository(c.env.CORE_DB).workspaceUiSurfaces(c.req.param("workspaceId")) }); });
 app.get("/marketplace/plugins", async (c) => {
   const repo = new CoreRepository(c.env.CORE_DB);
   const workspaceId = c.req.query("workspaceId");

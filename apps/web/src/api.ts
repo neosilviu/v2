@@ -1,4 +1,5 @@
 import type { PluginBundle, PluginManifest, ToolContribution } from "@v2/plugin-contracts";
+import type { SurfaceContribution } from "@v2/plugin-contracts";
 import type { ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
@@ -29,6 +30,7 @@ export function runtimeSurfaceUrl(surfaceId: string): string { return `${coreUrl
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(`/workspaces/${workspaceId}/layout`)).layout; }
 export async function saveLayout(state: ShellState): Promise<void> { await json("/layouts", { method: "PUT", body: JSON.stringify({ workspaceId, layout: { zones: state.zones, placements: state.placements } }) }); }
 export async function loadActivePlugins(): Promise<string[]> { return (await json<{ active: string[] }>(`/workspaces/${workspaceId}/plugins`)).active; }
+export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> { return (await json<{ surfaces: SurfaceContribution[] }>(`/workspaces/${workspaceId}/ui/surfaces`)).surfaces; }
 export async function activatePlugin(pluginId: string): Promise<void> { await json("/plugins/activate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); }
 export async function deactivatePlugin(pluginId: string): Promise<void> { await json("/plugins/deactivate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); }
 export async function loadSettings(scope: "platform" | `plugin:${string}`): Promise<Record<string, unknown>> { return (await json<{ settings: Record<string, unknown> }>(`/workspaces/${workspaceId}/settings/${encodeURIComponent(scope)}`)).settings; }

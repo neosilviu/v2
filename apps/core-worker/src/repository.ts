@@ -419,6 +419,29 @@ export class CoreRepository {
     return rows.results.map((row) => ({ workspaceId: row.workspace_id, pluginId: row.plugin_id, active: row.active === 1, updatedAt: row.updated_at }));
   }
 
+  async workspaceUiSurfaces(workspaceId: string): Promise<SurfaceContribution[]> {
+    const rows = await this.db.prepare(`SELECT c.plugin_id, c.contribution_id, c.zone_id, c.template_id, c.schema_json, a.zone_override, a.order_index
+      FROM workspace_ui_activations a
+      INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
+      INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
+      WHERE a.workspace_id = ? AND a.enabled = 1 AND c.access_mode != 'public-candidate'
+      ORDER BY a.order_index, c.contribution_id`)
+      .bind(workspaceId)
+      .all<{ plugin_id: string; contribution_id: string; zone_id: string | null; template_id: string; schema_json: string; zone_override: string | null; order_index: number }>();
+    return rows.results.map((row) => {
+      const zone = row.zone_override ?? row.zone_id ?? "workspace.main";
+      const schema = declarativePageContributionSchema.parse(JSON.parse(row.schema_json));
+      const kind = zone.startsWith("settings.") ? "settings" : zone === "assistant.right" ? "panel" : "page";
+      return {
+        id: row.contribution_id,
+        title: schema.title,
+        zone,
+        kind,
+        renderer: { mode: "declarative", schema },
+      } satisfies SurfaceContribution;
+    });
+  }
+
   async declaredCapabilities(pluginId: string): Promise<string[]> {
     const rows = await this.db.prepare("SELECT capability_id FROM plugin_capabilities WHERE plugin_id = ?").bind(pluginId).all<{ capability_id: string }>();
     return rows.results.map((row) => row.capability_id);

@@ -4,8 +4,8 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadInstalledPlugins, loadLayout, loadRuntimeTools, runtimeSurfaceUrl, saveLayout } from "./api";
-import { composeShell, emptyShell } from "./shell";
+import { decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadInstalledPlugins, loadLayout, loadRuntimeTools, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout } from "./api";
+import { composeShellFromSurfaces, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { CommandPalette } from "./platform/CommandPalette";
 import { PluginManagerPanel } from "./platform/PluginManagerPanel";
@@ -103,12 +103,12 @@ export function App() {
         return null;
       }
       setAuthRequired(false);
-      return Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadRuntimeTools(), loadLayout()]);
+      return Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadRuntimeTools(), loadLayout(), loadWorkspaceUiSurfaces()]);
     }).then((result) => {
       if (!result) return;
-      const [installed, activeIds, runtimeTools, layout] = result;
+      const [installed, activeIds, runtimeTools, layout, runtimeSurfaces] = result;
       const active = new Set(activeIds);
-      const composed = composeShell(installed.filter((plugin) => active.has(plugin.id)));
+      const composed = composeShellFromSurfaces(runtimeSurfaces);
       setPlugins(installed);
       setActivePluginIds(active);
       setTools(runtimeTools);
@@ -183,7 +183,7 @@ export function App() {
       const active = new Set(activeIds);
       setPlugins(installed);
       setActivePluginIds(active);
-      setShell(composeShell(installed.filter((plugin) => active.has(plugin.id))));
+      setShell(composeShellFromSurfaces(await loadWorkspaceUiSurfaces()));
       setTools(await loadRuntimeTools());
       emit(notification("success", "Plugins refreshed", "Runtime contributions have been reloaded."));
     } catch {
