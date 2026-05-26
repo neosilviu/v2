@@ -8,7 +8,6 @@ import type { CoreEnv } from "./env";
 import { CoreRepository } from "./repository";
 
 type CoreVariables = { user: CoreSessionUser | null; internal: boolean };
-type SurfaceContext = Parameters<ReturnType<typeof createSurfaceRoutes>["get"]>[1] extends never ? never : never;
 
 function frameAncestors(env: CoreEnv): string {
   const configured = allowedOrigins(env)
