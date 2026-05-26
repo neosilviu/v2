@@ -28,7 +28,7 @@ function SlotRenderer({ slot, contributions }: { slot: LoginSlot; contributions:
   return <div className="login-slot" data-slot={slot}>{items.map((item) => <DeclarativeBlocks key={item.contributionId} schema={item.renderer} />)}</div>;
 }
 
-function PasswordMethod({ method, passkeyAvailable }: { method: PublicLoginMethod; passkeyAvailable: boolean }) {
+function PasswordMethod({ method, passkeyAvailable, allowSignup }: { method: PublicLoginMethod; passkeyAvailable: boolean; allowSignup: boolean }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -38,6 +38,10 @@ function PasswordMethod({ method, passkeyAvailable }: { method: PublicLoginMetho
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setStatus("authenticating");
+    if (mode === "signup" && !allowSignup) {
+      setStatus("Registration is not open.");
+      return;
+    }
     const result = mode === "signin"
       ? await authClient.signIn.email({ email, password })
       : await authClient.signUp.email({ name, email, password });
@@ -54,7 +58,7 @@ function PasswordMethod({ method, passkeyAvailable }: { method: PublicLoginMetho
     {mode === "signup" ? <label>Name<input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" required /></label> : null}
     <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete={passkeyAvailable ? "username webauthn" : "username"} required /></label>
     <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "signin" ? "current-password" : "new-password"} required /></label>
-    <div className="login-actions"><Button className="primary" type="submit">{mode === "signin" ? "Continue" : "Create account"}</Button><Button type="button" onClick={() => setMode(mode === "signin" ? "signup" : "signin")}>{mode === "signin" ? "Use sign up" : "Use sign in"}</Button></div>
+    <div className="login-actions"><Button className="primary" type="submit">{mode === "signin" ? "Continue" : "Create account"}</Button>{allowSignup ? <Button type="button" onClick={() => setMode(mode === "signin" ? "signup" : "signin")}>{mode === "signin" ? "Use sign up" : "Use sign in"}</Button> : null}</div>
     {status ? <p className="login-status">{status}</p> : null}
   </form>;
 }
@@ -99,7 +103,7 @@ function LoginMethods({ config }: { config: AuthPublicLoginConfig }) {
   const byType = (type: PublicLoginMethod["type"]) => methods.filter((method) => method.type === type);
 
   return <>
-    {byType("password").map((method) => <PasswordMethod key={method.id} method={method} passkeyAvailable={passkeySupported && config.features.passkey} />)}
+    {byType("password").map((method) => <PasswordMethod key={method.id} method={method} passkeyAvailable={passkeySupported && config.features.passkey} allowSignup={config.policy.registrationMode === "open"} />)}
     {byType("social").map((method) => <SocialMethod key={method.id} method={method} />)}
     {byType("passkey").map((method) => <PasskeyMethod key={method.id} method={method} supported={passkeySupported} />)}
   </>;

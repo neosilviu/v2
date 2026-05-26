@@ -1,4 +1,4 @@
-import { authPublicLoginConfigSchema, authMethodWriteSchema, authUiContributionSchema, authUiContributionWriteSchema, type AuthPublicLoginConfig } from "@v2/auth-contracts";
+import { authPolicySchema, authPolicyWriteSchema, authPublicLoginConfigSchema, authMethodWriteSchema, authUiContributionSchema, authUiContributionWriteSchema, type AuthPublicLoginConfig } from "@v2/auth-contracts";
 
 type AuthMethodRow = {
   id: string;
@@ -27,6 +27,16 @@ type AuthUiContributionRow = {
   created_at: string;
   updated_at: string;
 };
+type AuthPolicyRow = {
+  id: string;
+  workspace_id: string | null;
+  registration_mode: "disabled" | "open" | "invitation-only" | "admin-created";
+  require_email_verification: number;
+  allow_passkey_registration: number;
+  allow_passkey_signin: number;
+  created_at: string;
+  updated_at: string;
+};
 
 export type RuntimeAuthProviderState = {
   github: boolean;
@@ -46,10 +56,14 @@ export class AuthRuntimeRepository {
         VALUES ('password', NULL, 'password', NULL, 'Email and password', 'enabled', 1, 10, NULL)`),
       this.db.prepare(`INSERT OR IGNORE INTO auth_methods
         (id, workspace_id, type, provider_id, title, status, public_visible, display_order, configuration_ref)
-        VALUES ('passkey', NULL, 'passkey', NULL, 'Passkey', 'enabled', 1, 30, NULL)`),
+        VALUES ('passkey', NULL, 'passkey', NULL, 'Passkey', 'draft', 0, 30, NULL)`),
       ...(providerState.github ? [this.db.prepare(`INSERT OR IGNORE INTO auth_methods
         (id, workspace_id, type, provider_id, title, status, public_visible, display_order, configuration_ref)
-        VALUES ('social.github', NULL, 'social', 'github', 'GitHub', 'enabled', 1, 20, 'env:GITHUB_CLIENT_ID')`)] : []),
+        VALUES ('social.github', NULL, 'social', 'github', 'GitHub', 'draft', 0, 20, 'env:GITHUB_CLIENT_ID')`)] : []),
+      this.db.prepare("UPDATE auth_methods SET status = 'draft', public_visible = 0, updated_at = CURRENT_TIMESTAMP WHERE type IN ('passkey', 'social') AND workspace_id IS NULL"),
+      this.db.prepare(`INSERT OR IGNORE INTO auth_policies
+        (id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin)
+        VALUES ('global', NULL, 'disabled', 0, 0, 0)`),
       this.db.prepare(`INSERT OR IGNORE INTO auth_ui_contributions
         (id, workspace_id, contribution_id, slot, template_id, schema_json, renderer_json, status, display_order)
         VALUES ('login.header.default', NULL, 'login.header.default', 'login.header', 'auth.login', ?, ?, 'published', 0)`)
@@ -59,6 +73,27 @@ export class AuthRuntimeRepository {
         VALUES ('login.footer.default', NULL, 'login.footer.default', 'login.footer', 'auth.login', ?, ?, 'published', 100)`)
         .bind(JSON.stringify({ id: "login.footer.default", slot: "login.footer", displayOrder: 100, blocks: [{ type: "text", text: "Auth is handled by the dedicated Auth service.", tone: "muted" }] }), JSON.stringify({ body: [{ type: "text", text: "Auth is handled by the dedicated Auth service.", tone: "muted" }] })),
     ]);
+  }
+
+  async publicPolicy(workspaceId?: string | null) {
+    const workspace = this.scoped(workspaceId);
+    const row = await this.db.prepare(`SELECT id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin, created_at, updated_at
+      FROM auth_policies
+      WHERE workspace_id IS NULL OR workspace_id = ?
+      ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END
+      LIMIT 1`)
+      .bind(workspace, workspace)
+      .first<AuthPolicyRow>();
+    return authPolicySchema.parse(row ? {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      registrationMode: row.registration_mode,
+      requireEmailVerification: row.require_email_verification === 1,
+      allowPasskeyRegistration: row.allow_passkey_registration === 1,
+      allowPasskeySignin: row.allow_passkey_signin === 1,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    } : { id: "global", workspaceId: null, registrationMode: "disabled", requireEmailVerification: false, allowPasskeyRegistration: false, allowPasskeySignin: false });
   }
 
   async publicLoginConfig(workspaceId?: string | null, providerState: RuntimeAuthProviderState = { github: false }): Promise<AuthPublicLoginConfig> {
@@ -76,6 +111,7 @@ export class AuthRuntimeRepository {
       ORDER BY display_order, slot`)
       .bind(workspace)
       .all<AuthUiContributionRow>();
+    const policy = await this.publicPolicy(workspace);
     const methods = methodRows.results.map((row) => ({
       id: row.id,
       workspaceId: row.workspace_id,
@@ -105,14 +141,21 @@ export class AuthRuntimeRepository {
         updatedAt: row.updated_at,
       });
     });
+    const publishedMethods = methods.filter((method) => method.type !== "passkey" || policy.allowPasskeySignin);
     return authPublicLoginConfigSchema.parse({
       workspaceId: workspace,
-      methods,
+      methods: publishedMethods,
       uiContributions,
       features: {
-        password: methods.some((method) => method.type === "password"),
-        passkey: methods.some((method) => method.type === "passkey"),
-        social: methods.some((method) => method.type === "social"),
+        password: publishedMethods.some((method) => method.type === "password"),
+        passkey: publishedMethods.some((method) => method.type === "passkey") && policy.allowPasskeySignin,
+        social: publishedMethods.some((method) => method.type === "social"),
+      },
+      policy: {
+        registrationMode: policy.registrationMode,
+        requireEmailVerification: policy.requireEmailVerification,
+        allowPasskeyRegistration: policy.allowPasskeyRegistration,
+        allowPasskeySignin: policy.allowPasskeySignin,
       },
     });
   }
@@ -157,5 +200,24 @@ export class AuthRuntimeRepository {
       .bind(id, request.workspaceId ?? null, request.contributionId, request.slot, request.templateId, JSON.stringify(request.schema ?? { id: request.contributionId, slot: request.slot, displayOrder: request.displayOrder, blocks: request.renderer.body }), JSON.stringify(request.renderer), request.status, request.displayOrder)
       .run();
     return { id, ...request };
+  }
+
+  async upsertPolicy(input: unknown) {
+    const request = authPolicyWriteSchema.parse(input);
+    const workspace = request.workspaceId ?? null;
+    const id = workspace ? `workspace:${workspace}` : "global";
+    await this.db.prepare(`INSERT INTO auth_policies
+      (id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        workspace_id = excluded.workspace_id,
+        registration_mode = excluded.registration_mode,
+        require_email_verification = excluded.require_email_verification,
+        allow_passkey_registration = excluded.allow_passkey_registration,
+        allow_passkey_signin = excluded.allow_passkey_signin,
+        updated_at = CURRENT_TIMESTAMP`)
+      .bind(id, workspace, request.registrationMode, request.requireEmailVerification ? 1 : 0, request.allowPasskeyRegistration ? 1 : 0, request.allowPasskeySignin ? 1 : 0)
+      .run();
+    return { id, ...request, workspaceId: workspace };
   }
 }

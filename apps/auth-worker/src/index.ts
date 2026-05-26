@@ -63,6 +63,19 @@ app.post("/admin/auth/ui-contributions", async (c) => {
   const contribution = await new AuthRuntimeRepository(admin.config.db).upsertUiContribution(await c.req.json());
   return c.json({ contribution }, 201);
 });
+app.post("/admin/auth/policies", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const policy = await new AuthRuntimeRepository(admin.config.db).upsertPolicy(await c.req.json());
+  return c.json({ policy }, 201);
+});
+app.post("/api/auth/sign-up/email", async (c) => {
+  const parsed = parseAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const policy = await new AuthRuntimeRepository(parsed.config.db).publicPolicy(null);
+  if (policy.registrationMode !== "open") return c.json(errorResponse(failure("not_authorized", "Password registration is not open.")), 403);
+  return createAuth(parsed.config).handler(c.req.raw);
+});
 app.on(["POST", "GET"], "/api/auth/*", (c) => {
   const parsed = parseAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);

@@ -111,6 +111,19 @@ export const authUiContributions = sqliteTable("auth_ui_contributions", {
   orderIdx: index("auth_ui_contributions_order_idx").on(table.workspaceId, table.displayOrder),
 }));
 
+export const authPolicies = sqliteTable("auth_policies", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id"),
+  registrationMode: text("registration_mode", { enum: ["disabled", "open", "invitation-only", "admin-created"] }).notNull().default("disabled"),
+  requireEmailVerification: integer("require_email_verification", { mode: "boolean" }).notNull().default(false),
+  allowPasskeyRegistration: integer("allow_passkey_registration", { mode: "boolean" }).notNull().default(false),
+  allowPasskeySignin: integer("allow_passkey_signin", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => ({
+  workspaceIdx: uniqueIndex("auth_policies_workspace_idx").on(table.workspaceId),
+}));
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
