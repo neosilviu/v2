@@ -17,7 +17,16 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
+      - name: Run pnpm typecheck
+        run: pnpm typecheck 2>&1 | tee /tmp/v2-typecheck.log
+        shell: bash
+      - name: Upload typecheck output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-output
+          path: /tmp/v2-typecheck.log
+          if-no-files-found: error
       - run: pnpm --filter @v2/web build
       - run: pnpm build:analyze
       - run: pnpm test:generated -- --check-migrations
