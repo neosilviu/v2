@@ -58,6 +58,10 @@ jobs:
           [ "$(grep -Fc '[ok] local Auth D1 registration policy opened' /tmp/v2-smoke.log || true)" -ge 2 ] && printf ok > /tmp/v2-smoke-markers/second-policy-write || true
           [ "$(grep -Fc '[ok] Workspace provisioning request created' /tmp/v2-smoke.log || true)" -ge 2 ] && printf ok > /tmp/v2-smoke-markers/second-token || true
           grep -Fq "[ok] Owner setup API creates account with registration disabled" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/owner-created || true
+          grep -Fq "Owner setup API creates account with registration disabled - HTTP 401" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/http-401 || true
+          grep -Fq "Owner setup API creates account with registration disabled - HTTP 404" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/http-404 || true
+          grep -Fq "Owner setup API creates account with registration disabled - HTTP 500" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/http-500 || true
+          grep -Fq "Owner setup API creates account with registration disabled - HTTP 503" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/http-503 || true
       - name: Upload marker core session reached
         if: failure()
         uses: actions/upload-artifact@v4
@@ -92,6 +96,34 @@ jobs:
         with:
           name: marker-registration-disabled-owner-created
           path: /tmp/v2-smoke-markers/owner-created
+          if-no-files-found: ignore
+      - name: Upload marker owner signup http 401
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-owner-signup-http-401
+          path: /tmp/v2-smoke-markers/http-401
+          if-no-files-found: ignore
+      - name: Upload marker owner signup http 404
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-owner-signup-http-404
+          path: /tmp/v2-smoke-markers/http-404
+          if-no-files-found: ignore
+      - name: Upload marker owner signup http 500
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-owner-signup-http-500
+          path: /tmp/v2-smoke-markers/http-500
+          if-no-files-found: ignore
+      - name: Upload marker owner signup http 503
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marker-owner-signup-http-503
+          path: /tmp/v2-smoke-markers/http-503
           if-no-files-found: ignore
       - name: Upload local smoke diagnostics
         if: failure()
