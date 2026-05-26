@@ -65,6 +65,9 @@ importers:
       '@types/node':
         specifier: ^25.9.1
         version: 25.9.1
+      fflate:
+        specifier: 'catalog:'
+        version: 0.8.3
       prettier:
         specifier: ^3.8.3
         version: 3.8.3
