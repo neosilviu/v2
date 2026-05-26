@@ -30,7 +30,10 @@ const stopRepoDevPorts = async () => {
   await sleep(300);
 };
 
-const child = spawn("pnpm", ["turbo", "run", "dev", "--parallel"], {
+const turboArgs = ["turbo", "run", "dev", "--parallel"];
+if (process.env.CI === "true") turboArgs.push("--filter=!@v2/plugin-ai-providers");
+
+const child = spawn("pnpm", turboArgs, {
   cwd: root,
   stdio: "inherit",
   env: process.env,

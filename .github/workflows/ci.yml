@@ -28,10 +28,15 @@ jobs:
           echo $! > /tmp/v2-dev.pid
           for i in {1..60}; do
             if curl -fsS http://localhost:8787/health >/dev/null && curl -fsS http://localhost:8788/health >/dev/null && curl -fsS http://localhost:5173/login >/dev/null; then
+              ready=1
               break
             fi
             sleep 2
           done
+          if [ "${ready:-0}" != "1" ]; then
+            cat /tmp/v2-dev.log
+            exit 1
+          fi
           pnpm smoke:local -- --prepare-auth-db
         shell: bash
       - name: Stop local smoke services
