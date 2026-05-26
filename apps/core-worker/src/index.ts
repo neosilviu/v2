@@ -327,6 +327,54 @@ app.post("/public/:workspaceId/runtime/actions", async (c) => {
   await repo.audit(request.workspaceId, "public.runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
+app.get("/workspaces/:workspaceId/settings/tabs", async (c) => {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const tabs = await repo.settingsTabs(c.req.param("workspaceId"));
+  return c.json({ tabs: tabs.filter((tab) => tab.status === "active") });
+});
+app.get("/workspaces/:workspaceId/settings/tabs/:tabId", async (c) => {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const resolved = await new CoreRepository(c.env.CORE_DB).settingsTab(c.req.param("workspaceId"), c.req.param("tabId"));
+  return resolved ? c.json(resolved) : c.json(errorResponse(failure("not_found", "Settings tab is not available.")), 404);
+});
+app.post("/workspaces/:workspaceId/settings/tabs/order", async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const body = await c.req.json() as { tabIds?: unknown };
+  if (!Array.isArray(body.tabIds) || !body.tabIds.every((item) => typeof item === "string")) return c.json(errorResponse(failure("validation_failed", "tabIds must be a string array.")), 400);
+  await new CoreRepository(c.env.CORE_DB).reorderSettingsTabs(c.req.param("workspaceId"), body.tabIds);
+  return c.json({ saved: true });
+});
+app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const request = runtimeDataRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const resolved = await repo.privateRuntimeContribution(request.workspaceId, request.contributionId);
+  if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
+  const dataSource = resolved.page.dataSources.find((item) => item.id === request.dataSourceId);
+  if (!dataSource) return c.json({ status: "denied", data: null, error: "Data source is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor(resolved.page.data, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
+  await repo.audit(request.workspaceId, "settings.runtime.ui.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
+  return c.json(runtimeUnavailable(), 501);
+});
+app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const request = runtimeActionRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const resolved = await repo.privateRuntimeContribution(request.workspaceId, request.contributionId);
+  if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
+  const action = resolved.page.actions.find((item) => item.id === request.actionId);
+  if (!action) return c.json({ status: "denied", data: null, error: "Action is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  const approval = await maybeActionApproval(c, repo, action, request.workspaceId, resolved.pluginId, request.contributionId, request.input);
+  if (approval) return c.json(approval, 202);
+  await repo.audit(request.workspaceId, "settings.runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
+  return c.json(runtimeUnavailable(), 501);
+});
 app.get("/workspaces/:workspaceId/settings/:scope", async (c) => { const denied = requireRead(c); if (denied) return denied; const scope = settingScopeSchema.parse(c.req.param("scope")) as SettingScope; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).listSettings(c.req.param("workspaceId"), scope) }); });
 app.put("/settings", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = settingWriteRequestSchema.parse(await c.req.json()); await new CoreRepository(c.env.CORE_DB).setSetting(request.workspaceId, request.scope as SettingScope, request.key, request.value); return c.json({ saved: true }); });
 app.get("/workspaces/:workspaceId/layout", async (c) => { const denied = requireRead(c); if (denied) return denied; return c.json({ layout: (await new CoreRepository(c.env.CORE_DB).getLayout(c.req.param("workspaceId"))) ?? null }); });

@@ -1,6 +1,6 @@
 import { declarativeUiSchema, pluginManifestSchema, type PluginBundle, type PluginManifest, type PublicContributionAccess, type PublicRouteContribution, type PublicSurfaceContribution, type PublicToolContribution, type SurfaceContribution } from "@v2/plugin-contracts";
 import type { SettingScope, WorkspaceLayout } from "@v2/rpc-contracts";
-import { declarativePageContributionSchema, publicRoutePatternSchema, type AccessMode, type DeclarativePageContribution } from "@v2/ui-schema";
+import { declarativePageContributionSchema, publicRoutePatternSchema, settingsPanelContributionSchema, settingsTabContributionSchema, type AccessMode, type DeclarativePageContribution, type SettingsPanelContribution, type SettingsTabContribution } from "@v2/ui-schema";
 
 export type PluginWorkspaceState = {
   workspaceId: string;
@@ -85,6 +85,10 @@ export type RuntimeContributionResolution = {
   contributionId: string;
   page: DeclarativePageContribution;
   policy?: { id: string | null; access: PublicContributionAccess; authenticationMode: "anonymous" | "customer" | "verified"; allowedOperations: string[]; enabled: boolean };
+};
+export type SettingsTabResolution = {
+  tab: SettingsTabContribution & { ownerName: string; orderIndex: number };
+  panel: SettingsPanelContribution;
 };
 
 type PublicDeliveryRow = {
@@ -171,7 +175,7 @@ export class CoreRepository {
   }
 
   private uiContributionsFor(manifest: PluginManifest): PluginUiContribution[] {
-    return manifest.contributes.surfaces.flatMap((surface) => {
+    const surfaces = manifest.contributes.surfaces.flatMap((surface) => {
       const page = this.declarativeSurfacePage(manifest, surface);
       if (!page) return [];
       return [{
@@ -186,6 +190,100 @@ export class CoreRepository {
         version: manifest.version,
       }];
     });
+    const settingsTabs = manifest.contributes.settingsTabs.map((tab) => ({
+      pluginId: manifest.id,
+      contributionId: tab.id,
+      contributionType: "menu" as const,
+      accessMode: tab.requiredPermission ? "permission-gated" as const : "private" as const,
+      zoneId: "settings.tabs",
+      templateId: "admin.settings",
+      schema: declarativePageContributionSchema.parse({
+        id: tab.id,
+        title: tab.label,
+        templateId: "admin.settings",
+        access: tab.requiredPermission ? "permission-gated" : "private",
+        data: { settingsTab: tab },
+      }),
+      requiredPermission: tab.requiredPermission ?? null,
+      version: manifest.version,
+    }));
+    const settingsPanels = manifest.contributes.settingsPanels.map((panel) => ({
+      pluginId: manifest.id,
+      contributionId: panel.id,
+      contributionType: "page" as const,
+      accessMode: panel.requiredPermission ? "permission-gated" as const : "private" as const,
+      zoneId: `settings.panel.${panel.tabId}`,
+      templateId: panel.templateId,
+      schema: declarativePageContributionSchema.parse({ ...panel.schema, dataSources: panel.dataSources.length ? panel.dataSources : panel.schema.dataSources, actions: panel.actions.length ? panel.actions : panel.schema.actions }),
+      requiredPermission: panel.requiredPermission ?? null,
+      version: manifest.version,
+    }));
+    return [...surfaces, ...settingsTabs, ...settingsPanels];
+  }
+
+  private platformSettingsTabs(): SettingsTabResolution[] {
+    const specs = [
+      { id: "platform.settings.general", label: "General", icon: "settings", order: 10, templateId: "admin.form" as const, fields: [
+        { id: "workspaceName", label: "Workspace name", type: "text" as const, required: true },
+        { id: "locale", label: "Locale", type: "text" as const },
+        { id: "timezone", label: "Timezone", type: "text" as const },
+        { id: "currency", label: "Currency", type: "text" as const },
+      ], slots: [{ id: "general.status", slot: "header", blocks: [{ type: "text" as const, text: "Workspace metadata, regional defaults, sender status and service health are managed here.", tone: "muted" as const }] }] },
+      { id: "platform.settings.security", label: "Security", icon: "shield", order: 20, templateId: "admin.settings" as const, fields: [], slots: [{ id: "security.summary", slot: "header", blocks: [{ type: "text" as const, text: "Auth methods, registration policy, passkeys, sessions and approvals are protected Auth/Core administration controls.", tone: "muted" as const }] }] },
+      { id: "platform.settings.domains", label: "Domains", icon: "globe", order: 30, templateId: "admin.table" as const, fields: [], slots: [{ id: "domains.boundary", slot: "header", blocks: [{ type: "text" as const, text: "Only verified active domains may become public delivery or Auth trust candidates.", tone: "muted" as const }] }] },
+      { id: "platform.settings.marketplace", label: "Marketplace", icon: "package", order: 40, templateId: "admin.settings" as const, fields: [], slots: [{ id: "marketplace.lifecycle", slot: "header", blocks: [{ type: "text" as const, text: "Catalog releases, package uploads, installs and persistent approvals live in this platform tab.", tone: "muted" as const }] }] },
+      { id: "platform.settings.interface", label: "Interface", icon: "layout", order: 50, templateId: "admin.settings" as const, fields: [], slots: [{ id: "interface.runtime", slot: "header", blocks: [{ type: "text" as const, text: "Shell zones, placements and theme tokens are runtime configuration, not plugin-specific Web code.", tone: "muted" as const }] }] },
+    ];
+    return specs.map((spec) => {
+      const panelId = `${spec.id}.panel`;
+      const tab = settingsTabContributionSchema.parse({ id: spec.id, pluginId: "platform", label: spec.label, icon: spec.icon, displayOrder: spec.order, category: "platform", panelContributionId: panelId, status: "active" });
+      const schema = declarativePageContributionSchema.parse({
+        id: panelId,
+        title: spec.label,
+        templateId: spec.templateId,
+        access: "private",
+        fields: spec.fields,
+        slots: spec.slots,
+        data: { workspaceName: "Default Workspace", locale: "ro-RO", timezone: "Europe/Bucharest", currency: "RON" },
+      });
+      const panel = settingsPanelContributionSchema.parse({ id: panelId, pluginId: "platform", tabId: spec.id, templateId: spec.templateId, schema });
+      return { tab: { ...tab, ownerName: "Platform", orderIndex: spec.order }, panel };
+    });
+  }
+
+  async ensurePlatformSettingsContributions(workspaceId: string) {
+    await this.ensureWorkspace(workspaceId);
+    const manifest = pluginManifestSchema.parse({ id: "platform", name: "Platform", version: "0.0.0", builtIn: true, contributes: {} });
+    await this.db.prepare(`INSERT INTO installed_plugins (id, name, version, manifest_json, worker_isolation, ui_mode, updated_at)
+      VALUES ('platform', 'Platform', '0.0.0', ?, 'none', 'declarative', CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET manifest_json = excluded.manifest_json, updated_at = CURRENT_TIMESTAMP`)
+      .bind(JSON.stringify(manifest)).run();
+    await this.db.prepare(`INSERT INTO workspace_plugins (workspace_id, plugin_id, active, activated_at, updated_at)
+      VALUES (?, 'platform', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(workspace_id, plugin_id) DO UPDATE SET active = 1, updated_at = CURRENT_TIMESTAMP`)
+      .bind(workspaceId).run();
+    const statements = [];
+    for (const item of this.platformSettingsTabs()) {
+      statements.push(this.db.prepare(`INSERT INTO plugin_ui_contributions
+        (id, plugin_id, contribution_id, contribution_type, access_mode, zone_id, template_id, schema_json, required_permission, version, updated_at)
+        VALUES (?, 'platform', ?, 'menu', 'private', 'settings.tabs', 'admin.settings', ?, ?, '0.0.0', CURRENT_TIMESTAMP)
+        ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET schema_json = excluded.schema_json, updated_at = CURRENT_TIMESTAMP`)
+        .bind(`platform:${item.tab.id}:0.0.0`, item.tab.id, JSON.stringify(item.tab), item.tab.requiredPermission ?? null));
+      statements.push(this.db.prepare(`INSERT INTO plugin_ui_contributions
+        (id, plugin_id, contribution_id, contribution_type, access_mode, zone_id, template_id, schema_json, required_permission, version, updated_at)
+        VALUES (?, 'platform', ?, 'page', 'private', ?, ?, ?, ?, '0.0.0', CURRENT_TIMESTAMP)
+        ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET schema_json = excluded.schema_json, template_id = excluded.template_id, updated_at = CURRENT_TIMESTAMP`)
+        .bind(`platform:${item.panel.id}:0.0.0`, item.panel.id, `settings.panel.${item.tab.id}`, item.panel.templateId, JSON.stringify(item.panel), item.panel.requiredPermission ?? null));
+      statements.push(this.db.prepare(`INSERT OR IGNORE INTO workspace_ui_activations
+        (workspace_id, plugin_id, contribution_id, enabled, zone_override, order_index, configuration_json)
+        VALUES (?, 'platform', ?, 1, 'settings.tabs', ?, NULL)`)
+        .bind(workspaceId, item.tab.id, item.tab.displayOrder));
+      statements.push(this.db.prepare(`INSERT OR IGNORE INTO workspace_ui_activations
+        (workspace_id, plugin_id, contribution_id, enabled, zone_override, order_index, configuration_json)
+        VALUES (?, 'platform', ?, 1, ?, ?, NULL)`)
+        .bind(workspaceId, item.panel.id, `settings.panel.${item.tab.id}`, item.tab.displayOrder));
+    }
+    await this.db.batch(statements);
   }
 
   async installManifest(manifest: PluginManifest, bundle?: PluginBundle) {
@@ -538,6 +636,52 @@ export class CoreRepository {
       .bind(workspaceId, contributionId)
       .first<{ plugin_id: string; contribution_id: string; schema_json: string }>();
     return row ? { workspaceId, pluginId: row.plugin_id, contributionId: row.contribution_id, page: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)) } : undefined;
+  }
+
+  async settingsTabs(workspaceId: string): Promise<Array<SettingsTabResolution["tab"]>> {
+    await this.ensurePlatformSettingsContributions(workspaceId);
+    const rows = await this.db.prepare(`SELECT c.plugin_id, c.schema_json, a.order_index, installed.name AS owner_name
+      FROM workspace_ui_activations a
+      INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
+      INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
+      INNER JOIN installed_plugins installed ON installed.id = c.plugin_id
+      WHERE a.workspace_id = ? AND a.enabled = 1 AND c.contribution_type = 'menu' AND COALESCE(a.zone_override, c.zone_id) = 'settings.tabs'
+      ORDER BY a.order_index, c.contribution_id`)
+      .bind(workspaceId)
+      .all<{ plugin_id: string; schema_json: string; order_index: number; owner_name: string }>();
+    return rows.results.map((row) => {
+      const raw = JSON.parse(row.schema_json) as unknown;
+      const tab = settingsTabContributionSchema.safeParse(raw);
+      if (tab.success) return { ...tab.data, ownerName: row.owner_name, orderIndex: row.order_index };
+      const page = declarativePageContributionSchema.parse(raw);
+      return { ...settingsTabContributionSchema.parse((page.data as { settingsTab?: unknown }).settingsTab), ownerName: row.owner_name, orderIndex: row.order_index };
+    });
+  }
+
+  async settingsTab(workspaceId: string, tabId: string): Promise<SettingsTabResolution | undefined> {
+    const tabs = await this.settingsTabs(workspaceId);
+    const tab = tabs.find((item) => item.id === tabId);
+    if (!tab || tab.status !== "active") return undefined;
+    const row = await this.db.prepare(`SELECT c.schema_json
+      FROM workspace_ui_activations a
+      INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
+      INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
+      WHERE a.workspace_id = ? AND a.enabled = 1 AND a.contribution_id = ? AND c.contribution_type = 'page'
+      LIMIT 1`)
+      .bind(workspaceId, tab.panelContributionId)
+      .first<{ schema_json: string }>();
+    if (!row) return undefined;
+    const raw = JSON.parse(row.schema_json) as unknown;
+    const panel = settingsPanelContributionSchema.safeParse(raw);
+    if (panel.success) return { tab, panel: panel.data };
+    const page = declarativePageContributionSchema.parse(raw);
+    return { tab, panel: settingsPanelContributionSchema.parse({ id: tab.panelContributionId, pluginId: tab.pluginId, tabId: tab.id, templateId: page.templateId, schema: page, dataSources: page.dataSources, actions: page.actions, requiredPermission: tab.requiredPermission }) };
+  }
+
+  async reorderSettingsTabs(workspaceId: string, tabIds: string[]) {
+    await this.ensurePlatformSettingsContributions(workspaceId);
+    await this.db.batch(tabIds.map((tabId, index) => this.db.prepare(`UPDATE workspace_ui_activations SET order_index = ?, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND contribution_id = ?`).bind(index * 10, workspaceId, tabId)));
+    await this.audit(workspaceId, "settings.tabs.order", { tabIds });
   }
 
   async publicRuntimeContribution(workspaceId: string, contributionId: string): Promise<RuntimeContributionResolution | undefined> {
