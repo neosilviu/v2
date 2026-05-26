@@ -109,6 +109,7 @@ if (execute) {
     console.error(result.stderr || result.stdout);
     process.exit(result.status ?? 1);
   }
+  if (local) await new Promise((resolve) => setTimeout(resolve, 1000));
 } else {
   console.log(sql);
 }
