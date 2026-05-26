@@ -129,6 +129,9 @@ importers:
       '@v2/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@v2/ui-schema':
+        specifier: workspace:*
+        version: link:../../packages/ui-schema
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@cloudflare/workers-types@4.20260525.1)(kysely@0.28.17)

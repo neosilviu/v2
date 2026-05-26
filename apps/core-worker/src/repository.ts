@@ -1,5 +1,6 @@
-import { pluginManifestSchema, type PluginBundle, type PluginManifest, type PublicContributionAccess, type PublicRouteContribution, type PublicSurfaceContribution, type PublicToolContribution } from "@v2/plugin-contracts";
+import { declarativeUiSchema, pluginManifestSchema, type PluginBundle, type PluginManifest, type PublicContributionAccess, type PublicRouteContribution, type PublicSurfaceContribution, type PublicToolContribution, type SurfaceContribution } from "@v2/plugin-contracts";
 import type { SettingScope, WorkspaceLayout } from "@v2/rpc-contracts";
+import { declarativePageContributionSchema, type AccessMode, type DeclarativePageContribution } from "@v2/ui-schema";
 
 export type PluginWorkspaceState = {
   workspaceId: string;
@@ -38,16 +39,30 @@ export type SandboxSurfaceAsset = {
 };
 
 export type PublicationKind = "route" | "surface" | "tool";
-export type PublicationStatus = "draft" | "published" | "disabled";
+export type PublicationStatus = "draft" | "published" | "unpublished" | "disabled";
 export type PublicContribution = PublicRouteContribution | PublicSurfaceContribution | PublicToolContribution;
+export type PluginUiContribution = {
+  pluginId: string;
+  contributionId: string;
+  contributionType: "surface" | "page" | "route" | "slot" | "menu";
+  accessMode: AccessMode;
+  zoneId: string | null;
+  templateId: string;
+  schema: DeclarativePageContribution;
+  requiredPermission: string | null;
+  version: string;
+};
 export type WorkspacePublication = {
   id: string;
   workspaceId: string;
   pluginId: string;
   contributionKind: PublicationKind;
+  publicationType?: "route" | "surface" | "tool" | "content";
   contributionId: string;
   publicPath: string;
   title: string;
+  templateId?: string;
+  schema?: DeclarativePageContribution;
   status: PublicationStatus;
   policyId: string | null;
   access: PublicContributionAccess;
@@ -65,8 +80,53 @@ export class CoreRepository {
     await this.db.prepare("INSERT OR IGNORE INTO workspaces (id, name) VALUES (?, ?)").bind(workspaceId, name).run();
   }
 
+  private declarativeSurfacePage(manifest: PluginManifest, surface: SurfaceContribution): DeclarativePageContribution | undefined {
+    if (surface.renderer.mode !== "declarative") return undefined;
+    if (surface.renderer.schema) {
+      const page = declarativePageContributionSchema.safeParse(surface.renderer.schema);
+      if (page.success) return page.data;
+      const legacy = declarativeUiSchema.safeParse(surface.renderer.schema);
+      if (legacy.success) {
+        return declarativePageContributionSchema.parse({
+          id: surface.id,
+          title: surface.title,
+          templateId: surface.kind === "settings" ? "admin.settings" : "public.contentPage",
+          access: "private",
+          slots: [{ id: `${surface.id}.body`, slot: surface.kind === "settings" ? "header" : "body", blocks: legacy.data.body.filter((block) => block.type !== "action") }],
+          actions: legacy.data.body.filter((block) => block.type === "action").map((block, index) => ({ id: `${surface.id}.action.${index}`, title: block.label, commandId: block.commandId, variant: block.variant })),
+        });
+      }
+    }
+    return declarativePageContributionSchema.parse({
+      id: surface.id,
+      title: surface.title,
+      templateId: surface.kind === "settings" ? "admin.settings" : "admin.detail",
+      access: "private",
+      slots: [{ id: `${surface.id}.placeholder`, slot: "header", blocks: [{ type: "text", text: `${manifest.name} declares this runtime surface.`, tone: "muted" }] }],
+    });
+  }
+
+  private uiContributionsFor(manifest: PluginManifest): PluginUiContribution[] {
+    return manifest.contributes.surfaces.flatMap((surface) => {
+      const page = this.declarativeSurfacePage(manifest, surface);
+      if (!page) return [];
+      return [{
+        pluginId: manifest.id,
+        contributionId: surface.id,
+        contributionType: "surface" as const,
+        accessMode: page.access,
+        zoneId: surface.zone,
+        templateId: page.templateId,
+        schema: page,
+        requiredPermission: page.actions.find((action) => action.access === "permission-gated")?.commandId ?? null,
+        version: manifest.version,
+      }];
+    });
+  }
+
   async installManifest(manifest: PluginManifest, bundle?: PluginBundle) {
     const packageData = bundle?.package;
+    const uiContributions = this.uiContributionsFor(manifest);
     const statements = [
       this.db.prepare(`INSERT INTO installed_plugins
         (id, name, version, manifest_json, package_object_key, package_sha256, package_size_bytes, package_format, worker_isolation, ui_mode, updated_at)
@@ -95,14 +155,38 @@ export class CoreRepository {
           bundle?.ui.mode ?? "declarative",
         ),
       this.db.prepare("DELETE FROM plugin_capabilities WHERE plugin_id = ?").bind(manifest.id),
+      this.db.prepare("DELETE FROM plugin_ui_contributions WHERE plugin_id = ? AND version = ?").bind(manifest.id, manifest.version),
       ...manifest.capabilities.map((capability) => this.db.prepare("INSERT INTO plugin_capabilities (plugin_id, capability_id, description, risk) VALUES (?, ?, ?, ?)")
         .bind(manifest.id, capability.id, capability.description ?? null, capability.risk)),
+      ...uiContributions.map((contribution) => this.db.prepare(`INSERT INTO plugin_ui_contributions
+        (id, plugin_id, contribution_id, contribution_type, access_mode, zone_id, template_id, schema_json, required_permission, version, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET
+          contribution_type = excluded.contribution_type,
+          access_mode = excluded.access_mode,
+          zone_id = excluded.zone_id,
+          template_id = excluded.template_id,
+          schema_json = excluded.schema_json,
+          required_permission = excluded.required_permission,
+          updated_at = CURRENT_TIMESTAMP`)
+        .bind(`${manifest.id}:${contribution.contributionId}:${manifest.version}`, manifest.id, contribution.contributionId, contribution.contributionType, contribution.accessMode, contribution.zoneId, contribution.templateId, JSON.stringify(contribution.schema), contribution.requiredPermission, contribution.version)),
     ];
     if (packageData) {
       statements.push(this.db.prepare("INSERT OR IGNORE INTO plugin_packages (id, plugin_id, version, object_key, sha256, size_bytes, format) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(`${manifest.id}@${manifest.version}:${packageData.sha256}`, manifest.id, manifest.version, packageData.objectKey, packageData.sha256, packageData.sizeBytes, packageData.format));
     }
     await this.db.batch(statements);
+  }
+
+  async pluginUiContribution(pluginId: string, contributionId: string): Promise<PluginUiContribution | undefined> {
+    const row = await this.db.prepare(`SELECT plugin_id, contribution_id, contribution_type, access_mode, zone_id, template_id, schema_json, required_permission, version
+      FROM plugin_ui_contributions
+      WHERE plugin_id = ? AND contribution_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1`)
+      .bind(pluginId, contributionId)
+      .first<{ plugin_id: string; contribution_id: string; contribution_type: PluginUiContribution["contributionType"]; access_mode: AccessMode; zone_id: string | null; template_id: string; schema_json: string; required_permission: string | null; version: string }>();
+    return row ? { pluginId: row.plugin_id, contributionId: row.contribution_id, contributionType: row.contribution_type, accessMode: row.access_mode, zoneId: row.zone_id, templateId: row.template_id, schema: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)), requiredPermission: row.required_permission, version: row.version } : undefined;
   }
 
   async installed(): Promise<PluginManifest[]> {
@@ -228,24 +312,30 @@ export class CoreRepository {
     const publicPath = input.publicPath ?? contribution.path;
     const title = input.title ?? contribution.title;
     const access = input.access ?? contribution.access;
+    const uiContribution = await this.pluginUiContribution(input.pluginId, input.contributionId);
+    const templateId = uiContribution?.templateId ?? "public.contentPage";
+    const schemaJson = JSON.stringify(uiContribution?.schema ?? {});
     const publicationId = `${input.workspaceId}:${input.pluginId}:${input.contributionKind}:${input.contributionId}`;
     const policyId = `${publicationId}:policy`;
     await this.db.batch([
-      this.db.prepare(`INSERT INTO public_access_policies (id, workspace_id, name, access, rules_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(id) DO UPDATE SET name = excluded.name, access = excluded.access, rules_json = excluded.rules_json, updated_at = CURRENT_TIMESTAMP`)
-        .bind(policyId, input.workspaceId, `${title} public access`, access, JSON.stringify({ contributionId: input.contributionId, contributionKind: input.contributionKind })),
+      this.db.prepare(`INSERT INTO public_access_policies (id, workspace_id, name, access, authentication_mode, rules_json, allowed_operations_json, enabled, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET name = excluded.name, access = excluded.access, authentication_mode = excluded.authentication_mode, rules_json = excluded.rules_json, allowed_operations_json = excluded.allowed_operations_json, enabled = 1, updated_at = CURRENT_TIMESTAMP`)
+        .bind(policyId, input.workspaceId, `${title} public access`, access, access === "authenticated" ? "verified" : "anonymous", JSON.stringify({ contributionId: input.contributionId, contributionKind: input.contributionKind }), JSON.stringify([input.contributionId])),
       this.db.prepare(`INSERT INTO workspace_publications
-        (id, workspace_id, plugin_id, contribution_kind, contribution_id, public_path, title, status, policy_id, published_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'published', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        (id, workspace_id, plugin_id, contribution_kind, publication_type, contribution_id, public_path, title, template_id, schema_json, status, policy_id, published_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
           public_path = excluded.public_path,
           title = excluded.title,
+          publication_type = excluded.publication_type,
+          template_id = excluded.template_id,
+          schema_json = excluded.schema_json,
           status = 'published',
           policy_id = excluded.policy_id,
           published_at = COALESCE(workspace_publications.published_at, CURRENT_TIMESTAMP),
           updated_at = CURRENT_TIMESTAMP`)
-        .bind(publicationId, input.workspaceId, input.pluginId, input.contributionKind, input.contributionId, publicPath, title, policyId),
+        .bind(publicationId, input.workspaceId, input.pluginId, input.contributionKind, input.contributionKind, input.contributionId, publicPath, title, templateId, schemaJson, policyId),
     ]);
     await this.audit(input.workspaceId, "public.publication.publish", { pluginId: input.pluginId, contributionKind: input.contributionKind, contributionId: input.contributionId, publicPath });
     return { id: publicationId, workspaceId: input.workspaceId, pluginId: input.pluginId, contributionKind: input.contributionKind, contributionId: input.contributionId, publicPath, title, status: "published", policyId, access };
@@ -300,6 +390,18 @@ export class CoreRepository {
         deactivated_at = CASE WHEN excluded.active = 0 THEN CURRENT_TIMESTAMP ELSE NULL END,
         updated_at = CURRENT_TIMESTAMP`)
       .bind(workspaceId, pluginId, active ? 1 : 0, active ? 1 : 0, active ? 1 : 0).run();
+    if (active) {
+      await this.db.prepare(`INSERT OR IGNORE INTO workspace_ui_activations
+        (workspace_id, plugin_id, contribution_id, enabled, zone_override, order_index, configuration_json)
+        SELECT ?, plugin_id, contribution_id, 1, zone_id, rowid, NULL
+        FROM plugin_ui_contributions
+        WHERE plugin_id = ? AND access_mode != 'public-candidate'`)
+        .bind(workspaceId, pluginId)
+        .run();
+      await this.db.prepare("UPDATE workspace_ui_activations SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId).run();
+    } else {
+      await this.db.prepare("UPDATE workspace_ui_activations SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId).run();
+    }
     await this.audit(workspaceId, active ? "plugin.activate" : "plugin.deactivate", { pluginId });
     return { workspaceId, pluginId, active, updatedAt: new Date().toISOString() };
   }
