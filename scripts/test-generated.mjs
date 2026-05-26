@@ -137,7 +137,7 @@ function testRuntimeFirstArchitecture() {
     if (routePosition < 0) fail(`Core route ${route} is missing from static auth matrix`);
     else {
       const body = coreIndex.slice(routePosition, routePosition + 360);
-      if (!body.includes("requireRead(c)")) fail(`Core route ${route} does not visibly require authenticated/internal read access`);
+      if (!body.includes("requireRead(c)") && !body.includes("requirePermission(c")) fail(`Core route ${route} does not visibly require authenticated/internal read access`);
     }
   }
   if (coreIndex.includes("requireShellRead")) fail("Core still contains requireShellRead origin-based read bypass");

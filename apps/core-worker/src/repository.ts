@@ -90,6 +90,15 @@ export type SettingsTabResolution = {
   tab: SettingsTabContribution & { ownerName: string; orderIndex: number };
   panel: SettingsPanelContribution;
 };
+export const workspacePermissions = [
+  "workspace.read", "workspace.admin", "workspace.members.manage", "workspace.settings.read", "workspace.settings.write",
+  "auth.read", "auth.admin", "domains.read", "domains.write", "domains.verify",
+  "marketplace.read", "marketplace.publish", "plugin.install", "plugin.activate", "plugin.update", "plugin.uninstall", "plugin.grantCapability",
+  "approval.read", "tool.approve", "audit.read", "layout.read", "layout.write", "publication.read", "publication.publish",
+  "agent.read", "agent.use", "provider.read", "provider.configure",
+  "localnode.read", "localnode.configure", "localnode.execute", "production.read", "production.execute", "production.approve",
+] as const;
+export type WorkspacePermission = typeof workspacePermissions[number];
 
 type PublicDeliveryRow = {
   id: string;
@@ -146,6 +155,85 @@ export class CoreRepository {
 
   async ensureWorkspace(workspaceId: string, name = "Default Workspace") {
     await this.db.prepare("INSERT OR IGNORE INTO workspaces (id, name) VALUES (?, ?)").bind(workspaceId, name).run();
+  }
+
+  private rolePermissions(systemKey: "owner" | "admin" | "operator" | "viewer"): WorkspacePermission[] {
+    if (systemKey === "owner") return [...workspacePermissions];
+    if (systemKey === "admin") return workspacePermissions.filter((permission) => !permission.endsWith(".approve") && permission !== "workspace.admin");
+    if (systemKey === "operator") return ["workspace.read", "workspace.settings.read", "marketplace.read", "approval.read", "layout.read", "publication.read", "agent.read", "agent.use", "provider.read", "localnode.read", "localnode.execute", "production.read", "production.execute"];
+    return ["workspace.read", "workspace.settings.read", "marketplace.read", "approval.read", "layout.read", "publication.read", "agent.read", "provider.read", "localnode.read", "production.read"];
+  }
+
+  async ensureWorkspaceRbac(workspaceId: string) {
+    await this.ensureWorkspace(workspaceId);
+    const roles = [
+      ["owner", "Owner", "Full workspace owner permissions"],
+      ["admin", "Admin", "Workspace administration without owner recovery permissions"],
+      ["operator", "Operator", "Day-to-day operational access"],
+      ["viewer", "Viewer", "Read-only workspace access"],
+    ] as const;
+    const statements = roles.flatMap(([key, name, description]) => {
+      const roleId = `${workspaceId}:${key}`;
+      return [
+        this.db.prepare(`INSERT INTO workspace_roles (id, workspace_id, name, system_key, description, updated_at)
+          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET name = excluded.name, system_key = excluded.system_key, description = excluded.description, updated_at = CURRENT_TIMESTAMP`)
+          .bind(roleId, workspaceId, name, key, description),
+        ...this.rolePermissions(key).map((permission) => this.db.prepare("INSERT OR IGNORE INTO workspace_role_permissions (workspace_id, role_id, permission) VALUES (?, ?, ?)").bind(workspaceId, roleId, permission)),
+      ];
+    });
+    await this.db.batch(statements);
+  }
+
+  async bootstrapOwner(workspaceId: string, user: { id: string; email: string; name?: string } | null) {
+    if (!user) return;
+    await this.ensureWorkspaceRbac(workspaceId);
+    const activeMembers = await this.db.prepare("SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id = ? AND status = 'active'").bind(workspaceId).first<{ count: number }>();
+    const alreadyMember = await this.db.prepare("SELECT user_id FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'").bind(workspaceId, user.id).first<{ user_id: string }>();
+    if ((activeMembers?.count ?? 0) > 0 && alreadyMember) return;
+    if ((activeMembers?.count ?? 0) === 0) {
+      await this.db.batch([
+        this.db.prepare(`INSERT INTO workspace_members (workspace_id, user_id, email, status, updated_at)
+          VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP)
+          ON CONFLICT(workspace_id, user_id) DO UPDATE SET email = excluded.email, status = 'active', updated_at = CURRENT_TIMESTAMP`)
+          .bind(workspaceId, user.id, user.email),
+        this.db.prepare("INSERT OR IGNORE INTO workspace_member_roles (workspace_id, user_id, role_id) VALUES (?, ?, ?)").bind(workspaceId, user.id, `${workspaceId}:owner`),
+      ]);
+      await this.audit(workspaceId, "rbac.bootstrap.owner", { userId: user.id, email: user.email }, user.id);
+    }
+  }
+
+  async permissionsForUser(workspaceId: string, userId: string): Promise<WorkspacePermission[]> {
+    await this.ensureWorkspaceRbac(workspaceId);
+    const rows = await this.db.prepare(`SELECT DISTINCT permission
+      FROM workspace_role_permissions permissions
+      INNER JOIN workspace_member_roles member_roles ON member_roles.workspace_id = permissions.workspace_id AND member_roles.role_id = permissions.role_id
+      INNER JOIN workspace_members members ON members.workspace_id = member_roles.workspace_id AND members.user_id = member_roles.user_id AND members.status = 'active'
+      WHERE member_roles.workspace_id = ? AND member_roles.user_id = ?
+      ORDER BY permission`)
+      .bind(workspaceId, userId)
+      .all<{ permission: WorkspacePermission }>();
+    return rows.results.map((row) => row.permission);
+  }
+
+  async hasPermission(workspaceId: string, user: { id: string; email: string } | null, permission: WorkspacePermission): Promise<boolean> {
+    if (!user) return false;
+    await this.bootstrapOwner(workspaceId, user);
+    const permissions = await this.permissionsForUser(workspaceId, user.id);
+    return permissions.includes(permission) || permissions.includes("workspace.admin");
+  }
+
+  async memberSummary(workspaceId: string, user: { id: string; email: string } | null) {
+    if (!user) return { user: null, roles: [], permissions: [], bootstrap: false };
+    await this.bootstrapOwner(workspaceId, user);
+    const rows = await this.db.prepare(`SELECT roles.name, roles.system_key
+      FROM workspace_member_roles member_roles
+      INNER JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
+      WHERE member_roles.workspace_id = ? AND member_roles.user_id = ?
+      ORDER BY roles.name`)
+      .bind(workspaceId, user.id)
+      .all<{ name: string; system_key: string | null }>();
+    return { user: { id: user.id, email: user.email }, roles: rows.results, permissions: await this.permissionsForUser(workspaceId, user.id), bootstrap: false };
   }
 
   private declarativeSurfacePage(manifest: PluginManifest, surface: SurfaceContribution): DeclarativePageContribution | undefined {
@@ -223,20 +311,20 @@ export class CoreRepository {
 
   private platformSettingsTabs(): SettingsTabResolution[] {
     const specs = [
-      { id: "platform.settings.general", label: "General", icon: "settings", order: 10, templateId: "admin.form" as const, fields: [
+      { id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read" as const, templateId: "admin.form" as const, fields: [
         { id: "workspaceName", label: "Workspace name", type: "text" as const, required: true },
         { id: "locale", label: "Locale", type: "text" as const },
         { id: "timezone", label: "Timezone", type: "text" as const },
         { id: "currency", label: "Currency", type: "text" as const },
       ], slots: [{ id: "general.status", slot: "header", blocks: [{ type: "text" as const, text: "Workspace metadata, regional defaults, sender status and service health are managed here.", tone: "muted" as const }] }] },
-      { id: "platform.settings.security", label: "Security", icon: "shield", order: 20, templateId: "admin.settings" as const, fields: [], slots: [{ id: "security.summary", slot: "header", blocks: [{ type: "text" as const, text: "Auth methods, registration policy, passkeys, sessions and approvals are protected Auth/Core administration controls.", tone: "muted" as const }] }] },
-      { id: "platform.settings.domains", label: "Domains", icon: "globe", order: 30, templateId: "admin.table" as const, fields: [], slots: [{ id: "domains.boundary", slot: "header", blocks: [{ type: "text" as const, text: "Only verified active domains may become public delivery or Auth trust candidates.", tone: "muted" as const }] }] },
-      { id: "platform.settings.marketplace", label: "Marketplace", icon: "package", order: 40, templateId: "admin.settings" as const, fields: [], slots: [{ id: "marketplace.lifecycle", slot: "header", blocks: [{ type: "text" as const, text: "Catalog releases, package uploads, installs and persistent approvals live in this platform tab.", tone: "muted" as const }] }] },
-      { id: "platform.settings.interface", label: "Interface", icon: "layout", order: 50, templateId: "admin.settings" as const, fields: [], slots: [{ id: "interface.runtime", slot: "header", blocks: [{ type: "text" as const, text: "Shell zones, placements and theme tokens are runtime configuration, not plugin-specific Web code.", tone: "muted" as const }] }] },
+      { id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.admin" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "security.summary", slot: "header", blocks: [{ type: "text" as const, text: "Auth methods, registration policy, passkeys, sessions and approvals are protected Auth/Core administration controls.", tone: "muted" as const }] }] },
+      { id: "platform.settings.domains", label: "Domains", icon: "globe", order: 30, permission: "domains.read" as const, templateId: "admin.table" as const, fields: [], slots: [{ id: "domains.boundary", slot: "header", blocks: [{ type: "text" as const, text: "Only verified active domains may become public delivery or Auth trust candidates.", tone: "muted" as const }] }] },
+      { id: "platform.settings.marketplace", label: "Marketplace", icon: "package", order: 40, permission: "marketplace.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "marketplace.lifecycle", slot: "header", blocks: [{ type: "text" as const, text: "Catalog releases, package uploads, installs and persistent approvals live in this platform tab.", tone: "muted" as const }] }] },
+      { id: "platform.settings.interface", label: "Interface", icon: "layout", order: 50, permission: "layout.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "interface.runtime", slot: "header", blocks: [{ type: "text" as const, text: "Shell zones, placements and theme tokens are runtime configuration, not plugin-specific Web code.", tone: "muted" as const }] }] },
     ];
     return specs.map((spec) => {
       const panelId = `${spec.id}.panel`;
-      const tab = settingsTabContributionSchema.parse({ id: spec.id, pluginId: "platform", label: spec.label, icon: spec.icon, displayOrder: spec.order, category: "platform", panelContributionId: panelId, status: "active" });
+      const tab = settingsTabContributionSchema.parse({ id: spec.id, pluginId: "platform", label: spec.label, icon: spec.icon, displayOrder: spec.order, category: "platform", requiredPermission: spec.permission, panelContributionId: panelId, status: "active" });
       const schema = declarativePageContributionSchema.parse({
         id: panelId,
         title: spec.label,
@@ -246,7 +334,7 @@ export class CoreRepository {
         slots: spec.slots,
         data: { workspaceName: "Default Workspace", locale: "ro-RO", timezone: "Europe/Bucharest", currency: "RON" },
       });
-      const panel = settingsPanelContributionSchema.parse({ id: panelId, pluginId: "platform", tabId: spec.id, templateId: spec.templateId, schema });
+      const panel = settingsPanelContributionSchema.parse({ id: panelId, pluginId: "platform", tabId: spec.id, templateId: spec.templateId, schema, requiredPermission: spec.permission });
       return { tab: { ...tab, ownerName: "Platform", orderIndex: spec.order }, panel };
     });
   }

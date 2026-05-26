@@ -2,6 +2,57 @@ import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 const now = sql`CURRENT_TIMESTAMP`;
 export const workspaces = sqliteTable("workspaces", { id: text("id").primaryKey(), name: text("name").notNull(), createdAt: text("created_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) });
+export const workspaceMembers = sqliteTable("workspace_members", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  email: text("email"),
+  status: text("status", { enum: ["active", "invited", "disabled"] }).notNull().default("active"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => [primaryKey({ columns: [table.workspaceId, table.userId] }), index("workspace_members_email_idx").on(table.workspaceId, table.email), index("workspace_members_status_idx").on(table.workspaceId, table.status)]);
+export const workspaceRoles = sqliteTable("workspace_roles", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  systemKey: text("system_key"),
+  description: text("description"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => [uniqueIndex("workspace_roles_system_idx").on(table.workspaceId, table.systemKey), index("workspace_roles_workspace_idx").on(table.workspaceId)]);
+export const workspaceRolePermissions = sqliteTable("workspace_role_permissions", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  roleId: text("role_id").notNull().references(() => workspaceRoles.id, { onDelete: "cascade" }),
+  permission: text("permission").notNull(),
+  createdAt: text("created_at").notNull().default(now),
+}, (table) => [primaryKey({ columns: [table.workspaceId, table.roleId, table.permission] }), index("workspace_role_permissions_permission_idx").on(table.workspaceId, table.permission)]);
+export const workspaceMemberRoles = sqliteTable("workspace_member_roles", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  roleId: text("role_id").notNull().references(() => workspaceRoles.id, { onDelete: "cascade" }),
+  createdAt: text("created_at").notNull().default(now),
+}, (table) => [primaryKey({ columns: [table.workspaceId, table.userId, table.roleId] }), index("workspace_member_roles_user_idx").on(table.workspaceId, table.userId)]);
+export const workspaceInvitations = sqliteTable("workspace_invitations", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  roleId: text("role_id").references(() => workspaceRoles.id, { onDelete: "set null" }),
+  status: text("status", { enum: ["pending", "accepted", "revoked", "expired"] }).notNull().default("pending"),
+  tokenHash: text("token_hash"),
+  expiresAt: text("expires_at"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => [index("workspace_invitations_workspace_idx").on(table.workspaceId, table.status), index("workspace_invitations_email_idx").on(table.workspaceId, table.email)]);
+export const serviceIdentities = sqliteTable("service_identities", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  kind: text("kind", { enum: ["internal-worker", "runtime-bridge", "local-node"] }).notNull(),
+  status: text("status", { enum: ["active", "revoked"] }).notNull().default("active"),
+  credentialRef: text("credential_ref"),
+  capabilitiesJson: text("capabilities_json").notNull().default("[]"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => [index("service_identities_workspace_idx").on(table.workspaceId, table.status), index("service_identities_kind_idx").on(table.workspaceId, table.kind)]);
 export const pluginCatalog = sqliteTable("plugin_catalog", { pluginId: text("plugin_id").primaryKey(), name: text("name").notNull(), version: text("version").notNull(), manifestJson: text("manifest_json").notNull(), category: text("category").notNull(), demoAvailable: integer("demo_available", { mode: "boolean" }).notNull().default(false), source: text("source").notNull().default("official"), createdAt: text("created_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) }, (table) => [index("plugin_catalog_source_idx").on(table.source), index("plugin_catalog_category_idx").on(table.category)]);
 export const pluginCatalogReleases = sqliteTable("plugin_catalog_releases", { id: text("id").primaryKey(), pluginId: text("plugin_id").notNull().references(() => pluginCatalog.pluginId, { onDelete: "cascade" }), version: text("version").notNull(), manifestJson: text("manifest_json").notNull(), packageObjectKey: text("package_object_key").notNull(), sha256: text("sha256").notNull(), sizeBytes: integer("size_bytes").notNull(), format: text("format").notNull(), workerIsolation: text("worker_isolation").notNull().default("none"), uiMode: text("ui_mode").notNull().default("declarative"), status: text("status", { enum: ["draft", "published", "deprecated"] }).notNull().default("draft"), source: text("source").notNull().default("official"), createdAt: text("created_at").notNull().default(now), publishedAt: text("published_at"), updatedAt: text("updated_at").notNull().default(now) }, (table) => [uniqueIndex("plugin_catalog_releases_identity_idx").on(table.pluginId, table.version, table.sha256), index("plugin_catalog_releases_plugin_status_idx").on(table.pluginId, table.status), index("plugin_catalog_releases_source_idx").on(table.source)]);
 export const installedPlugins = sqliteTable("installed_plugins", { id: text("id").primaryKey(), name: text("name").notNull(), version: text("version").notNull(), manifestJson: text("manifest_json").notNull(), packageObjectKey: text("package_object_key"), packageSha256: text("package_sha256"), packageSizeBytes: integer("package_size_bytes"), packageFormat: text("package_format"), workerIsolation: text("worker_isolation").notNull().default("none"), uiMode: text("ui_mode").notNull().default("declarative"), installedAt: text("installed_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) });

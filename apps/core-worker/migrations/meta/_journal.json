@@ -50,6 +50,13 @@
       "when": 1779780693432,
       "tag": "0006_solid_jack_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1779786808319,
+      "tag": "0007_amusing_monster_badoon",
+      "breakpoints": true
     }
   ]
 }
