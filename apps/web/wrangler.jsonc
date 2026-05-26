@@ -1,0 +1,26 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "v2-web",
+  "compatibility_date": "2026-05-25",
+  // Cloudflare Pages build command: pnpm --filter @v2/web build
+  // Cloudflare Pages output directory from the repository root: apps/web/dist
+  "pages_build_output_dir": "./dist",
+  "vars": {
+    "VITE_CORE_API_URL": "http://localhost:8787",
+    "VITE_AUTH_API_URL": "http://localhost:8788"
+  },
+  "env": {
+    "preview": {
+      "vars": {
+        "VITE_CORE_API_URL": "https://core.preview.example.invalid",
+        "VITE_AUTH_API_URL": "https://auth.preview.example.invalid"
+      }
+    },
+    "production": {
+      "vars": {
+        "VITE_CORE_API_URL": "https://core.example.invalid",
+        "VITE_AUTH_API_URL": "https://auth.example.invalid"
+      }
+    }
+  }
+}

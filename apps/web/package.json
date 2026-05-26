@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "vite --host 127.0.0.1 --port 5173 --strictPort", "build": "vite build" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "vite --host 127.0.0.1 --port 5173 --strictPort", "build": "vite build", "pages:deploy": "wrangler pages deploy dist --project-name v2-web" },
   "dependencies": {
     "@better-auth/passkey": "catalog:",
     "@v2/auth-contracts": "workspace:*",
@@ -18,5 +18,5 @@
     "react": "catalog:",
     "react-dom": "catalog:"
   },
-  "devDependencies": { "@types/react": "catalog:", "@types/react-dom": "catalog:", "@vitejs/plugin-react": "catalog:", "typescript": "catalog:", "vite": "catalog:" }
+  "devDependencies": { "@types/react": "catalog:", "@types/react-dom": "catalog:", "@vitejs/plugin-react": "catalog:", "typescript": "catalog:", "vite": "catalog:", "wrangler": "catalog:" }
 }
