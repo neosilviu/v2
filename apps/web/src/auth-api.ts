@@ -3,6 +3,24 @@ import { authUrl } from "./auth-client";
 
 const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 
+export class AuthRequestError extends Error {
+  constructor(readonly status: number, readonly code: string | undefined, message: string) {
+    super(message);
+    this.name = "AuthRequestError";
+  }
+}
+
+async function parseError(response: Response, fallback: string) {
+  const text = await response.text().catch(() => "");
+  if (!text) return new AuthRequestError(response.status, undefined, fallback);
+  try {
+    const payload = JSON.parse(text) as { code?: string; error?: string; message?: string };
+    return new AuthRequestError(response.status, payload.code ?? payload.error, payload.message ?? payload.error ?? fallback);
+  } catch {
+    return new AuthRequestError(response.status, undefined, fallback);
+  }
+}
+
 export async function loadLoginConfig(workspaceId = "default"): Promise<AuthPublicLoginConfig> {
   const url = new URL("/public/auth/login-config", authUrl);
   url.searchParams.set("workspaceId", workspaceId);
@@ -13,7 +31,7 @@ export async function loadLoginConfig(workspaceId = "default"): Promise<AuthPubl
 
 async function authJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(new URL(path, authUrl), { credentials: "include", headers: { "content-type": "application/json" }, ...init });
-  if (!response.ok) throw new Error(`Auth request failed: ${response.status}`);
+  if (!response.ok) throw await parseError(response, `Auth request failed: ${response.status}`);
   if (response.status === 204) return undefined as T;
   const text = await response.text();
   return (text ? JSON.parse(text) : undefined) as T;

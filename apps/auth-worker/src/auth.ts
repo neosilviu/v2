@@ -71,15 +71,15 @@ export async function resolveAuthConfig(env: AuthEnv, workspaceId = env.AUTH_WOR
   if (!parsed.ok || !env.CORE) return parsed;
   try {
     const response = await env.CORE.fetch(`https://core.internal/internal/workspaces/${encodeURIComponent(workspaceId)}/auth/trust-config`);
-    if (!response.ok) return parsed;
+    if (!response.ok) return parsed.config.production ? { ok: false, message: "Production authentication trust is not available from Core domains." } : parsed;
     const trust = await response.json() as CoreTrustConfig;
-    if (!trust.baseURL || !trust.passkey) return parsed;
+    if (!trust.baseURL || !trust.passkey) return parsed.config.production ? { ok: false, message: "Production authentication requires an active verified auth domain." } : parsed;
     const base = parseUrl(trust.baseURL, "Core auth domain");
     const trustedOrigins = [...new Set([base.origin, ...trust.trustedOrigins])];
     for (const origin of trustedOrigins) parseUrl(origin, "Core trusted origin");
     return { ok: true, config: { ...parsed.config, baseURL: base.origin, trustedOrigins, passkey: { ...parsed.config.passkey, rpID: trust.passkey.rpID, origin: trust.passkey.origin }, workspaceId } };
   } catch {
-    return parsed;
+    return parsed.ok && parsed.config.production ? { ok: false, message: "Production authentication trust could not be resolved from Core domains." } : parsed;
   }
 }
 

@@ -5,7 +5,7 @@ import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
 import { consumeOwnerSetup, decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadLayout, loadOwnerSetup, loadRuntimeTools, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe } from "./api";
-import { ownerSetupSignUp, signOutAuth, updateAuthProfile } from "./auth-api";
+import { AuthRequestError, ownerSetupSignUp, signOutAuth, updateAuthProfile } from "./auth-api";
 import { authClient } from "./auth-client";
 import { composeShellFromSurfaces, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
@@ -106,6 +106,20 @@ function SessionCheckPage({ unavailable = false }: { unavailable?: boolean }) {
       <p className="login-status">{unavailable ? "The protected workspace cannot be shown until Core confirms the current session." : "Validating access before loading the workspace shell."}</p>
     </SurfaceCard>
   </main>;
+}
+
+function ownerSetupErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof AuthRequestError) {
+    const code = (error.code ?? "").toLowerCase();
+    if (code.includes("expired")) return "This setup token expired. Ask an administrator to issue a new provisioning request.";
+    if (code.includes("revoked")) return "This setup token was revoked. Use the latest owner setup email.";
+    if (code.includes("consumed") || code.includes("replay")) return "This setup token was already consumed. Sign in to the workspace owner account.";
+    if (code.includes("mismatch") || code.includes("email")) return "This setup link only authorizes the owner email shown above.";
+    if (code.includes("account") || code.includes("user_exists") || error.status === 409) return "That owner account already exists. Sign in below and activate the setup link.";
+    if (code.includes("mail") || code.includes("setup_unavailable")) return "Owner setup mail or provisioning is unavailable. Retry after Core Mail is configured.";
+    return error.message || fallback;
+  }
+  return fallback;
 }
 
 function ProfilePage({ session, onSessionChanged, onOpenSecurity, emit }: { session: CoreSession | null; onSessionChanged: (session: CoreSession) => void; onOpenSecurity: () => void; emit: (item: Notification) => void }) {
@@ -375,8 +389,8 @@ function OwnerSetupPage() {
       const result = await consumeOwnerSetup(token);
       setStatus("Owner activated. Opening workspace...");
       window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(result.workspaceId)}`);
-    } catch {
-      setStatus("Owner setup could not be consumed by the current session.");
+    } catch (error) {
+      setStatus(ownerSetupErrorMessage(error, "Owner setup could not be consumed by the current session."));
     }
   };
 
@@ -397,8 +411,8 @@ function OwnerSetupPage() {
       await ownerSetupSignUp({ token, email: setup.ownerEmail, name: name.trim() || setup.ownerEmail, password });
       setStatus("Owner account created. Opening workspace...");
       window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(setup.workspaceId)}`);
-    } catch {
-      setStatus("Owner account could not be created. If the account already exists, sign in below and activate the setup link.");
+    } catch (error) {
+      setStatus(ownerSetupErrorMessage(error, "Owner account could not be created. If the account already exists, sign in below and activate the setup link."));
     } finally {
       setBusy(false);
     }
@@ -420,8 +434,8 @@ function OwnerSetupPage() {
       await consumeOwnerSetup(token);
       setStatus("Owner activated. Opening workspace...");
       window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(setup.workspaceId)}`);
-    } catch {
-      setStatus("Existing owner account could not activate this setup link.");
+    } catch (error) {
+      setStatus(ownerSetupErrorMessage(error, "Existing owner account could not activate this setup link."));
     } finally {
       setBusy(false);
     }

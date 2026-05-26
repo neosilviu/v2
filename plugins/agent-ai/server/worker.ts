@@ -28,12 +28,12 @@ const terminalToolStatuses = new Set(["completed", "denied", "failed"]);
 const toolLoopSystemPrompt = `You can request one runtime tool by responding only with JSON: {"toolCall":{"toolId":"tool.id","input":{}}}. If no tool is needed, respond normally. After a tool result is provided, write the final assistant response.`;
 
 app.use("*", cors({ origin: (origin, c) => allowedOrigins(c.env).includes(origin) ? origin : "", allowHeaders: ["Content-Type", "Authorization"], allowMethods: ["GET", "POST", "PUT", "OPTIONS"], credentials: true, maxAge: 600 }));
-app.use("*", async (c, next) => { const internal = isInternalRequest(c.req.raw); c.set("internal", internal); c.set("user", internal || c.req.path === "/health" ? null : await readSession(c.env, c.req.raw.headers)); await next(); });
-app.use("*", async (c, next) => c.req.path === "/health" || c.get("internal") || c.get("user") ? next() : c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401));
+app.use("*", async (c, next) => { const internal = isInternalRequest(c.req.raw); c.set("internal", internal); c.set("user", c.req.path === "/health" ? null : await readSession(c.env, c.req.raw.headers)); await next(); });
+app.use("*", async (c, next) => c.req.path === "/health" || c.get("user") ? next() : c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401));
 app.onError((error, c) => { const validation = error instanceof Error && error.name === "ZodError"; return c.json(errorResponse(failure(validation ? "validation_failed" : "internal_error", validation ? "Request validation failed." : "An unexpected error occurred.")), validation ? 400 : 500); });
 
 async function getCoreApproval(c: AppContext, workspaceId: string, approvalId: string): Promise<ToolApproval | null> {
-  const response = await c.env.CORE.fetch(`https://core.internal/tool-approvals/${encodeURIComponent(approvalId)}?workspaceId=${encodeURIComponent(workspaceId)}`);
+  const response = await c.env.CORE.fetch(`https://core.internal/tool-approvals/${encodeURIComponent(approvalId)}?workspaceId=${encodeURIComponent(workspaceId)}`, { headers: delegatedHeaders(c) });
   if (!response.ok) return null;
   const payload = await response.json() as { approval?: unknown };
   return toolApprovalSchema.parse(payload.approval);
@@ -43,7 +43,7 @@ async function executeViaCore(c: AppContext, repository: AgentRepository, worksp
   await repository.markToolCallExecuting(toolCall.id);
   const response = await c.env.CORE.fetch("https://core.internal/tools/execute", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...Object.fromEntries(delegatedHeaders(c)), "content-type": "application/json" },
     body: JSON.stringify({ workspaceId, toolId: toolCall.toolId, input: toolCall.input, ...(approvalId ? { approvalId } : {}) }),
   });
   const result = toolExecutionResultSchema.parse(await response.json());
@@ -69,6 +69,15 @@ function extractModelToolCall(content: string): { toolId: string; input: unknown
   }
 }
 
+function delegatedHeaders(c: AppContext) {
+  const headers = new Headers();
+  const cookie = c.req.header("cookie");
+  const authorization = c.req.header("authorization");
+  if (cookie) headers.set("cookie", cookie);
+  if (authorization) headers.set("authorization", authorization);
+  return headers;
+}
+
 async function providerMessages(repository: AgentRepository, channelId: string) {
   const messages = await repository.listMessages(channelId);
   return [
@@ -84,7 +93,7 @@ async function callProvider(c: AppContext, binding: NonNullable<Awaited<ReturnTy
   if (!binding.connectionId) throw new Error("Provider connection is not configured for this channel.");
   const response = await c.env.CORE.fetch("https://core.internal/tools/execute", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...Object.fromEntries(delegatedHeaders(c)), "content-type": "application/json" },
     body: JSON.stringify({ workspaceId: binding.workspaceId, toolId: "providers.chat", input: { connectionId: binding.connectionId, modelId: binding.model, messages } }),
   });
   if (!response.ok) throw new Error("Provider execution failed.");

@@ -1,5 +1,4 @@
 import { Hono, type Context } from "hono";
-import { cors } from "hono/cors";
 import { errorResponse, failure } from "@v2/feedback-runtime";
 import { createAuth, isAuthAdmin, parseAuthConfig, resolveAuthConfig, type AuthEnv } from "./auth";
 import { AuthRuntimeRepository } from "./runtime-config";
@@ -13,37 +12,23 @@ function isInternalRequest(c: AuthContext) {
 }
 
 app.get("/health", (c) => c.json({ ok: true, service: "auth-worker", configured: parseAuthConfig(c.env).ok }));
-app.use("/api/auth/*", cors({
-  origin: (origin, c) => {
-    const parsed = parseAuthConfig(c.env);
-    return parsed.ok && parsed.config.trustedOrigins.includes(origin) ? origin : "";
-  },
-  allowHeaders: ["Content-Type", "Authorization"],
-  allowMethods: ["GET", "POST", "OPTIONS"],
-  exposeHeaders: ["Content-Length"],
-  maxAge: 600,
-  credentials: true,
-}));
-app.use("/public/auth/*", cors({
-  origin: (origin, c) => {
-    const parsed = parseAuthConfig(c.env);
-    return parsed.ok && parsed.config.trustedOrigins.includes(origin) ? origin : "";
-  },
-  allowHeaders: ["Content-Type", "Authorization"],
-  allowMethods: ["GET", "OPTIONS"],
-  maxAge: 600,
-  credentials: true,
-}));
-app.use("/admin/auth/*", cors({
-  origin: (origin, c) => {
-    const parsed = parseAuthConfig(c.env);
-    return parsed.ok && parsed.config.trustedOrigins.includes(origin) ? origin : "";
-  },
-  allowHeaders: ["Content-Type", "Authorization"],
-  allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
-  maxAge: 600,
-  credentials: true,
-}));
+app.use("*", async (c, next) => {
+  const origin = c.req.header("origin") ?? "";
+  if (origin && (c.req.path.startsWith("/api/auth/") || c.req.path.startsWith("/public/auth/") || c.req.path.startsWith("/admin/auth/"))) {
+    const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
+    if (parsed.ok && parsed.config.trustedOrigins.includes(origin)) {
+      c.header("Access-Control-Allow-Origin", origin);
+      c.header("Access-Control-Allow-Credentials", "true");
+      c.header("Access-Control-Expose-Headers", "Content-Length");
+      c.header("Vary", "Origin");
+    }
+    c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+    c.header("Access-Control-Max-Age", "600");
+    if (c.req.method === "OPTIONS") return c.body(null, parsed.ok && parsed.config.trustedOrigins.includes(origin) ? 204 : 403);
+  }
+  await next();
+});
 app.get("/public/auth/login-config", async (c) => {
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
