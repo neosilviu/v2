@@ -44,6 +44,8 @@ plugins/
 
 See the official [RDAC roadmap](docs/RDAC.md).
 
+Production administration closure is tracked in [docs/PRODUCTION_BLUEPRINT.md](docs/PRODUCTION_BLUEPRINT.md).
+
 ## Status
 
 Foundation branch in progress: `foundation/runtime-platform`.

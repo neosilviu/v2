@@ -42,6 +42,32 @@ Runtime-first is a hard platform rule:
 - Add the declarative plugin UI renderer foundation before relying on build-time trusted UI as the Marketplace mechanism.
 - Add the policy-aware data/action dispatcher boundary for templates, but do not fake plugin worker execution before a real Dispatch Namespace or equivalent runtime model exists.
 
+## Production Administration Closure
+
+The platform is not considered production-usable until the administration shell is runtime-composed and can configure the platform without adding plugin-specific React pages to Web.
+
+Production closure requires:
+
+- Settings is a complete runtime hub backed by Core D1 contributions, activations, policies and audit.
+- Auth, account security and trusted domain settings are configurable from protected administration UI.
+- Login is fully runtime-driven from Auth DB methods, policy and declarative UI contributions.
+- Marketplace install, upload, publish and approval status are reachable through the Settings hub.
+- Every active plugin can contribute its own Settings tab through validated declarative contracts.
+- Sensitive changes are permission, approval and audit aware.
+- No Settings contribution requires rebuilding Web.
+
+Platform Settings tabs are:
+
+- General
+- Security
+- Domains
+- Marketplace
+- Interface
+
+Plugin settings tabs are runtime contributions registered from installed and active plugin releases. Web must not hardcode plugin tabs.
+
+General owns workspace display metadata, locale, timezone, currency, business identity metadata, notification sender status and service status. Security owns Auth policy publication, methods, login contribution publication, sessions/passkeys overview and bootstrap-admin warnings. Domains owns verified workspace domains, public delivery mappings and the safe boundary for Auth trusted origins. Marketplace owns runtime catalog/releases/install approval status. Interface owns shell zones, placements, theme tokens and enabled surfaces.
+
 ## Faza 1 - Workspace RBAC
 
 Core will replace normal bootstrap administrator authorization with workspace-scoped RBAC.

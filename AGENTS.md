@@ -27,6 +27,10 @@
 - Public delivery route patterns must be validated declarative patterns with static or `:paramName` segments. Do not use arbitrary regexes or feature-specific route code in the host.
 - Template data/action execution must go through generic Core runtime endpoints. Core validates activation/publication/policy and must return denied, approval-required or unavailable instead of pretending unsupported plugin worker logic succeeded.
 - Auth public login methods must come from Auth DB publication state and policy. Server-side support for passkey or OAuth does not make the method public.
+- Production administration closure is part of Faza 0. Settings must be a runtime-composed hub before operational plugins are expanded.
+- Built-in Settings tabs are `General`, `Security`, `Domains`, `Marketplace` and `Interface`; they must use the same contribution model as plugin tabs.
+- Plugin settings tabs must come from installed and active plugin release contributions. Web must not hardcode plugin tabs or require rebuilds for standard plugin settings UI.
+- Auth/account security, domain trust, Marketplace lifecycle and interface composition must be configurable through protected administration surfaces with audit and approval awareness for sensitive mutations.
 - Keep D1 migrations incremental. Do not rewrite existing migration history, apply remote migrations from local work, or change assigned D1 identifiers.
 - Keep PR descriptions current with the real HEAD, validation status and remaining Faza 0 work.
 
@@ -42,6 +46,7 @@
 - Core owns workspaces, plugin installation and activation, grants, generic settings/layout APIs and audit events.
 - Auth owns identity and sessions.
 - The web application owns only the generic shell and platform administration UI.
+- Platform administration UI must stay generic: Settings tabs and panels are runtime contributions rendered through shared templates.
 - Plugin packages own feature logic and plugin domain UI/data.
 
 ## Data
