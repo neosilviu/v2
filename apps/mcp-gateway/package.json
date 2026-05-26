@@ -1,0 +1,9 @@
+{
+  "name": "@v2/mcp-gateway",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev --port 8796 --inspector-port 9296", "build": "tsc --noEmit -p tsconfig.json" },
+  "dependencies": { "@v2/mcp-contracts": "workspace:*", "@v2/plugin-contracts": "workspace:*", "hono": "catalog:" },
+  "devDependencies": { "@cloudflare/workers-types": "catalog:", "typescript": "catalog:", "wrangler": "catalog:" }
+}
