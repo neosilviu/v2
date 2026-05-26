@@ -1,0 +1,21 @@
+{
+  "name": "@v2/cloudflare-platform",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./errors": "./src/errors.ts",
+    "./accounts": "./src/accounts.ts",
+    "./d1": "./src/d1.ts",
+    "./r2": "./src/r2.ts",
+    "./kv": "./src/kv.ts",
+    "./workers": "./src/workers.ts",
+    "./dispatch-namespace": "./src/dispatch-namespace.ts",
+    "./domains": "./src/domains.ts",
+    "./static-assets": "./src/static-assets.ts"
+  },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "build": "tsc --noEmit -p tsconfig.json" },
+  "devDependencies": { "typescript": "catalog:" }
+}

@@ -5,6 +5,7 @@ export interface CoreEnv {
   PLUGIN_PACKAGES: R2Bucket;
   AUTH: Fetcher;
   PLUGIN_RUNTIME?: Fetcher;
+  PLATFORM_PROVISIONER?: Fetcher;
   APP_ORIGIN?: string;
   TRUSTED_ORIGINS?: string;
   RECOVERY_ADMIN_EMAILS?: string;
