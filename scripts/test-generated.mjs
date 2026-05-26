@@ -147,6 +147,7 @@ function testRuntimeFirstArchitecture() {
     if (coreIndex.includes(forbidden) || coreEnv.includes(forbidden) || coreWrangler.includes(forbidden)) fail(`Core contains feature-specific runtime dispatch artifact '${forbidden}'`);
   }
   if (!coreEnv.includes("PLUGIN_RUNTIME") || !coreIndex.includes("pluginRuntimeDispatch")) fail("Core is missing the generic plugin runtime dispatch boundary");
+  if (!coreIndex.includes("runtimeKey")) fail("Core does not pass a persisted runtimeKey to plugin runtime dispatch");
   for (const route of ["/workspaces/:workspaceId/settings/tabs", "/workspaces/:workspaceId/settings/tabs/:tabId", "/workspaces/:workspaceId/settings/runtime/data", "/workspaces/:workspaceId/settings/runtime/actions"]) {
     if (!coreIndex.includes(route)) fail(`Core runtime Settings route ${route} is missing`);
   }
@@ -159,6 +160,47 @@ function testRuntimeFirstArchitecture() {
   const webApp = fs.readFileSync(path.join(root, "apps/web/src/App.tsx"), "utf8");
   if (!webApp.includes("SettingsPage")) fail("Web App does not route Settings through the runtime SettingsPage");
   pass("Runtime-first platform source scan completed");
+}
+
+function testPlatformSeparationGuards() {
+  const runtimeBridge = fs.readFileSync(path.join(root, "apps/runtime-bridge/src/index.ts"), "utf8");
+  const runtimeBridgeEnv = fs.readFileSync(path.join(root, "apps/runtime-bridge/src/env.ts"), "utf8");
+  const runtimeBridgeWrangler = fs.readFileSync(path.join(root, "apps/runtime-bridge/wrangler.jsonc"), "utf8");
+  for (const forbidden of ["WEBSITE_STUDIO", "PLUGIN_RUNTIME_BINDINGS", "website-studio", "v2-plugin-website-studio", "PROVIDER_RUNTIME", "/mcp"]) {
+    if (runtimeBridge.includes(forbidden) || runtimeBridgeEnv.includes(forbidden) || runtimeBridgeWrangler.includes(forbidden)) fail(`Runtime Bridge contains forbidden static runtime/MCP artifact '${forbidden}'`);
+  }
+  if (!runtimeBridgeWrangler.includes("dispatch_namespaces") || !runtimeBridgeWrangler.includes("\"DISPATCHER\"")) fail("Runtime Bridge is not configured with a Dispatch Namespace binding");
+  if (!runtimeBridge.includes("DISPATCHER?.get(runtimeKey)")) fail("Runtime Bridge does not dispatch through env.DISPATCHER.get(runtimeKey)");
+
+  const mcpGateway = fs.readFileSync(path.join(root, "apps/mcp-gateway/src/index.ts"), "utf8");
+  const mcpWrangler = fs.readFileSync(path.join(root, "apps/mcp-gateway/wrangler.jsonc"), "utf8");
+  if (!mcpGateway.includes('app.post("/mcp"')) fail("MCP Gateway does not own the /mcp endpoint");
+  for (const forbidden of ["WEBSITE_STUDIO", "PROVIDER_RUNTIME", "v2-plugin-website-studio", "v2-plugin-ai-providers"]) {
+    if (mcpGateway.includes(forbidden) || mcpWrangler.includes(forbidden)) fail(`MCP Gateway contains forbidden plugin binding '${forbidden}'`);
+  }
+
+  const agentWrangler = fs.readFileSync(path.join(root, "plugins/agent-ai/wrangler.jsonc"), "utf8");
+  const agentSource = fs.readFileSync(path.join(root, "plugins/agent-ai/server/worker.ts"), "utf8") + fs.readFileSync(path.join(root, "plugins/agent-ai/server/provider-routes.ts"), "utf8");
+  if (agentWrangler.includes("PROVIDER_RUNTIME") || agentWrangler.includes("v2-plugin-ai-providers") || agentSource.includes("PROVIDER_RUNTIME")) fail("Agent AI still depends directly on the AI Providers plugin runtime");
+
+  const provisioner = fs.readFileSync(path.join(root, "apps/platform-provisioner-worker/src/index.ts"), "utf8");
+  const cloudflarePackage = fs.readFileSync(path.join(root, "packages/cloudflare-platform/src/dispatch-namespace.ts"), "utf8");
+  const coreEnv = fs.readFileSync(path.join(root, "apps/core-worker/src/env.ts"), "utf8");
+  if (!provisioner.includes("CLOUDFLARE_API_TOKEN") || !coreEnv.includes("PLATFORM_PROVISIONER")) fail("Cloudflare provisioning boundary is not split between Core and provisioner");
+  if (coreEnv.includes("CLOUDFLARE_API_TOKEN")) fail("Core environment exposes the Cloudflare API token");
+  if (!cloudflarePackage.includes("putDispatchWorker")) fail("@v2/cloudflare-platform does not expose Dispatch Namespace worker deployment helpers");
+
+  const webWrangler = fs.readFileSync(path.join(root, "apps/web/wrangler.jsonc"), "utf8");
+  const webPackage = fs.readFileSync(path.join(root, "apps/web/package.json"), "utf8");
+  const webRedirects = fs.readFileSync(path.join(root, "apps/web/public/_redirects"), "utf8");
+  if (!webWrangler.includes("pages_build_output_dir") || webWrangler.includes("\"assets\"") || webWrangler.includes("\"main\"")) fail("Web app must deploy as Cloudflare Pages, not a Worker Static Assets app");
+  if (!webWrangler.includes("pnpm --filter @v2/web build") || !webWrangler.includes("apps/web/dist")) fail("Web Pages config does not record the required Pages build command and output directory");
+  if (!webPackage.includes("wrangler pages deploy dist --project-name v2-web")) fail("Web package does not expose a Cloudflare Pages deploy command");
+  for (const route of ["/login", "/setup/owner", "/settings", "/public/*"]) {
+    if (!webRedirects.includes(`${route} /index.html 200`)) fail(`Web Pages SPA fallback is missing ${route}`);
+  }
+  if (!webWrangler.includes("VITE_CORE_API_URL") || !webWrangler.includes("VITE_AUTH_API_URL")) fail("Web Pages config is missing public Core/Auth API variables");
+  pass("Platform/plugin separation guards completed");
 }
 
 function runCommand(args, label) {
@@ -257,6 +299,7 @@ console.log("==================");
 const manifests = await discoverPluginManifests();
 testManifestContracts(manifests);
 testRuntimeFirstArchitecture();
+testPlatformSeparationGuards();
 testAuthRuntimeBootstrapPolicy();
 testNoImplicitWorkspaceOwnerBootstrap();
 testProductionRuntimeHardening();
