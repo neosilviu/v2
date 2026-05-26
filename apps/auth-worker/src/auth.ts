@@ -36,6 +36,7 @@ function parseUrl(value: string | undefined, name: string): URL {
 function isLocalOrigin(url: URL) { return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname.endsWith(".local"); }
 function parseOrigins(value?: string) { return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean); }
 function rpIdFor(url: URL) { return url.hostname === "127.0.0.1" ? "localhost" : url.hostname; }
+const developmentSecret = "v2-development-only-auth-secret-change-me";
 
 export function parseAuthConfig(env: AuthEnv): AuthConfigResult {
   try {
@@ -44,11 +45,12 @@ export function parseAuthConfig(env: AuthEnv): AuthConfigResult {
     const trustedOrigins = [...new Set([base.origin, ...parseOrigins(env.APP_ORIGIN), ...parseOrigins(env.TRUSTED_ORIGINS)])];
     for (const origin of trustedOrigins) parseUrl(origin, "trusted origin");
     const production = env.DEPLOYMENT_ENV === "production";
-    if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 32) throw new Error("Authentication signing value must be configured server-side with at least 32 characters");
+    const secret = env.BETTER_AUTH_SECRET && env.BETTER_AUTH_SECRET.length >= 32 ? env.BETTER_AUTH_SECRET : production ? "" : developmentSecret;
+    if (!secret || secret.length < 32) throw new Error("Authentication signing value must be configured server-side with at least 32 characters");
     if (production && (base.protocol !== "https:" || isLocalOrigin(base))) throw new Error("Production authentication URL must be HTTPS and non-local");
     if (production && trustedOrigins.some((origin) => { const url = new URL(origin); return url.protocol !== "https:" || isLocalOrigin(url); })) throw new Error("Production trusted origins must be HTTPS and non-local");
     const github = env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET ? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } : undefined;
-    return { ok: true, config: { db: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin }, adminEmails: parseOrigins(env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase()) } };
+    return { ok: true, config: { db: env.AUTH_DB, secret, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin }, adminEmails: parseOrigins(env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase()) } };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Invalid authentication configuration" };
   }

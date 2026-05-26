@@ -1,0 +1,9 @@
+DEPLOYMENT_ENV=development
+BETTER_AUTH_URL=http://localhost:8788
+APP_ORIGIN=http://localhost:5173
+TRUSTED_ORIGINS=http://localhost:5173
+BETTER_AUTH_SECRET=v2-local-development-secret-change-me-32chars
+# Optional. Leave unset unless you have a local OAuth app.
+# GITHUB_CLIENT_ID=
+# GITHUB_CLIENT_SECRET=
+# PLATFORM_ADMIN_EMAILS=owner@example.com
