@@ -1,11 +1,14 @@
 import { Hono } from "hono";
 import { errorResponse, failure } from "@v2/feedback-runtime";
 import { extractDeclaredHtmlAsset } from "@v2/plugin-installer";
+import type { SurfaceContribution } from "@v2/plugin-contracts";
+import { declarativePageContributionSchema } from "@v2/ui-schema";
 import { allowedOrigins, type CoreSessionUser } from "./access";
 import type { CoreEnv } from "./env";
 import { CoreRepository } from "./repository";
 
 type CoreVariables = { user: CoreSessionUser | null; internal: boolean };
+type SurfaceContext = Parameters<ReturnType<typeof createSurfaceRoutes>["get"]>[1] extends never ? never : never;
 
 function frameAncestors(env: CoreEnv): string {
   const configured = allowedOrigins(env)
@@ -18,6 +21,33 @@ function frameAncestors(env: CoreEnv): string {
 
 export function createSurfaceRoutes() {
   const routes = new Hono<{ Bindings: CoreEnv; Variables: CoreVariables }>();
+
+  routes.get("/surfaces", async (c) => {
+    const workspaceId = c.req.query("workspaceId")?.trim();
+    if (!workspaceId) return c.json(errorResponse(failure("validation_failed", "Workspace is required.")), 400);
+    if (!c.get("internal")) {
+      const user = c.get("user");
+      if (!user) return c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401);
+      if (!await new CoreRepository(c.env.CORE_DB).hasPermission(workspaceId, user, "workspace.read")) {
+        return c.json(errorResponse(failure("not_authorized", "workspace.read permission is required.")), 403);
+      }
+    }
+    const rows = await c.env.CORE_DB.prepare(`SELECT c.contribution_id, c.zone_id, c.schema_json, a.zone_override
+      FROM workspace_ui_activations a
+      INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
+      INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
+      WHERE a.workspace_id = ? AND a.enabled = 1 AND c.contribution_type = 'surface' AND c.access_mode != 'public-candidate'
+      ORDER BY a.order_index, c.contribution_id`)
+      .bind(workspaceId)
+      .all<{ contribution_id: string; zone_id: string | null; schema_json: string; zone_override: string | null }>();
+    const surfaces = rows.results.map((row) => {
+      const zone = row.zone_override ?? row.zone_id ?? "workspace.main";
+      const schema = declarativePageContributionSchema.parse(JSON.parse(row.schema_json));
+      const kind = zone.startsWith("settings.") ? "settings" : zone === "assistant.right" ? "panel" : "page";
+      return { id: row.contribution_id, title: schema.title, zone, kind, renderer: { mode: "declarative", schema } } satisfies SurfaceContribution;
+    });
+    return c.json({ surfaces });
+  });
 
   routes.get("/surfaces/:surfaceId", async (c) => {
     if (!c.get("internal") && !c.get("user")) {
