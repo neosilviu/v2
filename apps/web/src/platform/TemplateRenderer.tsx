@@ -1,6 +1,7 @@
 import type { ActionDefinition, DeclarativePageContribution, FieldDefinition, SlotContribution, TemplateId } from "@v2/ui-schema";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import type { FormEvent, ReactElement } from "react";
+import { useEffect, useState, type FormEvent, type ReactElement } from "react";
+import { executePublicRuntimeAction, executeRuntimeAction, loadPublicRuntimeData, loadRuntimeData } from "../api";
 
 export type TemplateCallbacks = {
   onAction?: (action: ActionDefinition) => void | Promise<void>;
@@ -11,6 +12,7 @@ export type TemplateRendererProps = {
   page: DeclarativePageContribution;
   data?: unknown;
   callbacks?: TemplateCallbacks | undefined;
+  runtime?: { contributionId?: string; public?: boolean; workspaceId?: string; routeParams?: Record<string, string> } | undefined;
 };
 
 function valueAt(row: unknown, field: string): string {
@@ -104,6 +106,66 @@ const registry: Record<TemplateId, (props: TemplateRendererProps) => ReactElemen
 };
 
 export function TemplateRenderer(props: TemplateRendererProps) {
+  const [runtimeData, setRuntimeData] = useState<unknown>(props.data ?? props.page.data);
+  const [status, setStatus] = useState<string | null>(null);
+  const contributionId = props.runtime?.contributionId ?? props.page.id;
+  const routeParams = props.runtime?.routeParams ?? {};
+  const routeParamsKey = JSON.stringify(routeParams);
+
+  useEffect(() => {
+    let alive = true;
+    if (!props.page.dataSources.length) {
+      setRuntimeData(props.data ?? props.page.data);
+      return () => { alive = false; };
+    }
+    setStatus("Loading data...");
+    void Promise.all(props.page.dataSources.map(async (dataSource) => {
+      const result = props.runtime?.public
+        ? await loadPublicRuntimeData(contributionId, dataSource.id, routeParams, props.runtime.workspaceId)
+        : await loadRuntimeData(contributionId, dataSource.id, routeParams);
+      return { id: dataSource.id, result };
+    })).then((results) => {
+      if (!alive) return;
+      const failed = results.find((item) => item.result.status !== "ok");
+      if (failed) {
+        setStatus(failed.result.error ?? failed.result.status);
+        return;
+      }
+      setStatus(null);
+      setRuntimeData(results.length === 1 ? results[0]!.result.data : Object.fromEntries(results.map((item) => [item.id, item.result.data])));
+    }).catch((error: unknown) => {
+      if (alive) setStatus(error instanceof Error ? error.message : "Runtime data unavailable");
+    });
+    return () => { alive = false; };
+  }, [contributionId, props.data, props.page, props.runtime?.public, routeParamsKey]);
+
+  const dispatchAction = async (action: ActionDefinition, input?: unknown) => {
+    if (props.callbacks?.onAction && input === undefined) {
+      await props.callbacks.onAction(action);
+      return;
+    }
+    setStatus("Running action...");
+    try {
+      const result = props.runtime?.public
+        ? await executePublicRuntimeAction(contributionId, action.id, input, routeParams, props.runtime.workspaceId)
+        : await executeRuntimeAction(contributionId, action.id, input, routeParams);
+      setStatus(result.status === "ok" ? "Action completed" : result.approvalId ? `Approval required: ${result.approvalId.slice(0, 8)}` : result.error ?? result.status);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Runtime action unavailable");
+    }
+  };
+
   const Template = registry[props.page.templateId];
-  return <Template {...props} />;
+  return <div className="template-runtime">
+    {status ? <p className="message">{status}</p> : null}
+    <Template {...props} data={runtimeData} callbacks={{
+      ...props.callbacks,
+      onAction: (action) => dispatchAction(action),
+      onSubmit: (page, values) => {
+        if (props.callbacks?.onSubmit) return props.callbacks.onSubmit(page, values);
+        const action = page.actions.find((item) => item.intent === "submit") ?? page.actions[0];
+        return action ? dispatchAction(action, values) : undefined;
+      },
+    }} />
+  </div>;
 }

@@ -79,6 +79,13 @@ export type PublicDelivery = {
   page: DeclarativePageContribution;
   routeParams: Record<string, string>;
 };
+export type RuntimeContributionResolution = {
+  workspaceId: string;
+  pluginId: string;
+  contributionId: string;
+  page: DeclarativePageContribution;
+  policy?: { id: string | null; access: PublicContributionAccess; authenticationMode: "anonymous" | "customer" | "verified"; allowedOperations: string[]; enabled: boolean };
+};
 
 type PublicDeliveryRow = {
   id: string;
@@ -518,6 +525,37 @@ export class CoreRepository {
         renderer: { mode: "declarative", schema },
       } satisfies SurfaceContribution;
     });
+  }
+
+  async privateRuntimeContribution(workspaceId: string, contributionId: string): Promise<RuntimeContributionResolution | undefined> {
+    const row = await this.db.prepare(`SELECT c.plugin_id, c.contribution_id, c.schema_json
+      FROM workspace_ui_activations a
+      INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
+      INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
+      WHERE a.workspace_id = ? AND a.contribution_id = ? AND a.enabled = 1 AND c.access_mode != 'public-candidate'
+      ORDER BY a.order_index
+      LIMIT 1`)
+      .bind(workspaceId, contributionId)
+      .first<{ plugin_id: string; contribution_id: string; schema_json: string }>();
+    return row ? { workspaceId, pluginId: row.plugin_id, contributionId: row.contribution_id, page: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)) } : undefined;
+  }
+
+  async publicRuntimeContribution(workspaceId: string, contributionId: string): Promise<RuntimeContributionResolution | undefined> {
+    const row = await this.db.prepare(`SELECT p.workspace_id, p.plugin_id, p.contribution_id, p.schema_json, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, COALESCE(policy.authentication_mode, 'anonymous') AS authentication_mode, COALESCE(policy.allowed_operations_json, '[]') AS allowed_operations_json, COALESCE(policy.enabled, 1) AS policy_enabled
+      FROM workspace_publications p
+      INNER JOIN workspace_plugins active ON active.workspace_id = p.workspace_id AND active.plugin_id = p.plugin_id AND active.active = 1
+      LEFT JOIN public_access_policies policy ON policy.id = p.policy_id
+      WHERE p.workspace_id = ? AND p.contribution_id = ? AND p.status = 'published' AND COALESCE(policy.enabled, 1) = 1
+      LIMIT 1`)
+      .bind(workspaceId, contributionId)
+      .first<{ workspace_id: string; plugin_id: string; contribution_id: string; schema_json: string; policy_id: string | null; access: PublicContributionAccess; authentication_mode: "anonymous" | "customer" | "verified"; allowed_operations_json: string; policy_enabled: number }>();
+    return row ? {
+      workspaceId: row.workspace_id,
+      pluginId: row.plugin_id,
+      contributionId: row.contribution_id,
+      page: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)),
+      policy: { id: row.policy_id, access: row.access, authenticationMode: row.authentication_mode, allowedOperations: JSON.parse(row.allowed_operations_json) as string[], enabled: row.policy_enabled === 1 },
+    } : undefined;
   }
 
   async declaredCapabilities(pluginId: string): Promise<string[]> {

@@ -2,7 +2,7 @@ import type { PluginBundle, PluginManifest, ToolContribution } from "@v2/plugin-
 import type { SurfaceContribution } from "@v2/plugin-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-import type { DeclarativePageContribution } from "@v2/ui-schema";
+import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
 const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 const workspaceId = "default";
 export class CoreAuthRequiredError extends Error {
@@ -33,6 +33,10 @@ export async function saveLayout(state: ShellState): Promise<void> { await json(
 export async function loadActivePlugins(): Promise<string[]> { return (await json<{ active: string[] }>(`/workspaces/${workspaceId}/plugins`)).active; }
 export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> { return (await json<{ surfaces: SurfaceContribution[] }>(`/workspaces/${workspaceId}/ui/surfaces`)).surfaces; }
 export async function loadPublicPage(pathname: string): Promise<{ page: DeclarativePageContribution; routeParams: Record<string, string> }> { return json<{ page: DeclarativePageContribution; routeParams: Record<string, string> }>(pathname); }
+export async function loadRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>("/runtime/ui/data", { method: "POST", body: JSON.stringify({ workspaceId, contributionId, dataSourceId, routeParams }) }); }
+export async function executeRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>("/runtime/ui/actions", { method: "POST", body: JSON.stringify({ workspaceId, contributionId, actionId, input, routeParams }) }); }
+export async function loadPublicRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}, publicWorkspaceId = workspaceId): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>(`/public/${encodeURIComponent(publicWorkspaceId)}/runtime/data`, { method: "POST", body: JSON.stringify({ contributionId, dataSourceId, routeParams }) }); }
+export async function executePublicRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}, publicWorkspaceId = workspaceId): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>(`/public/${encodeURIComponent(publicWorkspaceId)}/runtime/actions`, { method: "POST", body: JSON.stringify({ contributionId, actionId, input, routeParams }) }); }
 export async function activatePlugin(pluginId: string): Promise<void> { await json("/plugins/activate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); }
 export async function deactivatePlugin(pluginId: string): Promise<void> { await json("/plugins/deactivate", { method: "POST", body: JSON.stringify({ workspaceId, pluginId }) }); }
 export async function loadSettings(scope: "platform" | `plugin:${string}`): Promise<Record<string, unknown>> { return (await json<{ settings: Record<string, unknown> }>(`/workspaces/${workspaceId}/settings/${encodeURIComponent(scope)}`)).settings; }

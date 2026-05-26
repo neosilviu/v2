@@ -37,6 +37,7 @@ export const actionDefinitionSchema = z.object({
   intent: z.enum(["navigate", "submit", "execute", "approve", "deny"]).default("execute"),
   variant: z.enum(["default", "primary", "danger"]).default("default"),
   access: accessModeSchema.default("private"),
+  risk: z.enum(["safe", "reversible", "sensitive", "dangerous"]).default("safe"),
 });
 
 export const fieldDefinitionSchema = z.object({
@@ -91,6 +92,27 @@ export const publicRouteContributionSchema = z.object({
   pageId: operationIdSchema,
   access: accessModeSchema.default("public-candidate"),
 });
+export const runtimeDataRequestSchema = z.object({
+  workspaceId: z.string().min(1),
+  contributionId: operationIdSchema,
+  dataSourceId: operationIdSchema,
+  routeParams: z.record(z.string(), z.string()).default({}),
+  queryParams: z.record(z.string(), z.union([z.string(), z.array(z.string())])).default({}),
+});
+export const runtimeActionRequestSchema = z.object({
+  workspaceId: z.string().min(1),
+  contributionId: operationIdSchema,
+  actionId: operationIdSchema,
+  input: z.unknown().optional(),
+  routeParams: z.record(z.string(), z.string()).default({}),
+  approvalId: z.string().min(1).optional(),
+});
+export const runtimeResultEnvelopeSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), data: z.unknown().nullable().default(null), error: z.null().default(null), approvalId: z.string().nullable().default(null), auditEventId: z.string().nullable().default(null) }),
+  z.object({ status: z.literal("denied"), data: z.null().default(null), error: z.string(), approvalId: z.string().nullable().default(null), auditEventId: z.string().nullable().default(null) }),
+  z.object({ status: z.literal("approval-required"), data: z.null().default(null), error: z.string().nullable().default(null), approvalId: z.string(), auditEventId: z.string().nullable().default(null) }),
+  z.object({ status: z.literal("unavailable"), data: z.null().default(null), error: z.string(), approvalId: z.string().nullable().default(null), auditEventId: z.string().nullable().default(null) }),
+]);
 
 export type TemplateId = z.output<typeof templateIdSchema>;
 export type AccessMode = z.output<typeof accessModeSchema>;
@@ -102,3 +124,6 @@ export type SlotContribution = z.output<typeof slotContributionSchema>;
 export type DeclarativePageContribution = z.output<typeof declarativePageContributionSchema>;
 export type PublicRouteContribution = z.output<typeof publicRouteContributionSchema>;
 export type PublicRoutePattern = z.output<typeof publicRoutePatternSchema>;
+export type RuntimeDataRequest = z.output<typeof runtimeDataRequestSchema>;
+export type RuntimeActionRequest = z.output<typeof runtimeActionRequestSchema>;
+export type RuntimeResultEnvelope = z.output<typeof runtimeResultEnvelopeSchema>;

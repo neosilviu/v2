@@ -5,6 +5,7 @@ import type { PluginBundle, PublicContributionAccess } from "@v2/plugin-contract
 import { assessPluginBundle, unpackPluginZip } from "@v2/plugin-installer";
 import { approvalRequestDecisionRequestSchema, capabilityGrantRequestSchema, layoutWriteRequestSchema, pluginActivationRequestSchema, pluginInstallRequestSchema, settingScopeSchema, settingWriteRequestSchema, toolApprovalDecisionRequestSchema, toolApprovalLookupRequestSchema, toolExecutionRequestSchema, type SettingScope } from "@v2/rpc-contracts";
 import { RuntimeKernel } from "@v2/runtime";
+import { runtimeActionRequestSchema, runtimeDataRequestSchema, type ActionDefinition } from "@v2/ui-schema";
 import { allowedOrigins, isInternalRequest, isPlatformAdmin, readSession, type CoreSessionUser } from "./access";
 import { ApprovalRequestRepository } from "./approval-requests";
 import type { CoreEnv } from "./env";
@@ -56,6 +57,26 @@ function pluginInstallApprovalPayload(source: "marketplace" | "upload" | "direct
     bundle: assessment.bundle,
     ...extra,
   };
+}
+function staticDataFor(pageData: Record<string, unknown>, dataSourceId: string, resource?: string) {
+  return resource ? pageData[resource] : pageData[dataSourceId] ?? pageData;
+}
+function runtimeUnavailable(message = "Runtime Worker dispatch is not configured for this operation yet.") {
+  return { status: "unavailable" as const, data: null, error: message, approvalId: null, auditEventId: null };
+}
+async function maybeActionApproval(c: CoreContext, repo: CoreRepository, action: ActionDefinition, workspaceId: string, pluginId: string, contributionId: string, input: unknown) {
+  if (action.risk !== "sensitive" && action.risk !== "dangerous") return undefined;
+  const approval = await new ApprovalRequestRepository(c.env.CORE_DB).create({
+    workspaceId,
+    kind: "tool_execute",
+    subjectId: action.commandId,
+    pluginId,
+    risk: action.risk,
+    payload: { source: "runtime-ui-action", contributionId, actionId: action.id, commandId: action.commandId, input },
+    requestedBy: c.get("user")?.id,
+  });
+  await repo.audit(workspaceId, "runtime.ui.action.approval.requested", { approvalId: approval.id, pluginId, contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
+  return { status: "approval-required" as const, data: null, error: null, approvalId: approval.id, auditEventId: null };
 }
 app.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
 app.get("/session", (c) => {
@@ -252,6 +273,60 @@ app.post("/approval-requests/:approvalId/decision", async (c) => {
 app.get("/tool-approvals/:approvalId", async (c) => { const denied = c.get("internal") ? undefined : requireAdmin(c); if (denied) return denied; const request = toolApprovalLookupRequestSchema.parse({ workspaceId: c.req.query("workspaceId"), approvalId: c.req.param("approvalId") }); const approval = await new ToolApprovalRepository(c.env.CORE_DB).getForWorkspace(request.workspaceId, request.approvalId); return approval ? c.json({ approval }) : c.json(errorResponse(failure("not_found", "Approval is not available.")), 404); });
 app.post("/tool-approvals/decision", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = toolApprovalDecisionRequestSchema.parse(await c.req.json()); const approval = await new ToolApprovalRepository(c.env.CORE_DB).decide(request.workspaceId, request.approvalId, request.decision, c.get("user")?.id); if (!approval) return c.json(errorResponse(failure("conflict", "Approval is not pending.")), 409); await new CoreRepository(c.env.CORE_DB).audit(request.workspaceId, `tool.approval.${request.decision}`, { approvalId: approval.id, toolId: approval.toolId }, c.get("user")?.id); return c.json({ approval }); });
 app.post("/tools/execute", async (c) => { const denied = requireRead(c); if (denied) return denied; const request = toolExecutionRequestSchema.parse(await c.req.json()); const repo = new CoreRepository(c.env.CORE_DB); const approvals = new ToolApprovalRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const owner = runtime.plugins.all().find((plugin) => plugin.contributes.tools.some((tool) => tool.id === request.toolId)); const tool = runtime.tools.get(request.toolId); if (!owner || !tool) return c.json({ status: "denied", toolId: request.toolId, reason: "Tool not registered" }, 404); const active = new Set(await repo.activePlugins(request.workspaceId)); if (!active.has(owner.id)) return c.json({ status: "denied", toolId: tool.id, reason: "Plugin is not active in workspace" }, 403); const permissions = new Set(await repo.grantedCapabilities(request.workspaceId, owner.id)); const initialDecision = runtime.canExecuteTool(tool.id, { permissions }); if (initialDecision === "deny") return c.json({ status: "denied", toolId: tool.id, reason: "Capability has not been granted" }, 403); let executionInput = request.input; let consumedApprovalId: string | undefined; if (initialDecision === "require-approval") { if (!request.approvalId) { const approval = await approvals.create(request.workspaceId, owner.id, tool.id, tool.risk, request.input, c.get("user")?.id); await repo.audit(request.workspaceId, "tool.approval.requested", { approvalId: approval.id, toolId: tool.id, pluginId: owner.id }, c.get("user")?.id); return c.json({ status: "approval-required", toolId: tool.id, risk: tool.risk, approvalId: approval.id }, 202); } const approved = await approvals.approvedInput(request.workspaceId, request.approvalId, owner.id, tool.id); if (!approved) return c.json({ status: "denied", toolId: tool.id, reason: "Approval is missing, expired or already consumed" }, 403); executionInput = approved.input; consumedApprovalId = approved.approval.id; } await runtime.events.emit("tool.executed", { workspaceId: request.workspaceId, toolId: tool.id, input: executionInput }); if (consumedApprovalId) await approvals.consume(consumedApprovalId); await repo.audit(request.workspaceId, "tool.execute", { toolId: tool.id, pluginId: owner.id, approvalId: consumedApprovalId ?? null }, c.get("user")?.id); return c.json({ status: "executed", toolId: tool.id, ...(consumedApprovalId ? { approvalId: consumedApprovalId } : {}), result: { accepted: true } }); });
+app.post("/runtime/ui/data", async (c) => {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const request = runtimeDataRequestSchema.parse(await c.req.json());
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const resolved = await repo.privateRuntimeContribution(request.workspaceId, request.contributionId);
+  if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
+  const dataSource = resolved.page.dataSources.find((item) => item.id === request.dataSourceId);
+  if (!dataSource) return c.json({ status: "denied", data: null, error: "Data source is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor(resolved.page.data, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
+  await repo.audit(request.workspaceId, "runtime.ui.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
+  return c.json(runtimeUnavailable(), 501);
+});
+app.post("/runtime/ui/actions", async (c) => {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const request = runtimeActionRequestSchema.parse(await c.req.json());
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const resolved = await repo.privateRuntimeContribution(request.workspaceId, request.contributionId);
+  if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
+  const action = resolved.page.actions.find((item) => item.id === request.actionId);
+  if (!action) return c.json({ status: "denied", data: null, error: "Action is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  const approval = await maybeActionApproval(c, repo, action, request.workspaceId, resolved.pluginId, request.contributionId, request.input);
+  if (approval) return c.json(approval, 202);
+  await repo.audit(request.workspaceId, "runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
+  return c.json(runtimeUnavailable(), 501);
+});
+app.post("/public/:workspaceId/runtime/data", async (c) => {
+  const request = runtimeDataRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const resolved = await repo.publicRuntimeContribution(request.workspaceId, request.contributionId);
+  if (!resolved?.policy?.enabled) return c.json({ status: "denied", data: null, error: "Publication is not available.", approvalId: null, auditEventId: null }, 404);
+  if (resolved.policy.authenticationMode !== "anonymous" || resolved.policy.access === "authenticated") { const denied = requireRead(c); if (denied) return denied; }
+  const dataSource = resolved.page.dataSources.find((item) => item.id === request.dataSourceId);
+  if (!dataSource) return c.json({ status: "denied", data: null, error: "Data source is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  if (!resolved.policy.allowedOperations.includes(dataSource.id) && !resolved.policy.allowedOperations.includes(request.contributionId)) return c.json({ status: "denied", data: null, error: "Public policy does not allow this data source.", approvalId: null, auditEventId: null }, 403);
+  if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor(resolved.page.data, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
+  await repo.audit(request.workspaceId, "public.runtime.ui.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
+  return c.json(runtimeUnavailable(), 501);
+});
+app.post("/public/:workspaceId/runtime/actions", async (c) => {
+  const request = runtimeActionRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const resolved = await repo.publicRuntimeContribution(request.workspaceId, request.contributionId);
+  if (!resolved?.policy?.enabled) return c.json({ status: "denied", data: null, error: "Publication is not available.", approvalId: null, auditEventId: null }, 404);
+  if (resolved.policy.authenticationMode !== "anonymous" || resolved.policy.access === "authenticated") { const denied = requireRead(c); if (denied) return denied; }
+  const action = resolved.page.actions.find((item) => item.id === request.actionId);
+  if (!action) return c.json({ status: "denied", data: null, error: "Action is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  if (!resolved.policy.allowedOperations.includes(action.id) && !resolved.policy.allowedOperations.includes(action.commandId)) return c.json({ status: "denied", data: null, error: "Public policy does not allow this action.", approvalId: null, auditEventId: null }, 403);
+  const approval = await maybeActionApproval(c, repo, action, request.workspaceId, resolved.pluginId, request.contributionId, request.input);
+  if (approval) return c.json(approval, 202);
+  await repo.audit(request.workspaceId, "public.runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
+  return c.json(runtimeUnavailable(), 501);
+});
 app.get("/workspaces/:workspaceId/settings/:scope", async (c) => { const denied = requireRead(c); if (denied) return denied; const scope = settingScopeSchema.parse(c.req.param("scope")) as SettingScope; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).listSettings(c.req.param("workspaceId"), scope) }); });
 app.put("/settings", async (c) => { const denied = requireAdmin(c); if (denied) return denied; const request = settingWriteRequestSchema.parse(await c.req.json()); await new CoreRepository(c.env.CORE_DB).setSetting(request.workspaceId, request.scope as SettingScope, request.key, request.value); return c.json({ saved: true }); });
 app.get("/workspaces/:workspaceId/layout", async (c) => { const denied = requireRead(c); if (denied) return denied; return c.json({ layout: (await new CoreRepository(c.env.CORE_DB).getLayout(c.req.param("workspaceId"))) ?? null }); });

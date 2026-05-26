@@ -21,7 +21,7 @@ export function DeclarativeBlocks({ schema }: { schema: LegacyDeclarativeUi }) {
 
 export function DeclarativeSurface({ surface, schema }: { surface: SurfaceContribution; schema: unknown }) {
   const templatePage = declarativePageContributionSchema.safeParse(schema);
-  if (templatePage.success) return <TemplateRenderer page={templatePage.data} data={templatePage.data.data} />;
+  if (templatePage.success) return <TemplateRenderer page={templatePage.data} data={templatePage.data.data} runtime={{ contributionId: surface.id }} />;
   const legacy = declarativeUiSchema.parse(schema);
   const blocks = legacy.body.filter((block) => block.type !== "action");
   const actions = legacy.body.filter((block) => block.type === "action").map((block, index) => ({
@@ -38,7 +38,7 @@ export function DeclarativeSurface({ surface, schema }: { surface: SurfaceContri
     actions,
     slots: [{ id: `${surface.id}.body`, slot: surface.kind === "settings" ? "header" : "body", blocks }],
   });
-  return <TemplateRenderer page={page} data={page.data} />;
+  return <TemplateRenderer page={page} data={page.data} runtime={{ contributionId: surface.id }} />;
 }
 
 export function LegacyDeclarativeSurface({ surface, schema }: { surface: SurfaceContribution; schema: LegacyDeclarativeUi }) {
