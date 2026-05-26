@@ -7,7 +7,6 @@ export interface AgentAiEnv {
   AGENT_VECTORIZE?: VectorizeIndex;
   AUTH: Fetcher;
   CORE: Fetcher;
-  PROVIDER_RUNTIME: Fetcher;
   KNOWLEDGE_RUNTIME?: Fetcher;
   PAGE_CONTEXT?: Fetcher;
   APP_ORIGIN?: string;

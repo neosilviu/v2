@@ -3,7 +3,10 @@ import { definePlugin } from "@v2/plugin-sdk";
 export const aiProvidersPlugin = definePlugin({
   id: "ai-providers", name: "AI Providers", version: "0.1.0", builtIn: true,
   data: { mode: "dedicated", resources: ["d1"] },
-  capabilities: [{ id: "providers.manage", description: "Discover models and test AI provider connections", risk: "sensitive" }],
+  capabilities: [
+    { id: "providers.manage", description: "Discover models and test AI provider connections", risk: "sensitive" },
+    { id: "providers.use", description: "Invoke configured AI provider connections", risk: "sensitive" }
+  ],
   contributes: {
     providers: [
       { id: "cloudflare-workers-ai", title: "Cloudflare Workers AI", adapter: "cloudflare-workers-ai", enabled: true, description: "Cloudflare AI binding with optional account discovery.", capabilities: ["chat", "tool-use"], models: [{ id: "@cf/meta/llama-3.1-8b-instruct", title: "Llama 3.1 8B Instruct", capabilities: ["chat"] }], secretFields: [{ id: "api_token", title: "API token", required: false }, { id: "account_id", title: "Account ID", required: false, secret: false }] },
@@ -32,7 +35,9 @@ export const aiProvidersPlugin = definePlugin({
     } } }],
     tools: [
       { id: "providers.detectModels", title: "Detect provider models", permissions: ["providers.manage"], risk: "sensitive", exposure: ["agent-ai", "mcp", "command"] },
-      { id: "providers.testConnection", title: "Test AI provider", permissions: ["providers.manage"], risk: "sensitive", exposure: ["agent-ai", "mcp", "command"] }
+      { id: "providers.testConnection", title: "Test AI provider", permissions: ["providers.manage"], risk: "sensitive", exposure: ["agent-ai", "mcp", "command"] },
+      { id: "providers.listConnections", title: "List provider connections", permissions: ["providers.manage"], risk: "safe", exposure: ["agent-ai", "command"] },
+      { id: "providers.chat", title: "Invoke AI provider chat", permissions: ["providers.use"], risk: "sensitive", exposure: ["agent-ai"] }
     ]
   }
 });

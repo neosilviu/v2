@@ -82,13 +82,15 @@ async function providerMessages(repository: AgentRepository, channelId: string) 
 
 async function callProvider(c: AppContext, binding: NonNullable<Awaited<ReturnType<AgentRepository["getProvider"]>>>, messages: Awaited<ReturnType<typeof providerMessages>>) {
   if (!binding.connectionId) throw new Error("Provider connection is not configured for this channel.");
-  const response = await c.env.PROVIDER_RUNTIME.fetch(`https://providers.internal/connections/${encodeURIComponent(binding.connectionId)}/chat`, {
+  const response = await c.env.CORE.fetch("https://core.internal/tools/execute", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ modelId: binding.model, messages }),
+    body: JSON.stringify({ workspaceId: binding.workspaceId, toolId: "providers.chat", input: { connectionId: binding.connectionId, modelId: binding.model, messages } }),
   });
   if (!response.ok) throw new Error("Provider execution failed.");
-  return providerChatResultSchema.parse(await response.json());
+  const payload = await response.json() as { status?: string; result?: unknown };
+  if (payload.status !== "executed") throw new Error("Provider execution was not completed.");
+  return providerChatResultSchema.parse(payload.result);
 }
 
 async function continueRunAfterToolResult(c: AppContext, repository: AgentRepository, runId: string, binding: NonNullable<Awaited<ReturnType<AgentRepository["getProvider"]>>>, toolCall: AgentToolCall) {

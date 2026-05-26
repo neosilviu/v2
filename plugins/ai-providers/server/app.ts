@@ -25,4 +25,44 @@ app.use("/connections/*", async (c, next) => isInternalRequest(c.req.raw) ? next
 app.post("/connections/:connectionId/detect-models", async (c) => { const result = await resolved(c.env, c.req.param("connectionId")); if ("error" in result) return c.json(result.error, result.status); try { const models = await detectProviderModels(c.env, result.provider, {}); await result.repo.replaceModels(result.connection.id, models); return c.json({ models }); } catch { return c.json(unavailable("Provider model discovery failed."), 502); } });
 app.post("/connections/:connectionId/test", async (c) => { const result = await resolved(c.env, c.req.param("connectionId")); if ("error" in result) return c.json(result.error, result.status); const input = await c.req.json<{ modelId?: string }>(); try { return c.json(await testProvider(c.env, result.provider, {}, input.modelId ?? result.connection.defaultModelId ?? undefined)); } catch { return c.json(unavailable("Provider connection test failed."), 502); } });
 app.post("/connections/:connectionId/chat", async (c) => { const result = await resolved(c.env, c.req.param("connectionId")); if ("error" in result) return c.json(result.error, result.status); const input = providerChatRequestSchema.parse(await c.req.json()); const modelId = input.modelId ?? result.connection.defaultModelId; if (!modelId) return c.json(errorResponse(failure("conflict", "No chat model is configured for this connection.")), 409); try { return c.json(await invokeProviderChat(c.env, result.provider, modelId, input.messages)); } catch { return c.json(unavailable("Provider chat execution is not available for this connection."), 502); } });
+app.post("/runtime/execute", async (c) => {
+  if (!isInternalRequest(c.req.raw) && new URL(c.req.url).hostname !== "plugin-runtime.internal") return c.json(errorResponse(failure("not_authorized", "Provider runtime access is internal only.")), 403);
+  const body = await c.req.json().catch(() => null) as { workspaceId?: unknown; operationId?: unknown; input?: unknown } | null;
+  const operationId = typeof body?.operationId === "string" ? body.operationId : "";
+  const input = body?.input && typeof body.input === "object" ? body.input as Record<string, unknown> : {};
+  const repo = repository(c.env);
+  if (!repo) return c.json(unavailable("Provider connection storage is not configured."), 503);
+  if (operationId === "providers.listConnections") return c.json({ connections: await repo.list(typeof body?.workspaceId === "string" ? body.workspaceId : "default") });
+  const connectionId = typeof input.connectionId === "string" ? input.connectionId : "";
+  if (!connectionId) return c.json(errorResponse(failure("validation_failed", "connectionId is required.")), 400);
+  const result = await resolved(c.env, connectionId);
+  if ("error" in result) return c.json(result.error, result.status);
+  if (operationId === "providers.detectModels") {
+    try {
+      const models = await detectProviderModels(c.env, result.provider, {});
+      await result.repo.replaceModels(result.connection.id, models);
+      return c.json({ models });
+    } catch {
+      return c.json(unavailable("Provider model discovery failed."), 502);
+    }
+  }
+  if (operationId === "providers.testConnection") {
+    try {
+      return c.json(await testProvider(c.env, result.provider, {}, typeof input.modelId === "string" ? input.modelId : result.connection.defaultModelId ?? undefined));
+    } catch {
+      return c.json(unavailable("Provider connection test failed."), 502);
+    }
+  }
+  if (operationId === "providers.chat") {
+    const request = providerChatRequestSchema.parse({ modelId: input.modelId, messages: input.messages });
+    const modelId = request.modelId ?? result.connection.defaultModelId;
+    if (!modelId) return c.json(errorResponse(failure("conflict", "No chat model is configured for this connection.")), 409);
+    try {
+      return c.json(await invokeProviderChat(c.env, result.provider, modelId, request.messages));
+    } catch {
+      return c.json(unavailable("Provider chat execution is not available for this connection."), 502);
+    }
+  }
+  return c.json(errorResponse(failure("not_found", "Provider runtime operation is not available.")), 404);
+});
 export default app;
