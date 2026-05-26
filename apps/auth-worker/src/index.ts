@@ -24,17 +24,21 @@ app.use("*", async (c, next) => {
   }
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
   const allowed = parsed.ok && parsed.config.trustedOrigins.includes(origin);
-  c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
-  c.header("Access-Control-Max-Age", "600");
-  if (c.req.method === "OPTIONS") return c.body(null, allowed ? 204 : 403);
-  await next();
-  if (allowed) {
+  const allowOrigin = () => {
     c.header("Access-Control-Allow-Origin", origin);
     c.header("Access-Control-Allow-Credentials", "true");
     c.header("Access-Control-Expose-Headers", "Content-Length");
     c.header("Vary", "Origin");
+  };
+  c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+  c.header("Access-Control-Max-Age", "600");
+  if (c.req.method === "OPTIONS") {
+    if (allowed) allowOrigin();
+    return c.body(null, allowed ? 204 : 403);
   }
+  await next();
+  if (allowed) allowOrigin();
 });
 app.get("/public/auth/login-config", async (c) => {
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
