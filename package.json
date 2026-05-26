@@ -14,6 +14,7 @@
     "build:analyze": "node scripts/analyze-build.mjs",
     "guard:architecture": "pnpm build:analyze -- --strict && pnpm test:generated -- --check-migrations",
     "test:generated": "node --experimental-strip-types scripts/test-generated.mjs",
+    "smoke:local": "node scripts/smoke-local-e2e.mjs",
     "marketplace:sync": "node --experimental-strip-types scripts/sync-plugin-catalog.mjs",
     "check": "pnpm typecheck && pnpm build",
     "format": "prettier --write ."

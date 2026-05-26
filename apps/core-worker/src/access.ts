@@ -24,7 +24,12 @@ export function isInternalRequest(request: Request): boolean {
 
 export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreSessionUser | null> {
   try {
-    const response = await env.AUTH.fetch("https://auth.internal/api/auth/get-session", { headers });
+    const sessionHeaders = new Headers();
+    const cookie = headers.get("cookie");
+    const authorization = headers.get("authorization");
+    if (cookie) sessionHeaders.set("cookie", cookie);
+    if (authorization) sessionHeaders.set("authorization", authorization);
+    const response = await env.AUTH.fetch("https://auth.internal/api/auth/get-session", { headers: sessionHeaders });
     if (!response.ok) return null;
     const result = await response.json() as { user?: CoreSessionUser | null } | null;
     return result?.user?.id && result.user.email ? result.user : null;

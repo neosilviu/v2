@@ -44,7 +44,7 @@ plugins/
 
 See the official [RDAC roadmap](docs/RDAC.md).
 
-Production administration closure is tracked in [docs/PRODUCTION_BLUEPRINT.md](docs/PRODUCTION_BLUEPRINT.md). Local smoke steps are in [docs/testing/END_TO_END.md](docs/testing/END_TO_END.md).
+Production administration closure is tracked in [docs/PRODUCTION_BLUEPRINT.md](docs/PRODUCTION_BLUEPRINT.md). Local smoke steps are in [docs/testing/END_TO_END.md](docs/testing/END_TO_END.md), including the repeatable `pnpm smoke:local -- --prepare-auth-db` flow for login, Settings and Marketplace activation.
 
 ## Status
 

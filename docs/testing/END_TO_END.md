@@ -46,6 +46,24 @@ This is a development-only health endpoint. It does not print, read Gmail or pai
 12. Activating a plugin with a settings surface exposes a Settings tab from Core runtime composition.
 13. Local Node can be installed/activated as an official/dev plugin and exposes its Settings tab and Local Production surface.
 
+The repeatable local smoke runner covers the same platform path through HTTP with a real Better Auth cookie:
+
+```bash
+pnpm marketplace:sync
+pnpm smoke:local -- --prepare-auth-db
+```
+
+`--prepare-auth-db` opens registration only in the local Auth D1 database so the smoke runner can create/sign in a test user. It does not touch remote D1. Use `V2_SMOKE_EMAIL` and `V2_SMOKE_PASSWORD` to override the default local account. To exercise protected Auth admin publication endpoints in the smoke runner, copy `apps/auth-worker/.dev.vars.example` to `.dev.vars` and set `PLATFORM_ADMIN_EMAILS` to the same smoke email before running `pnpm dev`.
+
+The smoke runner checks:
+
+- `/login`, Core health and public login config.
+- anonymous Settings access is rejected.
+- email sign-up/sign-in creates a real Better Auth session.
+- Core accepts the real session cookie and returns runtime Settings tabs.
+- Auth passkey publication remains stable across repeated public login config reads when the smoke user is an Auth admin.
+- every seeded Marketplace plugin can request approval if needed, be approved, installed, deactivated and reactivated through Core APIs.
+
 ## Real Versus Mock
 
 Real in this slice:
