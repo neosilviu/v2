@@ -113,6 +113,13 @@ export type SettingsTabResolution = {
   tab: SettingsTabContribution & { ownerName: string; orderIndex: number };
   panel: SettingsPanelContribution;
 };
+export type AccessibleWorkspace = {
+  id: string;
+  name: string;
+  status: "unprovisioned" | "provisioning" | "active" | "suspended";
+  roles: Array<{ name: string; system_key: string | null }>;
+  permissions: WorkspacePermission[];
+};
 export type WorkspaceDomain = {
   id: string;
   workspaceId: string;
@@ -410,6 +417,23 @@ export class CoreRepository {
     return { user: { id: user.id, email: user.email }, roles: rows.results, permissions: await this.permissionsForUser(workspaceId, user.id), bootstrap: false };
   }
 
+  async accessibleWorkspaces(user: { id: string; email: string } | null): Promise<AccessibleWorkspace[]> {
+    if (!user) return [];
+    const rows = await this.db.prepare(`SELECT DISTINCT workspaces.id, workspaces.name, workspaces.status
+      FROM workspaces
+      INNER JOIN workspace_members members ON members.workspace_id = workspaces.id AND members.status = 'active'
+      WHERE members.user_id = ?
+      ORDER BY workspaces.updated_at DESC, workspaces.name`)
+      .bind(user.id)
+      .all<{ id: string; name: string; status: AccessibleWorkspace["status"] }>();
+    const result: AccessibleWorkspace[] = [];
+    for (const workspace of rows.results) {
+      const summary = await this.memberSummary(workspace.id, user);
+      result.push({ id: workspace.id, name: workspace.name, status: workspace.status, roles: summary.roles, permissions: summary.permissions });
+    }
+    return result;
+  }
+
   private declarativeSurfacePage(manifest: PluginManifest, surface: SurfaceContribution): DeclarativePageContribution | undefined {
     if (surface.renderer.mode !== "declarative") return undefined;
     if (surface.renderer.schema) {
@@ -686,7 +710,6 @@ export class CoreRepository {
   }
 
   async workspaceInstalled(workspaceId: string): Promise<PluginManifest[]> {
-    await this.ensurePlatformSettingsContributions(workspaceId);
     const rows = await this.db.prepare(`SELECT installed.manifest_json
       FROM workspace_plugins workspace
       INNER JOIN installed_plugins installed ON installed.id = workspace.plugin_id
@@ -1021,13 +1044,11 @@ export class CoreRepository {
   deactivate(workspaceId: string, pluginId: string) { return this.setActive(workspaceId, pluginId, false); }
 
   async activePlugins(workspaceId: string): Promise<string[]> {
-    await this.ensurePlatformSettingsContributions(workspaceId);
     const rows = await this.db.prepare("SELECT plugin_id FROM workspace_plugins WHERE workspace_id = ? AND active = 1 AND plugin_id != 'platform'").bind(workspaceId).all<{ plugin_id: string }>();
     return rows.results.map((row) => row.plugin_id);
   }
 
   async workspacePlugins(workspaceId: string): Promise<PluginWorkspaceState[]> {
-    await this.ensurePlatformSettingsContributions(workspaceId);
     const rows = await this.db.prepare("SELECT workspace_id, plugin_id, active, updated_at FROM workspace_plugins WHERE workspace_id = ? AND plugin_id != 'platform'").bind(workspaceId).all<{ workspace_id: string; plugin_id: string; active: number; updated_at: string }>();
     return rows.results.map((row) => ({ workspaceId: row.workspace_id, pluginId: row.plugin_id, active: row.active === 1, updatedAt: row.updated_at }));
   }
@@ -1069,7 +1090,6 @@ export class CoreRepository {
   }
 
   async settingsTabs(workspaceId: string): Promise<Array<SettingsTabResolution["tab"]>> {
-    await this.ensurePlatformSettingsContributions(workspaceId);
     const rows = await this.db.prepare(`SELECT c.plugin_id, c.schema_json, a.order_index, installed.name AS owner_name
       FROM workspace_ui_activations a
       INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
@@ -1109,7 +1129,6 @@ export class CoreRepository {
   }
 
   async reorderSettingsTabs(workspaceId: string, tabIds: string[]) {
-    await this.ensurePlatformSettingsContributions(workspaceId);
     await this.db.batch(tabIds.map((tabId, index) => this.db.prepare(`UPDATE workspace_ui_activations SET order_index = ?, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND contribution_id = ?`).bind(index * 10, workspaceId, tabId)));
     await this.audit(workspaceId, "settings.tabs.order", { tabIds });
   }
@@ -1193,7 +1212,6 @@ export class CoreRepository {
   }
 
   async generalSettings(workspaceId: string) {
-    await this.ensureWorkspace(workspaceId);
     const workspace = await this.db.prepare("SELECT name FROM workspaces WHERE id = ?").bind(workspaceId).first<{ name: string }>();
     const settings = await this.listSettings(workspaceId, "platform");
     return {

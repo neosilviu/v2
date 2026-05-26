@@ -40,7 +40,16 @@ async function request(base, path, init = {}) {
   if (!headers.has("origin")) headers.set("origin", webUrl);
   if (!headers.has("content-type") && init.body && !(init.body instanceof FormData)) headers.set("content-type", "application/json");
   if (cookies.size > 0) headers.set("cookie", cookieHeader());
-  const response = await fetch(new URL(path, base), { ...init, headers });
+  let response;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      response = await fetch(new URL(path, base), { ...init, headers });
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
   mergeCookies(response.headers);
   const text = await response.text();
   let body = null;

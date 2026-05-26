@@ -230,6 +230,18 @@ function testNoImplicitWorkspaceOwnerBootstrap() {
   pass("Workspace owner bootstrap is explicit and not a permission side effect");
 }
 
+function testReadRoutesDoNotSeedPlatformSettings() {
+  const repoSource = fs.readFileSync(path.join(root, "apps/core-worker/src/repository.ts"), "utf8");
+  for (const method of ["workspaceInstalled", "activePlugins", "workspacePlugins", "settingsTabs"]) {
+    const body = repoSource.match(new RegExp(`async ${method}\\\\([^)]*\\\\)[\\\\s\\\\S]*?\\\\n  \\\\}`))?.[0] ?? "";
+    if (body.includes("ensurePlatformSettingsContributions(") || body.includes("ensureWorkspace(")) fail(`CoreRepository.${method} still performs mutating platform/workspace seeding in a read path`);
+  }
+  const webApi = fs.readFileSync(path.join(root, "apps/web/src/api.ts"), "utf8");
+  if (webApi.includes('const workspaceId = "default"')) fail("Web API still hardcodes workspaceId = \"default\"");
+  if (!webApi.includes('headers.delete("content-type")')) fail("Web API does not strip JSON Content-Type from GET/HEAD requests");
+  pass("Core/Web read paths avoid implicit D1 writes and unnecessary GET preflight headers");
+}
+
 function testProductionRuntimeHardening() {
   const coreIndex = fs.readFileSync(path.join(root, "apps/core-worker/src/index.ts"), "utf8");
   const repoSource = fs.readFileSync(path.join(root, "apps/core-worker/src/repository.ts"), "utf8");
@@ -309,6 +321,7 @@ testRuntimeFirstArchitecture();
 testPlatformSeparationGuards();
 testAuthRuntimeBootstrapPolicy();
 testNoImplicitWorkspaceOwnerBootstrap();
+testReadRoutesDoNotSeedPlatformSettings();
 testProductionRuntimeHardening();
 testMigrationDrift();
 await testHttpScenarios();

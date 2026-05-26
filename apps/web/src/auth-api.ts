@@ -1,4 +1,5 @@
 import { authPolicySchema, authPublicLoginConfigSchema, type AuthMethod, type AuthPolicy, type AuthPublicLoginConfig, type AuthUiContribution } from "@v2/auth-contracts";
+import { currentWorkspaceId } from "./api";
 import { authUrl } from "./auth-client";
 
 const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
@@ -30,7 +31,9 @@ export async function loadLoginConfig(workspaceId = "default"): Promise<AuthPubl
 }
 
 async function authJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(new URL(path, authUrl), { credentials: "include", headers: { "content-type": "application/json" }, ...init });
+  const headers = new Headers(init?.headers);
+  if (init?.body && !(init.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
+  const response = await fetch(new URL(path, authUrl), { ...init, credentials: "include", headers });
   if (!response.ok) throw await parseError(response, `Auth request failed: ${response.status}`);
   if (response.status === 204) return undefined as T;
   const text = await response.text();
@@ -38,8 +41,12 @@ async function authJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function coreJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(new URL(path, coreUrl), { credentials: "include", headers: { "content-type": "application/json" }, ...init });
-  if (!response.ok) throw new Error(`Core auth request failed: ${response.status}`);
+  const headers = new Headers(init?.headers);
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (init?.body && !(init.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
+  if ((method === "GET" || method === "HEAD") && !init?.body) headers.delete("content-type");
+  const response = await fetch(new URL(path, coreUrl), { ...init, method, credentials: "include", headers });
+  if (!response.ok) throw await parseError(response, `Core auth request failed: ${response.status}`);
   if (response.status === 204) return undefined as T;
   const text = await response.text();
   return (text ? JSON.parse(text) : undefined) as T;
@@ -54,24 +61,24 @@ export type AuthSecuritySummary = {
   bootstrapAdmin: boolean;
 };
 
-export async function loadAuthSecuritySummary(workspaceId = "default"): Promise<AuthSecuritySummary> {
+export async function loadAuthSecuritySummary(workspaceId = currentWorkspaceId()): Promise<AuthSecuritySummary> {
   return (await coreJson<{ summary: AuthSecuritySummary }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/security-summary`)).summary;
 }
 
-export async function loadAuthSessionsSummary(workspaceId = "default"): Promise<{ sessions: number; passkeys: number }> {
+export async function loadAuthSessionsSummary(workspaceId = currentWorkspaceId()): Promise<{ sessions: number; passkeys: number }> {
   return (await coreJson<{ summary: { sessions: number; passkeys: number } }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/sessions/summary`)).summary;
 }
 
-export async function saveAuthPolicy(policy: AuthPolicy, workspaceId = "default"): Promise<AuthPolicy> {
+export async function saveAuthPolicy(policy: AuthPolicy, workspaceId = currentWorkspaceId()): Promise<AuthPolicy> {
   const result = await coreJson<{ policy: AuthPolicy }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/policy`, { method: "PUT", body: JSON.stringify({ workspaceId, registrationMode: policy.registrationMode, requireEmailVerification: policy.requireEmailVerification, allowPasskeyRegistration: policy.allowPasskeyRegistration, allowPasskeySignin: policy.allowPasskeySignin }) });
   return authPolicySchema.parse(result.policy);
 }
 
-export async function saveAuthMethod(method: AuthMethod, workspaceId = "default"): Promise<AuthMethod> {
+export async function saveAuthMethod(method: AuthMethod, workspaceId = currentWorkspaceId()): Promise<AuthMethod> {
   return (await coreJson<{ method: AuthMethod }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/methods/${encodeURIComponent(method.id)}`, { method: "PUT", body: JSON.stringify({ workspaceId, type: method.type, providerId: method.providerId, title: method.title, status: method.status, publicVisible: method.publicVisible, displayOrder: method.displayOrder }) })).method;
 }
 
-export async function loadAuthUiContributions(workspaceId = "default"): Promise<AuthUiContribution[]> {
+export async function loadAuthUiContributions(workspaceId = currentWorkspaceId()): Promise<AuthUiContribution[]> {
   return (await coreJson<{ contributions: AuthUiContribution[] }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/ui-contributions`)).contributions;
 }
 
@@ -84,6 +91,6 @@ export async function ownerSetupSignUp(input: { token: string; email: string; na
 }
 
 export async function signOutAuth(): Promise<void> {
-  const response = await fetch(new URL("/api/auth/sign-out", authUrl), { method: "POST", credentials: "include", headers: { "content-type": "application/json" } });
+  const response = await fetch(new URL("/api/auth/sign-out", authUrl), { method: "POST", credentials: "include" });
   if (!response.ok) throw new Error(`Auth sign out failed: ${response.status}`);
 }

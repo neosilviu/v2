@@ -226,7 +226,12 @@ async function authAdminJson<T>(c: CoreContext, path: string, init: { method?: "
   if (init.method) requestInit.method = init.method;
   if (init.body) requestInit.body = init.body;
   const response = await c.env.AUTH.fetch(`https://auth.internal${path}`, requestInit);
-  if (!response.ok) throw new Error(`Auth internal admin request failed: ${response.status}`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string }; code?: string; message?: string } | null;
+    const code = payload?.error?.code ?? payload?.code ?? "dependency_unavailable";
+    const message = payload?.error?.message ?? payload?.message ?? `Auth internal admin request failed: ${response.status}`;
+    throw Object.assign(new Error(message), { status: response.status, code });
+  }
   return response.json() as Promise<T>;
 }
 async function maybeActionApproval(c: CoreContext, repo: CoreRepository, action: ActionDefinition, workspaceId: string, pluginId: string, contributionId: string, input: unknown) {
@@ -248,6 +253,51 @@ app.get("/session", (c) => {
   const user = c.get("user");
   return c.json({ authenticated: Boolean(user), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
 });
+async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string) {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const user = c.get("user");
+  const workspaces = await repo.accessibleWorkspaces(user);
+  const currentWorkspace = (requestedWorkspaceId ? workspaces.find((workspace) => workspace.id === requestedWorkspaceId) : null) ?? workspaces[0] ?? null;
+  if (!currentWorkspace) return c.json(errorResponse(failure("not_authorized", "No active workspace membership is available for this account.")), 403);
+  if (requestedWorkspaceId && currentWorkspace.id !== requestedWorkspaceId) return c.json(errorResponse(failure("not_authorized", "This account is not a member of the requested workspace.")), 403);
+  const workspaceId = currentWorkspace.id;
+  const permissions = new Set(currentWorkspace.permissions);
+  const [installed, activeIds, layout, surfaces, pluginTabs] = await Promise.all([
+    repo.workspaceInstalled(workspaceId),
+    repo.activePlugins(workspaceId),
+    repo.getLayout(workspaceId),
+    repo.workspaceUiSurfaces(workspaceId),
+    repo.settingsTabs(workspaceId).catch(() => []),
+  ]);
+  const active = new Set(activeIds);
+  const runtime = new RuntimeKernel();
+  for (const manifest of installed) await runtime.registerPlugin(manifest);
+  const activePlugins = runtime.plugins.all().filter((plugin) => active.has(plugin.id));
+  const visiblePluginTabs = pluginTabs.filter((tab) => tab.pluginId !== "platform" && tab.status === "active" && (!tab.requiredPermission || permissions.has(tab.requiredPermission) || permissions.has("workspace.admin")));
+  return c.json({
+    session: { authenticated: true, isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null },
+    workspaces,
+    currentWorkspace,
+    membership: { user: currentWorkspace ? { id: user!.id, email: user!.email, name: user!.name ?? null } : null, roles: currentWorkspace.roles, permissions: currentWorkspace.permissions, recoveryAdmin: false },
+    layout: layout ?? null,
+    plugins: installed,
+    active: activeIds,
+    tools: activePlugins.flatMap((plugin) => plugin.contributes.tools),
+    surfaces: surfaces.filter((surface) => !surface.id.startsWith("platform.settings.")),
+    settingsNavigation: { pluginTabs: visiblePluginTabs },
+    featureAvailability: {
+      canReadMarketplace: permissions.has("marketplace.read") || permissions.has("workspace.admin"),
+      canInstallPlugins: permissions.has("plugin.install") || permissions.has("workspace.admin"),
+      canActivatePlugins: permissions.has("plugin.activate") || permissions.has("workspace.admin"),
+      canUploadPlugins: permissions.has("plugin.install") || permissions.has("workspace.admin"),
+    },
+  });
+}
+app.get("/workspaces/current/bootstrap", (c) => workspaceBootstrap(c));
+app.get("/workspaces/:workspaceId/bootstrap", (c) => workspaceBootstrap(c, c.req.param("workspaceId")));
+app.get("/runtime/ui/bootstrap", (c) => workspaceBootstrap(c, c.req.query("workspaceId") === "current" ? undefined : c.req.query("workspaceId")));
 app.get("/setup/owner", async (c) => {
   const token = c.req.query("token");
   if (!token || token.length < 24) return c.json(errorResponse(failure("not_found", "Owner setup link is not available.")), 404);
@@ -426,7 +476,8 @@ app.post("/marketplace/plugins/:pluginId/install", async (c) => {
   return c.json({ status: "installed", plugin: { ...plugin, manifest: assessment.bundle.manifest, installed: true, active: true } }, 201);
 });
 app.post("/plugins/upload", async (c) => {
-  const denied = await requirePermission(c, defaultWorkspaceId, "plugin.install");
+  const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId;
+  const denied = await requirePermission(c, workspaceId, "plugin.install");
   if (denied) return denied;
   const form = await c.req.formData();
   const file = form.get("file");
@@ -437,10 +488,10 @@ app.post("/plugins/upload", async (c) => {
   const assessment = await unpackPluginZip(bytes, key);
   await c.env.PLUGIN_PACKAGES.put(key, bytes, { customMetadata: { pluginId: assessment.bundle.manifest.id, version: assessment.bundle.manifest.version, sha256: assessment.bundle.package.sha256 } });
   const repo = new CoreRepository(c.env.CORE_DB);
-  await repo.ensureWorkspace(defaultWorkspaceId);
+  await repo.ensureWorkspace(workspaceId);
   if (assessment.requiresApproval) {
     const approval = await new ApprovalRequestRepository(c.env.CORE_DB).create({
-      workspaceId: defaultWorkspaceId,
+      workspaceId,
       kind: "plugin_install",
       subjectId: pluginInstallSubject(assessment.bundle),
       pluginId: assessment.bundle.manifest.id,
@@ -448,12 +499,12 @@ app.post("/plugins/upload", async (c) => {
       payload: pluginInstallApprovalPayload("upload", assessment),
       requestedBy: c.get("user")?.id,
     });
-    await repo.audit(defaultWorkspaceId, "plugin.install.approval.requested", { approvalId: approval.id, pluginId: assessment.bundle.manifest.id, sha256: assessment.bundle.package.sha256, source: "zip", sensitiveCapabilities: assessment.sensitiveCapabilities }, c.get("user")?.id);
+    await repo.audit(workspaceId, "plugin.install.approval.requested", { approvalId: approval.id, pluginId: assessment.bundle.manifest.id, sha256: assessment.bundle.package.sha256, source: "zip", sensitiveCapabilities: assessment.sensitiveCapabilities }, c.get("user")?.id);
     return c.json({ status: "approval-required", approvalId: approval.id, pluginId: assessment.bundle.manifest.id, version: assessment.bundle.manifest.version, sha256: assessment.bundle.package.sha256, sensitiveCapabilities: assessment.sensitiveCapabilities }, 202);
   }
-  const installed = await installAndProvisionPluginRuntime(c, { repo, workspaceId: defaultWorkspaceId, assessment, source: "zip", approvalId: null });
+  const installed = await installAndProvisionPluginRuntime(c, { repo, workspaceId, assessment, source: "zip", approvalId: null });
   if (!installed.ok) return c.json(errorResponse(failure("dependency_unavailable", installed.errorSafe, { retryable: true })), 502);
-  await repo.audit(defaultWorkspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id, source: "zip", approvalId: null }, c.get("user")?.id);
+  await repo.audit(workspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id, source: "zip", approvalId: null }, c.get("user")?.id);
   return c.json({ status: "installed", manifest: assessment.bundle.manifest }, 201);
 });
 app.post("/plugins/install", async (c) => {
@@ -739,6 +790,8 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
   await repo.audit(request.workspaceId, "settings.runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
+app.get("/workspaces/:workspaceId/settings/general", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "workspace.settings.read"); if (denied) return denied; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).generalSettings(workspaceId) }); });
+app.put("/workspaces/:workspaceId/settings/general", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "workspace.settings.write"); if (denied) return denied; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).saveGeneralSettings(workspaceId, await c.req.json(), c.get("user")?.id) }); });
 app.get("/workspaces/:workspaceId/settings/:scope", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read"); if (denied) return denied; const scope = settingScopeSchema.parse(c.req.param("scope")) as SettingScope; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).listSettings(c.req.param("workspaceId"), scope) }); });
 app.put("/settings", async (c) => { const request = settingWriteRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "workspace.settings.write"); if (denied) return denied; await new CoreRepository(c.env.CORE_DB).setSetting(request.workspaceId, request.scope as SettingScope, request.key, request.value); return c.json({ saved: true }); });
 app.get("/workspaces/:workspaceId/domains", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.read"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).listDomains(c.req.param("workspaceId")) }); });
@@ -796,6 +849,19 @@ app.get("/workspaces/:workspaceId/auth/sessions/summary", async (c) => {
   if (denied) return denied;
   return c.json(await authAdminJson(c, `/admin/auth/sessions/summary?workspaceId=${encodeURIComponent(workspaceId)}`));
 });
+app.get("/workspaces/:workspaceId/auth/security-bootstrap", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requireAnyPermission(c, workspaceId, ["auth.read", "auth.session.read"]);
+  if (denied) return denied;
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const [security, sessions, rbac, activeMailProvider] = await Promise.all([
+    authAdminJson<{ summary: unknown }>(c, `/admin/auth/security-summary?workspaceId=${encodeURIComponent(workspaceId)}`),
+    authAdminJson<{ summary: unknown }>(c, `/admin/auth/sessions/summary?workspaceId=${encodeURIComponent(workspaceId)}`),
+    repo.memberSummary(workspaceId, c.get("user")),
+    repo.activeMailProvider(workspaceId),
+  ]);
+  return c.json({ summary: security.summary, sessions: sessions.summary, rbac, mail: { activeTransactionalProvider: Boolean(activeMailProvider) } });
+});
 app.get("/workspaces/:workspaceId/auth/methods", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.read");
@@ -824,7 +890,17 @@ app.put("/workspaces/:workspaceId/auth/policy", async (c) => {
   const body = await c.req.json();
   const repo = new CoreRepository(c.env.CORE_DB);
   if ((body as Record<string, unknown>).requireEmailVerification === true && !await repo.activeMailProvider(workspaceId)) return c.json(errorResponse(failure("dependency_unavailable", "Email verification requires an active Core Mail Runtime provider.")), 409);
-  const result = await authAdminJson(c, "/admin/auth/policy", { method: "PUT", body: JSON.stringify({ ...(body as Record<string, unknown>), workspaceId, mailDeliveryAvailable: true }) });
+  let result;
+  try {
+    result = await authAdminJson(c, "/admin/auth/policy", { method: "PUT", body: JSON.stringify({ ...(body as Record<string, unknown>), workspaceId, mailDeliveryAvailable: true }) });
+  } catch (error) {
+    const rawStatus = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 502;
+    const status = rawStatus === 400 || rawStatus === 401 || rawStatus === 403 || rawStatus === 409 || rawStatus === 502 || rawStatus === 503 ? rawStatus : 502;
+    const rawCode = typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : "dependency_unavailable";
+    const code = rawCode === "validation_failed" || rawCode === "not_authenticated" || rawCode === "not_authorized" || rawCode === "not_found" || rawCode === "conflict" || rawCode === "approval_required" || rawCode === "dependency_unavailable" || rawCode === "rate_limited" || rawCode === "internal_error" ? rawCode : "dependency_unavailable";
+    const message = error instanceof Error ? error.message : "Auth Worker rejected the policy update.";
+    return c.json(errorResponse(failure(code, message)), status);
+  }
   await repo.audit(workspaceId, "auth.policy.update", {}, c.get("user")?.id);
   return c.json(result);
 });

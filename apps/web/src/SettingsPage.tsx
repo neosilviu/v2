@@ -5,8 +5,8 @@ import type { PluginManifest } from "@v2/plugin-contracts";
 import type { Notification } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { activateDomain, activateMailProvider, configureMailProvider, createDomain, disableDomain, disableMailProvider, isCoreAuthRequiredError, loadActivePlugins, loadCurrentRbac, loadDomains, loadInstalledPlugins, loadMailSummary, loadMarketplacePlugins, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, testMailProvider, verifyDomain, type MailSummary, type MarketplacePlugin, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type WorkspaceDomain } from "./api";
-import { loadAuthSecuritySummary, loadAuthSessionsSummary, saveAuthMethod, saveAuthPolicy, type AuthSecuritySummary } from "./auth-api";
+import { activateDomain, activateMailProvider, configureMailProvider, createDomain, disableDomain, disableMailProvider, loadActivePlugins, loadDomains, loadGeneralSettings, loadInstalledPlugins, loadMailSummary, loadMarketplacePlugins, loadSecurityBootstrap, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, saveGeneralSettings, testMailProvider, verifyDomain, type MailSummary, type MarketplacePlugin, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type WorkspaceDomain, type WorkspaceSummary, CoreRequestError } from "./api";
+import { saveAuthMethod, saveAuthPolicy, type AuthSecuritySummary } from "./auth-api";
 import { PluginManagerPanel } from "./platform/PluginManagerPanel";
 import { RuntimeShellEditor } from "./platform/RuntimeShellEditor";
 import { TemplateRenderer } from "./platform/TemplateRenderer";
@@ -16,29 +16,101 @@ type SettingsPageProps = {
   shell: ShellState;
   onShellChange: (state: ShellState) => void;
   emit: (item: Notification) => void;
+  workspace: WorkspaceSummary | null;
+  permissions: string[];
   onRuntimeChanged: (plugins: PluginManifest[], activePluginIds: Set<string>, shell: ShellState) => void;
 };
 
-function selectedTabFromUrl(tabs: RuntimeSettingsTab[]) {
+type NativeTab = { id: string; label: string; permission: string };
+const nativeTabs: NativeTab[] = [
+  { id: "platform.settings.general", label: "General", permission: "workspace.settings.read" },
+  { id: "platform.settings.security", label: "Security", permission: "auth.read" },
+  { id: "platform.settings.domains", label: "Domains", permission: "domains.read" },
+  { id: "platform.settings.mail", label: "Mail Delivery", permission: "mail.read" },
+  { id: "platform.settings.marketplace", label: "Marketplace / Plugins", permission: "marketplace.read" },
+  { id: "platform.settings.interface", label: "Interface", permission: "layout.read" },
+];
+
+function hasPermission(permissions: string[], permission: string) {
+  return permissions.includes(permission) || permissions.includes("workspace.admin");
+}
+
+function selectedTabFromUrl(tabs: Array<NativeTab | RuntimeSettingsTab>) {
   const params = new URLSearchParams(window.location.search);
   const desired = params.get("tab") ?? (window.location.pathname === "/marketplace" ? "platform.settings.marketplace" : "");
   return tabs.find((tab) => tab.id === desired)?.id ?? tabs[0]?.id ?? "";
+}
+
+function roleLabels(rbac: RbacMe | null) {
+  return rbac?.roles.map((role) => typeof role === "string" ? role : role.name).join(", ") || "none";
+}
+
+function backendMessage(error: unknown, fallback: string) {
+  if (error instanceof CoreRequestError) return `${error.status}${error.code ? ` ${error.code}` : ""}: ${error.message}`;
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
+
+function GeneralPanel({ emit }: { emit: (item: Notification) => void }) {
+  const [settings, setSettings] = useState<Record<string, unknown>>({});
+  const [status, setStatus] = useState("Loading workspace settings...");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void loadGeneralSettings().then((loaded) => {
+      setSettings(loaded);
+      setStatus("General settings loaded");
+    }).catch((error) => setStatus(backendMessage(error, "General settings unavailable")));
+  }, []);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    try {
+      const saved = await saveGeneralSettings(Object.fromEntries(form.entries()));
+      setSettings(saved);
+      setStatus("General settings saved");
+      emit(notification("success", "Settings saved", "Workspace settings were updated."));
+    } catch (error) {
+      setStatus(backendMessage(error, "General settings could not be saved"));
+      emit(notification("error", "Settings failed", backendMessage(error, "Core rejected the settings update.")));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const value = (key: string) => typeof settings[key] === "string" ? settings[key] as string : "";
+  return <SurfaceCard>
+    <div className="surface-header"><div><small>Core workspace</small><h2>General</h2><p>{status}</p></div></div>
+    <form className="mail-form" onSubmit={submit}>
+      <label>Workspace name<input name="workspaceName" defaultValue={value("workspaceName")} disabled={busy} /></label>
+      <label>Business name<input name="businessDisplayName" defaultValue={value("businessDisplayName")} disabled={busy} /></label>
+      <label>Locale<input name="locale" defaultValue={value("locale") || "ro-RO"} disabled={busy} /></label>
+      <label>Timezone<input name="timezone" defaultValue={value("timezone") || "Europe/Bucharest"} disabled={busy} /></label>
+      <label>Currency<input name="currency" defaultValue={value("currency") || "RON"} disabled={busy} /></label>
+      <label>Public email<input name="contactEmailPublic" defaultValue={value("contactEmailPublic")} disabled={busy} /></label>
+      <Button className="primary" type="submit" disabled={busy}>Save</Button>
+    </form>
+  </SurfaceCard>;
 }
 
 function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
   const [summary, setSummary] = useState<AuthSecuritySummary | null>(null);
   const [sessions, setSessions] = useState<{ sessions: number; passkeys: number } | null>(null);
   const [rbac, setRbac] = useState<RbacMe | null>(null);
+  const [mailAvailable, setMailAvailable] = useState(false);
   const [status, setStatus] = useState("Loading security controls...");
   const [busy, setBusy] = useState(false);
 
   const refresh = async () => {
     setBusy(true);
     try {
-      const [nextSummary, nextSessions, nextRbac] = await Promise.all([loadAuthSecuritySummary(), loadAuthSessionsSummary(), loadCurrentRbac()]);
-      setSummary(nextSummary);
-      setSessions(nextSessions);
-      setRbac(nextRbac);
+      const loaded = await loadSecurityBootstrap<{ summary: AuthSecuritySummary; sessions: { sessions: number; passkeys: number }; rbac: RbacMe; mail: { activeTransactionalProvider: boolean } }>();
+      setSummary(loaded.summary);
+      setSessions(loaded.sessions);
+      setRbac(loaded.rbac);
+      setMailAvailable(loaded.mail.activeTransactionalProvider);
       setStatus("Security controls loaded");
     } finally {
       setBusy(false);
@@ -57,9 +129,10 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
       setSummary({ ...summary, policy });
       setStatus("Security policy saved");
       emit(notification("success", "Auth policy saved", "Login runtime configuration will reflect the published policy."));
-    } catch {
-      setStatus("Security policy could not be saved");
-      emit(notification("error", "Auth policy failed", "The Auth Worker rejected the policy update."));
+    } catch (error) {
+      const message = backendMessage(error, "Security policy could not be saved");
+      setStatus(message);
+      emit(notification("error", "Auth policy failed", message));
     } finally {
       setBusy(false);
     }
@@ -73,9 +146,10 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
       setSummary({ ...summary, methods: summary.methods.map((item) => item.id === saved.id ? saved : item) });
       setStatus(`${saved.title} saved`);
       emit(notification("success", "Auth method saved", `${saved.title} is ${saved.publicVisible ? "public" : "private"}.`));
-    } catch {
-      setStatus("Auth method could not be saved");
-      emit(notification("error", "Auth method failed", "The Auth Worker rejected the method update."));
+    } catch (error) {
+      const message = backendMessage(error, "Auth method could not be saved");
+      setStatus(message);
+      emit(notification("error", "Auth method failed", message));
     } finally {
       setBusy(false);
     }
@@ -99,8 +173,9 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
         </label>
         <label className="template-check"><input type="checkbox" disabled={busy} checked={summary.policy.allowPasskeySignin} onChange={(event) => void updatePolicy({ allowPasskeySignin: event.currentTarget.checked })} />Allow passkey sign-in</label>
         <label className="template-check"><input type="checkbox" disabled={busy} checked={summary.policy.allowPasskeyRegistration} onChange={(event) => void updatePolicy({ allowPasskeyRegistration: event.currentTarget.checked })} />Allow passkey registration</label>
-        <label className="template-check"><input type="checkbox" disabled={busy} checked={summary.policy.requireEmailVerification} onChange={(event) => void updatePolicy({ requireEmailVerification: event.currentTarget.checked })} />Require email verification</label>
+        <label className="template-check"><input type="checkbox" disabled={busy || !mailAvailable} checked={summary.policy.requireEmailVerification} onChange={(event) => void updatePolicy({ requireEmailVerification: event.currentTarget.checked })} />Require email verification</label>
         <p>Email delivery: {summary.emailDelivery.status}. Verification/reset stay unavailable until a server-side mail adapter is configured.</p>
+        {!mailAvailable ? <p className="message">Email verification is disabled until Mail Delivery has an active transactional provider.</p> : null}
         {summary.bootstrapAdmin ? <p className="message">Bootstrap admin is enabled. Keep this temporary and close it after permanent RBAC ownership is assigned.</p> : null}
       </section>
       <section className="settings-subpanel">
@@ -120,7 +195,7 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
       </section>
       <section className="settings-subpanel">
         <h3>Current admin</h3>
-        <p>Current user: {rbac?.user?.email ?? "unknown"}. Roles: {rbac?.roles.join(", ") || "none"}. Permissions: {rbac?.permissions.length ?? 0}.</p>
+        <p>Current user: {rbac?.user?.email ?? "unknown"}. Roles: {roleLabels(rbac)}. Permissions: {rbac?.permissions.length ?? 0}.</p>
         {rbac?.recoveryAdmin ? <p className="message">Bootstrap/recovery admin is active for this user until RBAC ownership is fully assigned.</p> : null}
       </section>
     </div> : null}
@@ -349,33 +424,43 @@ function MailDeliveryPanel({ emit }: { emit: (item: Notification) => void }) {
   </SurfaceCard>;
 }
 
-export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: SettingsPageProps) {
+export function SettingsPage({ shell, onShellChange, emit, workspace, permissions, onRuntimeChanged }: SettingsPageProps) {
   const [tabs, setTabs] = useState<RuntimeSettingsTab[]>([]);
   const [selectedTabId, setSelectedTabId] = useState("");
   const [resolution, setResolution] = useState<RuntimeSettingsTabResolution | null>(null);
   const [marketplacePlugins, setMarketplacePlugins] = useState<MarketplacePlugin[]>([]);
-  const [status, setStatus] = useState("Loading runtime Settings...");
+  const [status, setStatus] = useState("Settings ready");
 
-  const selectedTab = useMemo(() => tabs.find((tab) => tab.id === selectedTabId) ?? null, [selectedTabId, tabs]);
+  const visibleNativeTabs = useMemo(() => nativeTabs.filter((tab) => hasPermission(permissions, tab.permission)), [permissions]);
+  const allTabs = useMemo(() => [...visibleNativeTabs, ...tabs], [tabs, visibleNativeTabs]);
+  const selectedTab = useMemo(() => allTabs.find((tab) => tab.id === selectedTabId) ?? null, [selectedTabId, allTabs]);
+  const selectedPluginTab = useMemo(() => tabs.find((tab) => tab.id === selectedTabId) ?? null, [selectedTabId, tabs]);
 
   useEffect(() => {
     let alive = true;
     void loadSettingsTabs().then((loaded) => {
       if (!alive) return;
       setTabs(loaded);
-      setSelectedTabId(selectedTabFromUrl(loaded));
-      setStatus(loaded.length ? "Runtime Settings ready" : "No Settings tabs are active");
+      const nextTabs = [...visibleNativeTabs, ...loaded];
+      setSelectedTabId(selectedTabFromUrl(nextTabs));
+      setStatus(loaded.length ? "Settings ready with plugin tabs" : "Platform Settings ready");
     }).catch((error) => {
       if (!alive) return;
-      setStatus(isCoreAuthRequiredError(error) ? "Authentication required" : "Settings registry unavailable");
+      setStatus(error instanceof Error ? error.message : "Plugin Settings registry unavailable");
+      setSelectedTabId(selectedTabFromUrl(visibleNativeTabs));
     });
     return () => { alive = false; };
-  }, []);
+  }, [visibleNativeTabs]);
 
   useEffect(() => {
     if (!selectedTabId) return;
     const nextUrl = `/settings?tab=${encodeURIComponent(selectedTabId)}`;
     if (window.location.pathname !== "/settings" || window.location.search !== `?tab=${encodeURIComponent(selectedTabId)}`) window.history.replaceState(null, "", nextUrl);
+    if (selectedTabId.startsWith("platform.settings.")) {
+      setResolution(null);
+      setStatus("Platform Settings ready");
+      return;
+    }
     let alive = true;
     setResolution(null);
     void loadSettingsTab(selectedTabId).then((loaded) => {
@@ -402,22 +487,23 @@ export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: S
   return <div className="settings-hub">
     <SurfaceCard className="settings-header-card">
       <div className="surface-header">
-        <div><small>workspace/default</small><h2>Settings</h2><p>{status}</p></div>
-        <Badge>{tabs.length} tabs</Badge>
+        <div><small>{workspace?.id ?? "no-workspace"}</small><h2>Settings</h2><p>{status}</p></div>
+        <Badge>{allTabs.length} tabs</Badge>
       </div>
     </SurfaceCard>
     <div className="settings-layout">
       <nav className="settings-tabs" aria-label="Settings tabs">
-        {tabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "settings-tab active" : "settings-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
+        {allTabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "settings-tab active" : "settings-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
           <span>{tab.label}</span>
-          <small>{tab.category === "platform" ? "Platform" : tab.ownerName}</small>
+          <small>{"ownerName" in tab ? tab.ownerName : "Platform"}</small>
         </button>)}
       </nav>
       <section className="settings-panel">
         {!selectedTab ? <SurfaceCard><h2>No Settings tab</h2><p>No active Settings contribution is available for this workspace.</p></SurfaceCard> : null}
-        {selectedTab && !resolution ? <SurfaceCard><h2>{selectedTab.label}</h2><p>Loading panel contribution...</p></SurfaceCard> : null}
+        {selectedPluginTab && !resolution ? <SurfaceCard><h2>{selectedPluginTab.label}</h2><p>Loading plugin panel contribution...</p></SurfaceCard> : null}
         {resolution ? <TemplateRenderer page={resolution.panel.schema} runtime={{ contributionId: resolution.panel.id }} /> : null}
-        {selectedTabId === "platform.settings.marketplace" ? <PluginManagerPanel plugins={marketplacePlugins.map((item) => item.manifest)} activePluginIds={new Set(marketplacePlugins.filter((item) => item.active).map((item) => item.manifest.id))} onChanged={() => void refreshRuntime()} /> : null}
+        {selectedTabId === "platform.settings.general" ? <GeneralPanel emit={emit} /> : null}
+        {selectedTabId === "platform.settings.marketplace" ? <PluginManagerPanel plugins={marketplacePlugins.map((item) => item.manifest)} activePluginIds={new Set(marketplacePlugins.filter((item) => item.active).map((item) => item.manifest.id))} permissions={permissions} onChanged={() => void refreshRuntime()} /> : null}
         {selectedTabId === "platform.settings.interface" ? <RuntimeShellEditor state={shell} onChange={onShellChange} /> : null}
         {selectedTabId === "platform.settings.security" ? <SecurityPanel emit={emit} /> : null}
         {selectedTabId === "platform.settings.domains" ? <DomainsPanel emit={emit} /> : null}

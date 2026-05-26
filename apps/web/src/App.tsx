@@ -4,7 +4,7 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { consumeOwnerSetup, decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadLayout, loadOwnerSetup, loadRuntimeTools, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe } from "./api";
+import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe, type WorkspaceSummary } from "./api";
 import { AuthRequestError, ownerSetupSignUp, signOutAuth, updateAuthProfile } from "./auth-api";
 import { authClient } from "./auth-client";
 import { composeShellFromSurfaces, emptyShell } from "./shell";
@@ -51,7 +51,7 @@ function userInitial(session: CoreSession | null) {
   return displayUser(session).slice(0, 1).toUpperCase() || "W";
 }
 
-function UserMenu({ session, onOpenProfile, onOpenSettings, onSignOut }: { session: CoreSession | null; onOpenProfile: () => void; onOpenSettings: () => void; onSignOut: () => void }) {
+function UserMenu({ session, workspace, onOpenProfile, onOpenSettings, onSignOut }: { session: CoreSession | null; workspace: WorkspaceSummary | null; onOpenProfile: () => void; onOpenSettings: () => void; onSignOut: () => void }) {
   const [open, setOpen] = useState(false);
   const closeAndRun = (action: () => void) => {
     setOpen(false);
@@ -64,7 +64,7 @@ function UserMenu({ session, onOpenProfile, onOpenSettings, onSignOut }: { sessi
     {open ? <div className="user-popover">
       <strong>{displayUser(session)}</strong>
       {session?.user?.email ? <small>{session.user.email}</small> : null}
-      <small>workspace/default</small>
+      <small>{workspace?.name ?? workspace?.id ?? "No workspace"}</small>
       <button type="button" onClick={() => closeAndRun(onOpenProfile)}>Edit profile</button>
       <button type="button" onClick={() => closeAndRun(onOpenSettings)}>Settings</button>
       <button type="button" onClick={() => closeAndRun(onSignOut)}>Sign out</button>
@@ -72,19 +72,19 @@ function UserMenu({ session, onOpenProfile, onOpenSettings, onSignOut }: { sessi
   </div>;
 }
 
-function OverviewPage({ plugins, activePluginIds, tools, surfaces, onOpenPlugins }: { plugins: PluginManifest[]; activePluginIds: Set<string>; tools: ToolContribution[]; surfaces: SurfaceContribution[]; onOpenPlugins: () => void }) {
+function OverviewPage({ plugins, activePluginIds, tools, surfaces, workspace, permissions, onOpenPlugins, onOpenSettings }: { plugins: PluginManifest[]; activePluginIds: Set<string>; tools: ToolContribution[]; surfaces: SurfaceContribution[]; workspace: WorkspaceSummary | null; permissions: string[]; onOpenPlugins: () => void; onOpenSettings: () => void }) {
   return <>
     <div className="metric-grid">
-      <SurfaceCard><small>workspace active</small><h2>{activePluginIds.size} plugins</h2><p>{plugins.length} installed in Core registry</p></SurfaceCard>
-      <SurfaceCard><small>runtime</small><h2>{tools.length} tools</h2><p>{tools.filter((tool) => tool.risk === "sensitive" || tool.risk === "dangerous").length} approval-gated tools</p></SurfaceCard>
-      <SurfaceCard><small>surfaces</small><h2>{surfaces.length} mounted</h2><p>Native and isolated UI contributions</p></SurfaceCard>
+      <SurfaceCard><small>workspace</small><h2>{workspace?.name ?? "No workspace"}</h2><p>{workspace?.status ?? "No active membership"}</p></SurfaceCard>
+      <SurfaceCard><small>capabilities</small><h2>{activePluginIds.size} active</h2><p>{plugins.length} installed feature plugins</p></SurfaceCard>
+      <SurfaceCard><small>access</small><h2>{permissions.length} grants</h2><p>{tools.length} runtime tools available from active plugins</p></SurfaceCard>
     </div>
-    <div className="section-title"><h2>Workspace</h2><Badge>{surfaces.length}</Badge></div>
+    <div className="section-title"><h2>Setup</h2><Badge>{surfaces.length ? "extended" : "core"}</Badge></div>
     <div className="cards">{surfaces.length ? surfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <SurfaceCard>
-      <small>core registry</small>
-      <h2>{plugins.length ? "No active workspace surfaces" : "No plugins installed locally"}</h2>
-      <p>{plugins.length ? "Activate a plugin that contributes workspace UI to mount native pages here." : "Core returned an empty plugin registry for workspace/default."}</p>
-      <div className="actions"><Button onClick={onOpenPlugins}>Open Plugin Manager</Button></div>
+      <small>platform dashboard</small>
+      <h2>Core workspace is ready</h2>
+      <p>Configure security, domains, mail delivery and interface settings before enabling feature plugins.</p>
+      <div className="actions"><Button onClick={onOpenSettings}>Open Settings</Button><Button onClick={onOpenPlugins}>Open Plugins</Button></div>
     </SurfaceCard>}</div>
   </>;
 }
@@ -178,7 +178,7 @@ function ProfilePage({ session, onSessionChanged, onOpenSecurity, emit }: { sess
       </section>
       <section className="settings-subpanel">
         <h3>Workspace access</h3>
-        <p>Roles: {rbac?.roles.join(", ") || "none"}</p>
+        <p>Roles: {rbac?.roles.map((role) => typeof role === "string" ? role : role.name).join(", ") || "none"}</p>
         <p>Permissions: {rbac?.permissions.length ?? 0}</p>
         {rbac?.recoveryAdmin ? <p className="message">Recovery admin is active for this user.</p> : null}
       </section>
@@ -199,6 +199,8 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
   const [session, setSession] = useState<CoreSession | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [notice, setNotice] = useState("runtime ready · no feature plugin required");
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -206,21 +208,18 @@ export function App() {
   const dismiss = (id: string) => setNotifications((current) => current.filter((item) => item.id !== id));
 
   useEffect(() => {
-    void loadCoreSession().then((session) => {
-      if (!session.authenticated) {
-        setSession(null);
-        setAuthStatus("anonymous");
-        setNotice("auth required · workspace runtime data locked");
-        return null;
-      }
-      setSession(session);
-      setAuthStatus("authenticated");
-      return Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadRuntimeTools(), loadLayout(), loadWorkspaceUiSurfaces()]);
-    }).then((result) => {
-      if (!result) return;
-      const [installed, activeIds, runtimeTools, layout, runtimeSurfaces] = result;
+    void loadShellBootstrap().then((bootstrap) => {
+      const installed = bootstrap.plugins;
+      const activeIds = bootstrap.active;
+      const runtimeTools = bootstrap.tools;
+      const layout = bootstrap.layout;
+      const runtimeSurfaces = bootstrap.surfaces;
       const active = new Set(activeIds);
       const composed = composeShellFromSurfaces(runtimeSurfaces);
+      setSession(bootstrap.session);
+      setWorkspace(bootstrap.currentWorkspace);
+      setPermissions(bootstrap.membership.permissions);
+      setAuthStatus("authenticated");
       setPlugins(installed);
       setActivePluginIds(active);
       setTools(runtimeTools);
@@ -244,7 +243,7 @@ export function App() {
   const selectedPlugin = activePlugins.find((plugin) => plugin.id === pluginId) ?? null;
   const selectedPluginSurfaces = selectedPlugin ? shell.surfaces.filter((surface) => surface.id.startsWith(`${selectedPlugin.id}.`)) : [];
   const title = selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : activePage === "profile" ? "Profile" : "Dashboard");
-  const subtitle = selectedPlugin ? "Native plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Runtime-composed platform and plugin administration" : activePage === "profile" ? "Account profile and workspace access" : "Runtime overview and active workspace";
+  const subtitle = selectedPlugin ? "Active plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Platform and plugin administration" : activePage === "profile" ? "Account profile and workspace access" : "Workspace status and setup";
 
   const openPage = (page: Page, path = "/") => {
     setActivePage(page);
@@ -284,7 +283,7 @@ export function App() {
   const persistLayout = async () => {
     try {
       await saveLayout(shell);
-      setNotice("layout saved: workspace/default");
+      setNotice(`layout saved: ${currentWorkspaceId()}`);
       emit(notification("success", "Layout saved", "Workspace layout was updated."));
     } catch {
       setNotice("core offline · layout not saved");
@@ -328,7 +327,7 @@ export function App() {
       <header className="topbar">
         <button className="brand" type="button" onClick={() => openPage("overview")}><strong>v2</strong><Badge>runtime</Badge></button>
         <button className="search" type="button" onClick={() => setPaletteOpen(true)}>Search commands or tools</button>
-        <UserMenu session={session} onOpenProfile={() => openPage("profile", "/profile")} onOpenSettings={() => openPage("settings", "/settings")} onSignOut={() => void signOut()} />
+        <UserMenu session={session} workspace={workspace} onOpenProfile={() => openPage("profile", "/profile")} onOpenSettings={() => openPage("settings", "/settings")} onSignOut={() => void signOut()} />
       </header>
       <aside className="sidebar">
         <div className="sidebar-label">WORKSPACE</div>
@@ -338,22 +337,22 @@ export function App() {
         <button className={activePage === "settings" ? "nav active" : "nav"} onClick={() => openPage("settings", "/settings")}>Settings</button>
         <div className="sidebar-label">APPS</div>
         {activePlugins.length ? activePlugins.map((plugin) => <button key={plugin.id} className={activePage === `plugin:${plugin.id}` ? "nav active" : "nav"} onClick={() => openPage(`plugin:${plugin.id}`, `/plugins/${encodeURIComponent(plugin.id)}`)}>{plugin.name}</button>) : <p className="message">No active plugins</p>}
-        <div className="sidebar-account"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>workspace/default</small></div></div>
+        <div className="sidebar-account"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>{workspace?.id ?? "no-workspace"}</small></div></div>
       </aside>
       <main className="workspace">
         <div className="workspace-header">
           <div><h1>{title}</h1><p>{subtitle}</p></div>
-          <div className="header-actions"><Badge>workspace/default</Badge><Button onClick={persistLayout}>Save layout</Button></div>
+          <div className="header-actions"><Badge>{workspace?.id ?? "no-workspace"}</Badge><Button onClick={persistLayout}>Save layout</Button></div>
         </div>
-        {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} onOpenPlugins={() => setActivePage("plugins")} /> : null}
-        {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} onChanged={() => void refreshPlugins()} /></div> : null}
+        {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} workspace={workspace} permissions={permissions} onOpenPlugins={() => setActivePage("plugins")} onOpenSettings={() => openPage("settings", "/settings")} /> : null}
+        {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} permissions={permissions} onChanged={() => void refreshPlugins()} /></div> : null}
         {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
-        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
+        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} workspace={workspace} permissions={permissions} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
         {activePage === "profile" ? <ProfilePage session={session} onSessionChanged={setSession} onOpenSecurity={openSecuritySettings} emit={emit} /> : null}
         {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
       </main>
       <aside className="assistant">{assistant.length ? assistant.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <div className="message">No assistant plugin surface installed.</div>}</aside>
-      <footer className="statusbar"><span>{notice}</span><span>{activePluginIds.size}/{plugins.length} plugins active</span><span>Core workspace/default</span></footer>
+    <footer className="statusbar"><span>{notice}</span><span>{activePluginIds.size}/{plugins.length} plugins active</span><span>Core {workspace?.id ?? "no-workspace"}</span></footer>
     </div>
     <NotificationCenter notifications={notifications} onDismiss={dismiss} />
     <CommandPalette tools={tools} open={paletteOpen} onClose={() => setPaletteOpen(false)} onExecute={(tool) => void runTool(tool)} />

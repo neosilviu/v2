@@ -14,6 +14,8 @@
     "build:analyze": "node scripts/analyze-build.mjs",
     "guard:architecture": "pnpm build:analyze -- --strict && pnpm test:generated -- --check-migrations",
     "test:generated": "node --experimental-strip-types scripts/test-generated.mjs",
+    "perf:local": "node scripts/perf-local.mjs",
+    "test:e2e": "playwright test",
     "smoke:local": "node scripts/smoke-local-e2e.mjs",
     "bootstrap:workspace:dev": "node scripts/bootstrap-workspace-dev.mjs",
     "provision:workspace:prod": "node scripts/provision-workspace.mjs",
@@ -22,6 +24,7 @@
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^25.9.1",
     "fflate": "catalog:",
     "prettier": "^3.8.3",
