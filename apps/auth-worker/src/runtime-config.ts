@@ -160,6 +160,71 @@ export class AuthRuntimeRepository {
     });
   }
 
+  async listMethods(workspaceId?: string | null, providerState: RuntimeAuthProviderState = { github: false }) {
+    await this.ensureBootstrap(providerState);
+    const workspace = this.scoped(workspaceId);
+    const rows = await this.db.prepare(`SELECT id, workspace_id, type, provider_id, title, status, public_visible, display_order, configuration_ref, created_at, updated_at
+      FROM auth_methods
+      WHERE workspace_id IS NULL OR workspace_id = ?
+      ORDER BY display_order, title`)
+      .bind(workspace)
+      .all<AuthMethodRow>();
+    return rows.results.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      type: row.type,
+      providerId: row.provider_id,
+      title: row.title,
+      status: row.status,
+      publicVisible: row.public_visible === 1,
+      displayOrder: row.display_order,
+      configurationRef: row.configuration_ref,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async listUiContributions(workspaceId?: string | null) {
+    const workspace = this.scoped(workspaceId);
+    const rows = await this.db.prepare(`SELECT id, workspace_id, contribution_id, slot, template_id, schema_json, renderer_json, status, display_order, created_at, updated_at
+      FROM auth_ui_contributions
+      WHERE workspace_id IS NULL OR workspace_id = ?
+      ORDER BY display_order, slot`)
+      .bind(workspace)
+      .all<AuthUiContributionRow>();
+    return rows.results.map((row) => authUiContributionSchema.parse({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      contributionId: row.contribution_id,
+      slot: row.slot,
+      templateId: row.template_id,
+      schema: JSON.parse(row.schema_json),
+      renderer: JSON.parse(row.renderer_json),
+      status: row.status,
+      displayOrder: row.display_order,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async securitySummary(workspaceId?: string | null, providerState: RuntimeAuthProviderState = { github: false }) {
+    const [policy, methods, uiContributions] = await Promise.all([this.publicPolicy(workspaceId), this.listMethods(workspaceId, providerState), this.listUiContributions(workspaceId)]);
+    return {
+      policy,
+      methods: methods.map((method) => ({ ...method, configurationRef: method.configurationRef ? "server-side" : null })),
+      publishedLoginContributions: uiContributions.filter((item) => item.status === "published").length,
+      serverSideAvailability: { password: true, passkey: true, github: providerState.github },
+      emailDelivery: { verification: false, passwordReset: false, status: "unavailable" },
+      bootstrapAdmin: true,
+    };
+  }
+
+  async sessionsSummary() {
+    const sessionCount = await this.db.prepare("SELECT COUNT(*) AS count FROM session").first<{ count: number }>().catch(() => ({ count: 0 }));
+    const passkeyCount = await this.db.prepare("SELECT COUNT(*) AS count FROM passkey").first<{ count: number }>().catch(() => ({ count: 0 }));
+    return { sessions: sessionCount?.count ?? 0, passkeys: passkeyCount?.count ?? 0 };
+  }
+
   async upsertMethod(input: unknown) {
     const request = authMethodWriteSchema.parse(input);
     const id = request.type === "social" && request.providerId ? `social.${request.providerId}` : request.type;
@@ -204,6 +269,7 @@ export class AuthRuntimeRepository {
 
   async upsertPolicy(input: unknown) {
     const request = authPolicyWriteSchema.parse(input);
+    if (request.requireEmailVerification) throw new Error("Email verification requires a server-side mail delivery adapter before it can be enabled.");
     const workspace = request.workspaceId ?? null;
     const id = workspace ? `workspace:${workspace}` : "global";
     await this.db.prepare(`INSERT INTO auth_policies

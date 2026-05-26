@@ -57,17 +57,66 @@ app.post("/admin/auth/methods", async (c) => {
   const method = await new AuthRuntimeRepository(admin.config.db).upsertMethod(await c.req.json());
   return c.json({ method }, 201);
 });
+app.get("/admin/auth/methods", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const methods = await new AuthRuntimeRepository(admin.config.db).listMethods(c.req.query("workspaceId") ?? null, { github: Boolean(admin.config.github) });
+  return c.json({ methods });
+});
+app.put("/admin/auth/methods/:methodId", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const body = await c.req.json() as Record<string, unknown>;
+  const method = await new AuthRuntimeRepository(admin.config.db).upsertMethod({ ...body, providerId: body.providerId, type: body.type, title: body.title ?? c.req.param("methodId") });
+  return c.json({ method });
+});
 app.post("/admin/auth/ui-contributions", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const contribution = await new AuthRuntimeRepository(admin.config.db).upsertUiContribution(await c.req.json());
   return c.json({ contribution }, 201);
 });
+app.get("/admin/auth/ui-contributions", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const contributions = await new AuthRuntimeRepository(admin.config.db).listUiContributions(c.req.query("workspaceId") ?? null);
+  return c.json({ contributions });
+});
+app.put("/admin/auth/ui-contributions/:id", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const contribution = await new AuthRuntimeRepository(admin.config.db).upsertUiContribution({ ...await c.req.json() as Record<string, unknown>, contributionId: c.req.param("id") });
+  return c.json({ contribution });
+});
 app.post("/admin/auth/policies", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const policy = await new AuthRuntimeRepository(admin.config.db).upsertPolicy(await c.req.json());
   return c.json({ policy }, 201);
+});
+app.get("/admin/auth/policy", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const policy = await new AuthRuntimeRepository(admin.config.db).publicPolicy(c.req.query("workspaceId") ?? null);
+  return c.json({ policy });
+});
+app.put("/admin/auth/policy", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const policy = await new AuthRuntimeRepository(admin.config.db).upsertPolicy(await c.req.json());
+  return c.json({ policy });
+});
+app.get("/admin/auth/security-summary", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const summary = await new AuthRuntimeRepository(admin.config.db).securitySummary(c.req.query("workspaceId") ?? null, { github: Boolean(admin.config.github) });
+  return c.json({ summary });
+});
+app.get("/admin/auth/sessions/summary", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  const summary = await new AuthRuntimeRepository(admin.config.db).sessionsSummary();
+  return c.json({ summary });
 });
 app.post("/api/auth/sign-up/email", async (c) => {
   const parsed = parseAuthConfig(c.env);
