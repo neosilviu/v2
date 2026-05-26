@@ -299,8 +299,8 @@ async function main() {
   console.log(`Local e2e smoke: auth=${authUrl} core=${coreUrl} web=${webUrl} workspace=${workspaceId}`);
   await expectOk("Web /login route", fetch(new URL("/login", webUrl)).then(async (response) => ({ response, body: await response.text() })));
   await expectOk("Core health", request(coreUrl, "/health"));
-  await expectOk("Auth public login config", request(authUrl, `/public/auth/login-config?workspaceId=${encodeURIComponent(workspaceId)}`));
   applyLocalMigrations();
+  await expectOk("Auth public login config", request(authUrl, `/public/auth/login-config?workspaceId=${encodeURIComponent(workspaceId)}`));
   if (installPlugins) syncLocalMarketplace();
   await waitForService("Core", coreUrl, "/health");
   await waitForService("Auth", authUrl, "/health");
