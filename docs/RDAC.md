@@ -68,6 +68,26 @@ Plugin settings tabs are runtime contributions registered from installed and act
 
 General owns workspace display metadata, locale, timezone, currency, business identity metadata, notification sender status and service status. Security owns Auth policy publication, methods, login contribution publication, sessions/passkeys overview and bootstrap-admin warnings. Domains owns verified workspace domains, public delivery mappings and the safe boundary for Auth trusted origins. Marketplace owns runtime catalog/releases/install approval status. Interface owns shell zones, placements, theme tokens and enabled surfaces.
 
+### Closure status
+
+Current foundation status:
+
+- Core exposes authenticated runtime Settings composition endpoints for tab registry, tab panel resolution, ordering and settings-scoped runtime data/actions.
+- Core seeds the five built-in platform Settings tabs as runtime contributions in the existing D1 contribution/activation model.
+- Plugin manifests can declare Settings tab and panel contributions through shared Zod contracts.
+- Web renders `/settings?tab=<tabId>` from the Core Settings registry and treats `/marketplace` as the Marketplace tab alias.
+- Marketplace and Interface administration are reachable through platform Settings tabs while their underlying platform components are still trusted built-in optimizations.
+- Auth Worker exposes protected admin APIs for methods, policy, login UI contributions, security summary and sessions summary.
+- Login uses public Auth runtime configuration, hides unpublished passkey/social methods and uses safe local redirects.
+- Generated tests validate Settings contribution contracts and runtime Settings boundary presence.
+
+Remaining before operational plugins:
+
+- Full RBAC must replace bootstrap admin checks.
+- Domain verification/activation persistence and Auth trusted-origin replication need the complete production workflow.
+- Auth audit events should move from boundary documentation to persistent Auth-owned audit storage.
+- Local Node, Agent AI operational streaming, Commerce and Website business logic remain out of scope until this closure stays green.
+
 ## Faza 1 - Workspace RBAC
 
 Core will replace normal bootstrap administrator authorization with workspace-scoped RBAC.

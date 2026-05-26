@@ -44,3 +44,19 @@ Normal Marketplace plugins cannot provide arbitrary auth code. Future auth exten
 - `auth.policy.admin`
 
 Publishing login contributions or auth methods must be approval and audit backed once RBAC and the persistent approval engine are in place.
+## Runtime Login Status
+
+The public Login page is driven by `GET /public/auth/login-config?workspaceId=...`.
+
+The response contains only published/enabled public methods, safe method labels/provider IDs, registration policy flags and published declarative login UI contributions. It never returns OAuth secrets, configuration refs or internal bindings.
+
+Current behavior:
+
+- Password signin can bootstrap as public.
+- Signup appears only when runtime registration policy is `open`.
+- Invitation-only mode shows a placeholder instead of opening registration.
+- Passkey appears only when the passkey method is published and policy allows passkey signin.
+- Social methods appear only when the social method is explicitly published, even if server-side provider env vars exist.
+- Redirects are restricted to local relative paths and public delivery paths are not accepted as login redirects.
+
+Admin configuration is protected by Auth Worker `/admin/auth/*` endpoints and still uses bootstrap admin authorization until workspace RBAC replaces it.

@@ -31,6 +31,7 @@
 - Built-in Settings tabs are `General`, `Security`, `Domains`, `Marketplace` and `Interface`; they must use the same contribution model as plugin tabs.
 - Plugin settings tabs must come from installed and active plugin release contributions. Web must not hardcode plugin tabs or require rebuilds for standard plugin settings UI.
 - Auth/account security, domain trust, Marketplace lifecycle and interface composition must be configurable through protected administration surfaces with audit and approval awareness for sensitive mutations.
+- When updating production administration, keep Settings tabs contract-based and add generated guard coverage for new runtime contribution types.
 - Keep D1 migrations incremental. Do not rewrite existing migration history, apply remote migrations from local work, or change assigned D1 identifiers.
 - Keep PR descriptions current with the real HEAD, validation status and remaining Faza 0 work.
 

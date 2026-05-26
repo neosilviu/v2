@@ -15,3 +15,20 @@
 - Admin Auth configuration routes are protected by temporary bootstrap admin access until RBAC lands. They must move to RBAC/policy checks and audit events before normal operation.
 - Ordinary Marketplace plugins cannot inject code into login, session, OAuth or passkey handling. Future auth extensions require privileged capabilities and explicit approval.
 - Email verification and forgot/reset password require a real server-side email provider. Do not add ad hoc email sending or expose reset tokens in logs or public payloads.
+## Auth Production Security Status
+
+Auth Worker remains the only authority for identity, sessions, password, passkeys and OAuth.
+
+Current production closure:
+
+- Runtime login method publication is separate from server-side provider availability.
+- Passkey and social providers are not public by default.
+- Registration is disabled by default unless Auth runtime policy is changed by an administrator.
+- Email verification and password reset remain unavailable until a server-side mail delivery adapter exists.
+- Enabling `requireEmailVerification` is blocked without that adapter.
+- Admin Auth APIs are protected by the existing bootstrap admin check and must move to workspace RBAC in Faza 1.
+- Public login config does not expose secrets or configuration refs.
+
+Domain trust rule:
+
+Only verified and active domains from Core-controlled metadata may become Auth trusted-origin candidates through a server-side boundary. Browser-provided origins are never trusted automatically.

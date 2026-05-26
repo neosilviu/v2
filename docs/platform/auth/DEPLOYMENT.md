@@ -16,3 +16,15 @@ Runtime login configuration is stored in Auth DB tables:
 `PLATFORM_ADMIN_EMAILS` is a temporary bootstrap/recovery setting for Auth admin configuration endpoints. Keep it narrow and remove it from the normal path when RBAC is available.
 
 Email verification and forgot/reset password are intentionally deferred until a trusted email provider is configured server-side.
+## Auth Deployment Status
+
+Production Auth deployment requires:
+
+- explicit Better Auth `baseURL`;
+- verified `trustedOrigins`;
+- HTTPS and secure cookies;
+- stable passkey RP ID/origin mapping;
+- OAuth callback URLs that match verified domains;
+- server-side mail delivery before email verification or reset password is enabled.
+
+The current foundation exposes protected admin APIs and safe public login config, but does not yet implement the complete domain verification to Auth trusted-origin replication workflow.

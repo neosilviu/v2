@@ -40,3 +40,19 @@ Auth Worker remains the only authority for identity, sessions, password, passkey
 ## Domain Boundary
 
 Core owns workspace domain metadata and verification state. Auth must trust only verified and active domains delivered through a server-side boundary, never browser-supplied origins or public metadata alone.
+
+## Current Implementation Status
+
+- Built-in Settings tabs are seeded by Core as runtime contributions and resolved through authenticated Core APIs.
+- Plugin Settings tabs and panels are contract-supported through `@v2/ui-schema`, `@v2/plugin-contracts` and `@v2/plugin-sdk`.
+- Web Settings uses a runtime tab registry and generic `TemplateRenderer`; standard plugin Settings tabs do not require Web rebuilds.
+- Auth administration has protected APIs for methods, policy, login UI contribution publication, security summary and sessions summary.
+- Login is public and runtime-driven; passkey/social/signup visibility follows Auth DB publication and policy.
+- Marketplace and Interface are integrated as platform Settings tabs while their trusted React components remain platform-owned optimizations.
+
+Not yet complete:
+
+- Production domain verification and trusted-origin replication.
+- Full workspace RBAC.
+- Auth-owned persistent audit table for admin changes.
+- Dynamic Marketplace Worker execution via Dispatch Namespace or Workers for Platforms.
