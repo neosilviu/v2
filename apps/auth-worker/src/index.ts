@@ -11,23 +11,42 @@ function isInternalRequest(c: AuthContext) {
   return url.hostname === "auth.internal" && !c.req.header("origin");
 }
 
+function needsBrowserCors(path: string) {
+  return path.startsWith("/api/auth/") || path.startsWith("/public/auth/") || path.startsWith("/admin/auth/") || path.startsWith("/setup/owner/");
+}
+
+function corsHeaders(origin: string) {
+  const headers = new Headers();
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Access-Control-Allow-Credentials", "true");
+  headers.set("Access-Control-Expose-Headers", "Content-Length");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+  headers.set("Access-Control-Max-Age", "600");
+  headers.set("Vary", "Origin");
+  return headers;
+}
+
+function addCorsHeaders(response: Response, origin: string) {
+  const headers = new Headers(response.headers);
+  for (const [key, value] of corsHeaders(origin)) headers.set(key, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 app.get("/health", (c) => c.json({ ok: true, service: "auth-worker", configured: parseAuthConfig(c.env).ok }));
 app.use("*", async (c, next) => {
   const origin = c.req.header("origin") ?? "";
-  if (origin && (c.req.path.startsWith("/api/auth/") || c.req.path.startsWith("/public/auth/") || c.req.path.startsWith("/admin/auth/"))) {
-    const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
-    if (parsed.ok && parsed.config.trustedOrigins.includes(origin)) {
-      c.header("Access-Control-Allow-Origin", origin);
-      c.header("Access-Control-Allow-Credentials", "true");
-      c.header("Access-Control-Expose-Headers", "Content-Length");
-      c.header("Vary", "Origin");
-    }
-    c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
-    c.header("Access-Control-Max-Age", "600");
-    if (c.req.method === "OPTIONS") return c.body(null, parsed.ok && parsed.config.trustedOrigins.includes(origin) ? 204 : 403);
+  if (!origin || !needsBrowserCors(c.req.path)) {
+    await next();
+    return;
+  }
+  const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
+  const allowed = parsed.ok && parsed.config.trustedOrigins.includes(origin);
+  if (c.req.method === "OPTIONS") {
+    return new Response(null, { status: allowed ? 204 : 403, headers: allowed ? corsHeaders(origin) : undefined });
   }
   await next();
+  if (allowed) c.res = addCorsHeaders(c.res, origin);
 });
 app.get("/public/auth/login-config", async (c) => {
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
