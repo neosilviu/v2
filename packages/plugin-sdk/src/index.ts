@@ -7,6 +7,8 @@ import {
   publicRouteContributionSchema,
   publicSurfaceContributionSchema,
   publicToolContributionSchema,
+  settingsPanelContributionSchema,
+  settingsTabContributionSchema,
   surfaceSchema,
   toolSchema,
   zoneSchema,
@@ -19,6 +21,8 @@ import {
   type PublicRouteContribution,
   type PublicSurfaceContribution,
   type PublicToolContribution,
+  type SettingsPanelContribution,
+  type SettingsTabContribution,
   type SurfaceContribution,
   type ToolContribution,
   type ZoneContribution,
@@ -35,3 +39,5 @@ export const definePublicRoute = (route: unknown): PublicRouteContribution => pu
 export const definePublicSurface = (surface: unknown): PublicSurfaceContribution => publicSurfaceContributionSchema.parse(surface);
 export const definePublicTool = (tool: unknown): PublicToolContribution => publicToolContributionSchema.parse(tool);
 export const defineDeclarativeUi = (ui: unknown): DeclarativeUi => declarativeUiSchema.parse(ui);
+export const defineSettingsTab = (tab: unknown): SettingsTabContribution => settingsTabContributionSchema.parse(tab);
+export const defineSettingsPanel = (panel: unknown): SettingsPanelContribution => settingsPanelContributionSchema.parse(panel);

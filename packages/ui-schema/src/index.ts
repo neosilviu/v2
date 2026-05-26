@@ -92,6 +92,38 @@ export const publicRouteContributionSchema = z.object({
   pageId: operationIdSchema,
   access: accessModeSchema.default("public-candidate"),
 });
+
+export const settingsTabContributionSchema = z.object({
+  id: operationIdSchema,
+  pluginId: operationIdSchema,
+  label: z.string().min(1),
+  icon: z.string().min(1).optional(),
+  displayOrder: z.number().int().default(0),
+  category: z.enum(["platform", "plugin"]),
+  requiredPermission: operationIdSchema.optional(),
+  panelContributionId: operationIdSchema,
+  status: z.enum(["active", "disabled"]).default("active"),
+});
+
+export const settingsPanelContributionSchema = z.object({
+  id: operationIdSchema,
+  pluginId: operationIdSchema,
+  tabId: operationIdSchema,
+  templateId: z.enum(["admin.settings", "admin.table", "admin.form", "admin.dashboard"]),
+  schema: declarativePageContributionSchema,
+  dataSources: z.array(dataSourceDefinitionSchema).default([]),
+  actions: z.array(actionDefinitionSchema).default([]),
+  requiredPermission: operationIdSchema.optional(),
+});
+
+export const platformSettingsTabIds = [
+  "platform.settings.general",
+  "platform.settings.security",
+  "platform.settings.domains",
+  "platform.settings.marketplace",
+  "platform.settings.interface",
+] as const;
+export const platformSettingsTabIdSchema = z.enum(platformSettingsTabIds);
 export const runtimeDataRequestSchema = z.object({
   workspaceId: z.string().min(1),
   contributionId: operationIdSchema,
@@ -124,6 +156,9 @@ export type SlotContribution = z.output<typeof slotContributionSchema>;
 export type DeclarativePageContribution = z.output<typeof declarativePageContributionSchema>;
 export type PublicRouteContribution = z.output<typeof publicRouteContributionSchema>;
 export type PublicRoutePattern = z.output<typeof publicRoutePatternSchema>;
+export type SettingsTabContribution = z.output<typeof settingsTabContributionSchema>;
+export type SettingsPanelContribution = z.output<typeof settingsPanelContributionSchema>;
+export type PlatformSettingsTabId = z.output<typeof platformSettingsTabIdSchema>;
 export type RuntimeDataRequest = z.output<typeof runtimeDataRequestSchema>;
 export type RuntimeActionRequest = z.output<typeof runtimeActionRequestSchema>;
 export type RuntimeResultEnvelope = z.output<typeof runtimeResultEnvelopeSchema>;

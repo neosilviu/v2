@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { declarativePageContributionSchema, publicRoutePatternSchema } from "@v2/ui-schema";
+import {
+  declarativePageContributionSchema,
+  publicRoutePatternSchema,
+  settingsPanelContributionSchema,
+  settingsTabContributionSchema,
+} from "@v2/ui-schema";
 
 export const riskSchema = z.enum(["safe", "reversible", "sensitive", "dangerous"]);
 export const exposureSchema = z.enum(["agent-ai", "mcp", "command"]);
@@ -44,11 +49,12 @@ export const surfaceSchema = z.object({ id: z.string().min(1), title: z.string()
 export const zoneSchema = z.object({ id: z.string().min(1), title: z.string(), accepts: z.array(z.string()).default(["panel", "settings", "widget", "page"]) });
 export const layoutSchema = z.object({ id: z.string().min(1), title: z.string(), zones: z.array(z.string()).default([]) });
 export const settingSchema = z.object({ id: z.string().min(1), title: z.string(), section: z.string(), fields: z.array(z.object({ key: z.string(), label: z.string(), type: z.enum(["string", "boolean", "number", "color", "select"]), options: z.array(z.string()).optional() })).default([]) });
-const emptyContributions = { tools: [], providers: [], channels: [], surfaces: [], zones: [], layouts: [], settings: [], publicRoutes: [], publicSurfaces: [], publicTools: [] };
+export { settingsPanelContributionSchema, settingsTabContributionSchema };
+const emptyContributions = { tools: [], providers: [], channels: [], surfaces: [], zones: [], layouts: [], settings: [], settingsTabs: [], settingsPanels: [], publicRoutes: [], publicSurfaces: [], publicTools: [] };
 
 export const pluginManifestSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), version: z.string().min(1), builtIn: z.boolean().default(false), data: storageModeSchema.default({ mode: "none" }), capabilities: z.array(capabilitySchema).default([]),
-  contributes: z.object({ tools: z.array(toolSchema).default([]), providers: z.array(providerSchema).default([]), channels: z.array(channelSchema).default([]), surfaces: z.array(surfaceSchema).default([]), zones: z.array(zoneSchema).default([]), layouts: z.array(layoutSchema).default([]), settings: z.array(settingSchema).default([]), publicRoutes: z.array(publicRouteContributionSchema).default([]), publicSurfaces: z.array(publicSurfaceContributionSchema).default([]), publicTools: z.array(publicToolContributionSchema).default([]) }).default(emptyContributions),
+  contributes: z.object({ tools: z.array(toolSchema).default([]), providers: z.array(providerSchema).default([]), channels: z.array(channelSchema).default([]), surfaces: z.array(surfaceSchema).default([]), zones: z.array(zoneSchema).default([]), layouts: z.array(layoutSchema).default([]), settings: z.array(settingSchema).default([]), settingsTabs: z.array(settingsTabContributionSchema).default([]), settingsPanels: z.array(settingsPanelContributionSchema).default([]), publicRoutes: z.array(publicRouteContributionSchema).default([]), publicSurfaces: z.array(publicSurfaceContributionSchema).default([]), publicTools: z.array(publicToolContributionSchema).default([]) }).default(emptyContributions),
 });
 export const pluginPackageDescriptorSchema = z.object({
   manifest: pluginManifestSchema,
@@ -69,6 +75,8 @@ export type SurfaceContribution = z.output<typeof surfaceSchema>;
 export type ZoneContribution = z.output<typeof zoneSchema>;
 export type LayoutContribution = z.output<typeof layoutSchema>;
 export type SettingContribution = z.output<typeof settingSchema>;
+export type SettingsTabContribution = z.output<typeof settingsTabContributionSchema>;
+export type SettingsPanelContribution = z.output<typeof settingsPanelContributionSchema>;
 export type PublicContributionAccess = z.output<typeof publicContributionAccessSchema>;
 export type PublicRouteContribution = z.output<typeof publicRouteContributionSchema>;
 export type PublicSurfaceContribution = z.output<typeof publicSurfaceContributionSchema>;
