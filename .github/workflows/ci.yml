@@ -55,76 +55,67 @@ jobs:
           mkdir -p /tmp/v2-smoke-markers
           grep -Fq "[ok] Core session with Better Auth cookie" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/core-session || true
           grep -Fq "[ok] Owner setup consumed explicitly" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/owner-consumed || true
-          [ "$(grep -Fc '[ok] local Auth D1 registration policy opened' /tmp/v2-smoke.log || true)" -ge 2 ] && printf ok > /tmp/v2-smoke-markers/second-policy-write || true
           [ "$(grep -Fc '[ok] Workspace provisioning request created' /tmp/v2-smoke.log || true)" -ge 2 ] && printf ok > /tmp/v2-smoke-markers/second-token || true
           grep -Fq "[ok] Owner setup API creates account with registration disabled" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/owner-created || true
-          grep -Fq "Owner setup API creates account with registration disabled - HTTP 401" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/http-401 || true
-          grep -Fq "Owner setup API creates account with registration disabled - HTTP 404" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/http-404 || true
-          grep -Fq "Owner setup API creates account with registration disabled - HTTP 500" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/http-500 || true
-          grep -Fq "Owner setup API creates account with registration disabled - HTTP 503" /tmp/v2-smoke.log && printf ok > /tmp/v2-smoke-markers/http-503 || true
+          for code in 400 401 403 404 409 422 429 500 502 503; do
+            grep -Fq "Owner setup API creates account with registration disabled - HTTP ${code}" /tmp/v2-smoke.log && printf ok > "/tmp/v2-smoke-markers/http-${code}" || true
+          done
       - name: Upload marker core session reached
         if: failure()
         uses: actions/upload-artifact@v4
-        with:
-          name: marker-core-session-reached
-          path: /tmp/v2-smoke-markers/core-session
-          if-no-files-found: ignore
+        with: { name: marker-core-session-reached, path: /tmp/v2-smoke-markers/core-session, if-no-files-found: ignore }
       - name: Upload marker owner consumed
         if: failure()
         uses: actions/upload-artifact@v4
-        with:
-          name: marker-owner-consumed
-          path: /tmp/v2-smoke-markers/owner-consumed
-          if-no-files-found: ignore
-      - name: Upload marker second policy write
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: marker-second-policy-write
-          path: /tmp/v2-smoke-markers/second-policy-write
-          if-no-files-found: ignore
+        with: { name: marker-owner-consumed, path: /tmp/v2-smoke-markers/owner-consumed, if-no-files-found: ignore }
       - name: Upload marker second owner token
         if: failure()
         uses: actions/upload-artifact@v4
-        with:
-          name: marker-second-owner-token
-          path: /tmp/v2-smoke-markers/second-token
-          if-no-files-found: ignore
+        with: { name: marker-second-owner-token, path: /tmp/v2-smoke-markers/second-token, if-no-files-found: ignore }
       - name: Upload marker owner created
         if: failure()
         uses: actions/upload-artifact@v4
-        with:
-          name: marker-registration-disabled-owner-created
-          path: /tmp/v2-smoke-markers/owner-created
-          if-no-files-found: ignore
-      - name: Upload marker owner signup http 401
+        with: { name: marker-registration-disabled-owner-created, path: /tmp/v2-smoke-markers/owner-created, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 400
         if: failure()
         uses: actions/upload-artifact@v4
-        with:
-          name: marker-owner-signup-http-401
-          path: /tmp/v2-smoke-markers/http-401
-          if-no-files-found: ignore
-      - name: Upload marker owner signup http 404
+        with: { name: marker-owner-signup-http-400, path: /tmp/v2-smoke-markers/http-400, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 401
         if: failure()
         uses: actions/upload-artifact@v4
-        with:
-          name: marker-owner-signup-http-404
-          path: /tmp/v2-smoke-markers/http-404
-          if-no-files-found: ignore
-      - name: Upload marker owner signup http 500
+        with: { name: marker-owner-signup-http-401, path: /tmp/v2-smoke-markers/http-401, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 403
         if: failure()
         uses: actions/upload-artifact@v4
-        with:
-          name: marker-owner-signup-http-500
-          path: /tmp/v2-smoke-markers/http-500
-          if-no-files-found: ignore
-      - name: Upload marker owner signup http 503
+        with: { name: marker-owner-signup-http-403, path: /tmp/v2-smoke-markers/http-403, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 404
         if: failure()
         uses: actions/upload-artifact@v4
-        with:
-          name: marker-owner-signup-http-503
-          path: /tmp/v2-smoke-markers/http-503
-          if-no-files-found: ignore
+        with: { name: marker-owner-signup-http-404, path: /tmp/v2-smoke-markers/http-404, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 409
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: marker-owner-signup-http-409, path: /tmp/v2-smoke-markers/http-409, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 422
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: marker-owner-signup-http-422, path: /tmp/v2-smoke-markers/http-422, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 429
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: marker-owner-signup-http-429, path: /tmp/v2-smoke-markers/http-429, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 500
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: marker-owner-signup-http-500, path: /tmp/v2-smoke-markers/http-500, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 502
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: marker-owner-signup-http-502, path: /tmp/v2-smoke-markers/http-502, if-no-files-found: ignore }
+      - name: Upload marker owner signup HTTP 503
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: marker-owner-signup-http-503, path: /tmp/v2-smoke-markers/http-503, if-no-files-found: ignore }
       - name: Upload local smoke diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -140,7 +131,4 @@ jobs:
       - name: Upload build analysis report
         if: always()
         uses: actions/upload-artifact@v4
-        with:
-          name: build-analysis-report
-          path: reports/
-          if-no-files-found: warn
+        with: { name: build-analysis-report, path: reports/, if-no-files-found: warn }
