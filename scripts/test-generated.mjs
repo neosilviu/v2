@@ -68,6 +68,8 @@ function testManifestContracts(manifests) {
     assertUnique(contributions.tools, "tool", owner);
     assertUnique(contributions.providers, "provider", owner);
     assertUnique(contributions.surfaces, "surface", owner);
+    assertUnique(contributions.settingsTabs, "settings tab", owner);
+    assertUnique(contributions.settingsPanels, "settings panel", owner);
     assertUnique(contributions.publicRoutes, "public route", owner);
     assertUnique(contributions.publicSurfaces, "public surface", owner);
     assertUnique(contributions.publicTools, "public tool", owner);
@@ -78,6 +80,8 @@ function testManifestContracts(manifests) {
       publicRoutes: contributions.publicRoutes,
       publicSurfaces: contributions.publicSurfaces,
       publicTools: contributions.publicTools,
+      settingsTabs: contributions.settingsTabs,
+      settingsPanels: contributions.settingsPanels,
     })) {
       for (const contribution of collection) {
         if (globalIds[group].has(contribution.id)) fail(`${group} id '${contribution.id}' is duplicated across ${owner} and ${globalIds[group].get(contribution.id)}`);
@@ -86,6 +90,14 @@ function testManifestContracts(manifests) {
     }
     const surfaceIds = new Set(contributions.surfaces.map((surface) => surface.id));
     const toolIds = new Set(contributions.tools.map((tool) => tool.id));
+    const settingsTabIds = new Set(contributions.settingsTabs.map((tab) => tab.id));
+    const settingsPanelIds = new Set(contributions.settingsPanels.map((panel) => panel.id));
+    for (const tab of contributions.settingsTabs) {
+      if (!settingsPanelIds.has(tab.panelContributionId)) fail(`settings tab '${tab.id}' in ${owner} references missing panel '${tab.panelContributionId}'`);
+    }
+    for (const panel of contributions.settingsPanels) {
+      if (!settingsTabIds.has(panel.tabId)) fail(`settings panel '${panel.id}' in ${owner} references missing tab '${panel.tabId}'`);
+    }
     for (const contribution of contributions.publicRoutes) {
       if (contribution.surfaceId && !surfaceIds.has(contribution.surfaceId)) fail(`public route '${contribution.id}' in ${owner} references missing surface '${contribution.surfaceId}'`);
     }
@@ -129,6 +141,17 @@ function testRuntimeFirstArchitecture() {
     }
   }
   if (coreIndex.includes("requireShellRead")) fail("Core still contains requireShellRead origin-based read bypass");
+  for (const route of ["/workspaces/:workspaceId/settings/tabs", "/workspaces/:workspaceId/settings/tabs/:tabId", "/workspaces/:workspaceId/settings/runtime/data", "/workspaces/:workspaceId/settings/runtime/actions"]) {
+    if (!coreIndex.includes(route)) fail(`Core runtime Settings route ${route} is missing`);
+  }
+  const uiSchema = fs.readFileSync(path.join(root, "packages/ui-schema/src/index.ts"), "utf8");
+  for (const symbol of ["settingsTabContributionSchema", "settingsPanelContributionSchema", "platformSettingsTabIds"]) {
+    if (!uiSchema.includes(symbol)) fail(`@v2/ui-schema is missing ${symbol}`);
+  }
+  const pluginContracts = fs.readFileSync(path.join(root, "packages/plugin-contracts/src/index.ts"), "utf8");
+  if (!pluginContracts.includes("settingsTabs") || !pluginContracts.includes("settingsPanels")) fail("@v2/plugin-contracts does not expose settings tab/panel manifest contributions");
+  const webApp = fs.readFileSync(path.join(root, "apps/web/src/App.tsx"), "utf8");
+  if (!webApp.includes("SettingsPage")) fail("Web App does not route Settings through the runtime SettingsPage");
   pass("Runtime-first platform source scan completed");
 }
 
