@@ -136,9 +136,12 @@ app.post("/setup/owner/sign-up/email", async (c) => {
   if (!statusResponse.ok) return c.json(errorResponse(failure("not_found", "Owner setup link is not available.")), 404);
   const status = await statusResponse.json() as { setup?: { ownerEmail?: string; status?: string } };
   if (status.setup?.status !== "pending" || status.setup.ownerEmail?.toLowerCase() !== email) return c.json(errorResponse(failure("not_authorized", "Owner setup token is not valid for this email.")), 403);
+  const signUpHeaders = new Headers({ "content-type": "application/json" });
+  const origin = c.req.header("origin");
+  if (origin && parsed.config.trustedOrigins.includes(origin)) signUpHeaders.set("origin", origin);
   const signUpRequest = new Request(new URL("/api/auth/sign-up/email", parsed.config.baseURL).toString(), {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: signUpHeaders,
     body: JSON.stringify({ email, password: body.password, name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : email }),
   });
   const response = await createAuth(parsed.config).handler(signUpRequest);
