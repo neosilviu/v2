@@ -4,7 +4,7 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadLayout, loadRuntimeTools, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe } from "./api";
+import { consumeOwnerSetup, decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadLayout, loadOwnerSetup, loadRuntimeTools, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe } from "./api";
 import { signOutAuth, updateAuthProfile } from "./auth-api";
 import { composeShellFromSurfaces, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
@@ -172,6 +172,7 @@ function ProfilePage({ session, onSessionChanged, onOpenSecurity, emit }: { sess
 }
 
 export function App() {
+  if (window.location.pathname === "/setup/owner") return <OwnerSetupPage />;
   if (window.location.pathname === "/login") return <LoginPage />;
   if (window.location.pathname.startsWith("/public/")) return <PublicPage />;
 
@@ -343,4 +344,52 @@ export function App() {
     <CommandPalette tools={tools} open={paletteOpen} onClose={() => setPaletteOpen(false)} onExecute={(tool) => void runTool(tool)} />
     <ToolApprovalDialog tool={pendingApproval?.tool ?? null} approvalId={pendingApproval?.approvalId ?? null} onCancel={() => setPendingApproval(null)} onApprove={() => void approvePending()} />
   </>;
+}
+
+function OwnerSetupPage() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token") ?? "";
+  const [session, setSession] = useState<CoreSession | null>(null);
+  const [setup, setSetup] = useState<{ workspaceId: string; ownerEmail: string; status: string; expiresAt: string } | null>(null);
+  const [status, setStatus] = useState("Checking owner setup link...");
+
+  useEffect(() => {
+    void Promise.all([loadCoreSession().catch(() => null), token ? loadOwnerSetup(token) : Promise.reject(new Error("missing"))])
+      .then(([nextSession, nextSetup]) => {
+        setSession(nextSession);
+        setSetup(nextSetup.setup);
+        setStatus(nextSetup.setup.status === "pending" ? "Owner setup link is ready" : `Owner setup is ${nextSetup.setup.status}`);
+      })
+      .catch(() => setStatus("Owner setup link is unavailable or expired."));
+  }, [token]);
+
+  const consume = async () => {
+    try {
+      setStatus("Activating workspace owner...");
+      const result = await consumeOwnerSetup(token);
+      setStatus("Owner activated. Opening workspace...");
+      window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(result.workspaceId)}`);
+    } catch {
+      setStatus("Owner setup could not be consumed by the current session.");
+    }
+  };
+
+  const signedInEmail = session?.user?.email ?? "";
+  const canConsume = Boolean(setup && setup.status === "pending" && session?.authenticated && signedInEmail.toLowerCase() === setup.ownerEmail.toLowerCase());
+  const loginTarget = `/login?redirectTo=${encodeURIComponent(`/setup/owner?token=${encodeURIComponent(token)}`)}`;
+
+  return <main className="login-page">
+    <SurfaceCard className="login-panel">
+      <div className="surface-header"><div><small>workspace provisioning</small><h2>Owner setup</h2></div><Badge>{setup?.status ?? "checking"}</Badge></div>
+      <p className="login-status">{status}</p>
+      {setup ? <div className="settings-subpanel">
+        <p>Workspace: {setup.workspaceId}</p>
+        <p>Owner email: {setup.ownerEmail}</p>
+        <p>Expires: {new Date(setup.expiresAt).toLocaleString()}</p>
+      </div> : null}
+      {session?.authenticated ? <p className="login-status">Signed in as {signedInEmail}</p> : <div className="actions"><Button onClick={() => window.location.assign(loginTarget)}>Sign in to continue</Button></div>}
+      {session?.authenticated && setup && signedInEmail.toLowerCase() !== setup.ownerEmail.toLowerCase() ? <p className="login-status">Sign in with the invited owner email to activate this workspace.</p> : null}
+      <div className="actions"><Button className="primary" disabled={!canConsume} onClick={() => void consume()}>Activate owner access</Button></div>
+    </SurfaceCard>
+  </main>;
 }

@@ -48,6 +48,18 @@ export const workspaceInvitations = sqliteTable("workspace_invitations", {
   createdAt: text("created_at").notNull().default(now),
   updatedAt: text("updated_at").notNull().default(now),
 }, (table) => [index("workspace_invitations_workspace_idx").on(table.workspaceId, table.status), index("workspace_invitations_email_idx").on(table.workspaceId, table.email)]);
+export const workspaceProvisioningRequests = sqliteTable("workspace_provisioning_requests", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  ownerEmail: text("owner_email").notNull(),
+  status: text("status", { enum: ["pending", "consumed", "expired", "revoked"] }).notNull().default("pending"),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  createdBy: text("created_by"),
+  createdAt: text("created_at").notNull().default(now),
+  consumedAt: text("consumed_at"),
+  metadataJson: text("metadata_json"),
+}, (table) => [index("workspace_provisioning_workspace_idx").on(table.workspaceId, table.status), uniqueIndex("workspace_provisioning_token_idx").on(table.tokenHash)]);
 export const serviceIdentities = sqliteTable("service_identities", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
@@ -63,7 +75,7 @@ export const workspaceDomains = sqliteTable("workspace_domains", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   hostname: text("hostname").notNull(),
-  kind: text("kind", { enum: ["admin", "auth", "website", "storefront", "public-chat"] }).notNull(),
+  kind: text("kind", { enum: ["admin", "auth", "website", "storefront", "public-chat", "mail"] }).notNull(),
   status: text("status", { enum: ["draft", "verifying", "verified", "active", "disabled"] }).notNull().default("draft"),
   verificationMethod: text("verification_method", { enum: ["manual", "dns-txt", "dns-cname"] }).notNull().default("manual"),
   verificationTokenHash: text("verification_token_hash"),

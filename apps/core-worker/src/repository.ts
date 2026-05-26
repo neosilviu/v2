@@ -94,7 +94,7 @@ export type WorkspaceDomain = {
   id: string;
   workspaceId: string;
   hostname: string;
-  kind: "admin" | "auth" | "website" | "storefront" | "public-chat";
+  kind: "admin" | "auth" | "website" | "storefront" | "public-chat" | "mail";
   status: "draft" | "verifying" | "verified" | "active" | "disabled";
   verificationMethod: "manual" | "dns-txt" | "dns-cname";
   verificationInstructions: Record<string, unknown> | null;
@@ -217,6 +217,56 @@ export class CoreRepository {
       ]);
       await this.audit(workspaceId, "rbac.bootstrap.owner", { userId: user.id, email: user.email }, user.id);
     }
+  }
+
+  async createOwnerProvisioningRequest(input: { workspaceId: string; workspaceName: string; ownerEmail: string; tokenHash: string; expiresAt: string; createdBy?: string | null; metadata?: Record<string, unknown> }) {
+    await this.ensureWorkspaceRbac(input.workspaceId);
+    await this.db.batch([
+      this.db.prepare("UPDATE workspaces SET name = ?, status = 'provisioning', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(input.workspaceName, input.workspaceId),
+      this.db.prepare("UPDATE workspace_provisioning_requests SET status = 'revoked' WHERE workspace_id = ? AND status = 'pending'").bind(input.workspaceId),
+      this.db.prepare(`INSERT INTO workspace_provisioning_requests
+        (id, workspace_id, owner_email, status, token_hash, expires_at, created_by, metadata_json)
+        VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)`)
+        .bind(crypto.randomUUID(), input.workspaceId, input.ownerEmail.toLowerCase(), input.tokenHash, input.expiresAt, input.createdBy ?? null, JSON.stringify(input.metadata ?? {})),
+    ]);
+    await this.audit(input.workspaceId, "workspace.provisioning.owner.requested", { ownerEmail: input.ownerEmail.toLowerCase(), expiresAt: input.expiresAt }, input.createdBy ?? undefined);
+  }
+
+  async ownerProvisioningStatus(tokenHash: string) {
+    const row = await this.db.prepare(`SELECT workspace_id, owner_email, status, expires_at, consumed_at
+      FROM workspace_provisioning_requests WHERE token_hash = ? LIMIT 1`)
+      .bind(tokenHash)
+      .first<{ workspace_id: string; owner_email: string; status: "pending" | "consumed" | "expired" | "revoked"; expires_at: string; consumed_at: string | null }>();
+    if (!row) return null;
+    const expired = row.status === "pending" && Date.parse(row.expires_at) <= Date.now();
+    return { workspaceId: row.workspace_id, ownerEmail: row.owner_email, status: expired ? "expired" as const : row.status, expiresAt: row.expires_at, consumedAt: row.consumed_at };
+  }
+
+  async consumeOwnerProvisioningToken(tokenHash: string, user: { id: string; email: string; name?: string } | null) {
+    if (!user) return { status: "not_authenticated" as const };
+    const row = await this.db.prepare(`SELECT id, workspace_id, owner_email, status, expires_at
+      FROM workspace_provisioning_requests WHERE token_hash = ? LIMIT 1`)
+      .bind(tokenHash)
+      .first<{ id: string; workspace_id: string; owner_email: string; status: "pending" | "consumed" | "expired" | "revoked"; expires_at: string }>();
+    if (!row) return { status: "not_found" as const };
+    if (row.status !== "pending") return { status: row.status };
+    if (Date.parse(row.expires_at) <= Date.now()) {
+      await this.db.prepare("UPDATE workspace_provisioning_requests SET status = 'expired' WHERE id = ?").bind(row.id).run();
+      return { status: "expired" as const };
+    }
+    if (row.owner_email.toLowerCase() !== user.email.toLowerCase()) return { status: "email_mismatch" as const };
+    await this.ensureWorkspaceRbac(row.workspace_id);
+    await this.db.batch([
+      this.db.prepare(`INSERT INTO workspace_members (workspace_id, user_id, email, status, updated_at)
+        VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP)
+        ON CONFLICT(workspace_id, user_id) DO UPDATE SET email = excluded.email, status = 'active', updated_at = CURRENT_TIMESTAMP`)
+        .bind(row.workspace_id, user.id, user.email),
+      this.db.prepare("INSERT OR IGNORE INTO workspace_member_roles (workspace_id, user_id, role_id) VALUES (?, ?, ?)").bind(row.workspace_id, user.id, `${row.workspace_id}:owner`),
+      this.db.prepare("UPDATE workspace_provisioning_requests SET status = 'consumed', consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'").bind(row.id),
+      this.db.prepare("UPDATE workspaces SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(row.workspace_id),
+    ]);
+    await this.audit(row.workspace_id, "workspace.provisioning.owner.consumed", { userId: user.id, email: user.email }, user.id);
+    return { status: "consumed" as const, workspaceId: row.workspace_id };
   }
 
   async permissionsForUser(workspaceId: string, userId: string): Promise<WorkspacePermission[]> {

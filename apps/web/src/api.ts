@@ -44,6 +44,8 @@ export type WorkspaceDomain = {
   updatedAt: string;
 };
 export async function loadCoreSession(): Promise<CoreSession> { return json<CoreSession>("/session"); }
+export async function loadOwnerSetup(token: string): Promise<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }> { return json<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }>(`/setup/owner?token=${encodeURIComponent(token)}`); }
+export async function consumeOwnerSetup(token: string): Promise<{ status: "consumed"; workspaceId: string }> { return json<{ status: "consumed"; workspaceId: string }>("/setup/owner/consume", { method: "POST", body: JSON.stringify({ token }) }); }
 export async function loadCurrentRbac(): Promise<RbacMe> { return json<RbacMe>(`/workspaces/${workspaceId}/rbac/me`); }
 export function runtimeSurfaceUrl(surfaceId: string): string { return `${coreUrl}/runtime/ui/surfaces/${encodeURIComponent(surfaceId)}?workspaceId=${encodeURIComponent(workspaceId)}`; }
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(`/workspaces/${workspaceId}/layout`)).layout; }

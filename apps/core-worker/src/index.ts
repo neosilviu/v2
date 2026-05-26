@@ -52,16 +52,20 @@ function publicPublicationRequest(input: unknown): { workspaceId: string; plugin
   if (value.title !== undefined && typeof value.title !== "string") return null;
   return { workspaceId: value.workspaceId, pluginId: value.pluginId, contributionKind, contributionId: value.contributionId, ...(publicPath ? { publicPath } : {}), ...(value.title ? { title: value.title } : {}), ...(access ? { access } : {}) };
 }
-type DomainInput = { hostname: string; kind: "admin" | "auth" | "website" | "storefront" | "public-chat"; verificationMethod?: "manual" | "dns-txt" | "dns-cname"; isPrimary?: boolean };
+type DomainInput = { hostname: string; kind: "admin" | "auth" | "website" | "storefront" | "public-chat" | "mail"; verificationMethod?: "manual" | "dns-txt" | "dns-cname"; isPrimary?: boolean };
 function domainInput(input: unknown): DomainInput | null {
   const value = input as Record<string, unknown>;
   const hostname = typeof value.hostname === "string" ? value.hostname.trim().toLowerCase() : "";
   const kind = value.kind;
   const method = value.verificationMethod;
   if (!/^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$/.test(hostname)) return null;
-  if (kind !== "admin" && kind !== "auth" && kind !== "website" && kind !== "storefront" && kind !== "public-chat") return null;
+  if (kind !== "admin" && kind !== "auth" && kind !== "website" && kind !== "storefront" && kind !== "public-chat" && kind !== "mail") return null;
   if (method !== undefined && method !== "manual" && method !== "dns-txt" && method !== "dns-cname") return null;
   return { hostname, kind, ...(method ? { verificationMethod: method } : {}), ...(value.isPrimary === true ? { isPrimary: true } : {}) };
+}
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 async function readApprovalId(c: CoreContext): Promise<string | undefined> {
   if (!c.req.header("content-type")?.includes("application/json")) return undefined;
@@ -110,6 +114,24 @@ app.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
 app.get("/session", (c) => {
   const user = c.get("user");
   return c.json({ authenticated: Boolean(user), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
+});
+app.get("/setup/owner", async (c) => {
+  const token = c.req.query("token");
+  if (!token || token.length < 24) return c.json(errorResponse(failure("not_found", "Owner setup link is not available.")), 404);
+  const status = await new CoreRepository(c.env.CORE_DB).ownerProvisioningStatus(await sha256Hex(token));
+  if (!status) return c.json(errorResponse(failure("not_found", "Owner setup link is not available.")), 404);
+  return c.json({ setup: { workspaceId: status.workspaceId, ownerEmail: status.ownerEmail, status: status.status, expiresAt: status.expiresAt } });
+});
+app.post("/setup/owner/consume", async (c) => {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const body = await c.req.json().catch(() => null) as { token?: unknown } | null;
+  const token = typeof body?.token === "string" ? body.token : "";
+  if (token.length < 24) return c.json(errorResponse(failure("validation_failed", "A valid owner setup token is required.")), 400);
+  const result = await new CoreRepository(c.env.CORE_DB).consumeOwnerProvisioningToken(await sha256Hex(token), c.get("user"));
+  if (result.status === "consumed") return c.json(result);
+  const code = result.status === "not_authenticated" ? "not_authenticated" : result.status === "email_mismatch" ? "not_authorized" : result.status === "not_found" ? "not_found" : "conflict";
+  return c.json(errorResponse(failure(code, "Owner setup link cannot be consumed.")), code === "not_authenticated" ? 401 : code === "not_authorized" ? 403 : code === "not_found" ? 404 : 409);
 });
 app.get("/workspaces/:workspaceId/rbac/me", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.read");
