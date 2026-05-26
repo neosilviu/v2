@@ -320,7 +320,64 @@ export class CoreRepository {
       requiredPermission: panel.requiredPermission ?? null,
       version: manifest.version,
     }));
-    return [...surfaces, ...settingsTabs, ...settingsPanels];
+    const explicitTabIds = new Set(manifest.contributes.settingsTabs.map((tab) => tab.id));
+    const explicitPanelIds = new Set(manifest.contributes.settingsPanels.map((panel) => panel.id));
+    const settingsSurfaceTabs = manifest.contributes.surfaces.filter((surface) => surface.kind === "settings").flatMap((surface, index) => {
+      const page = this.declarativeSurfacePage(manifest, surface);
+      if (!page) return [];
+      const tabId = `${surface.id}.settings-tab`;
+      const panelId = `${surface.id}.settings-panel`;
+      if (explicitTabIds.has(tabId) || explicitPanelIds.has(panelId)) return [];
+      const tab = settingsTabContributionSchema.parse({
+        id: tabId,
+        pluginId: manifest.id,
+        label: surface.title,
+        displayOrder: 100 + index * 10,
+        category: "plugin",
+        panelContributionId: panelId,
+        status: "active",
+      });
+      const panel = settingsPanelContributionSchema.parse({
+        id: panelId,
+        pluginId: manifest.id,
+        tabId,
+        templateId: page.templateId === "admin.table" || page.templateId === "admin.form" || page.templateId === "admin.dashboard" ? page.templateId : "admin.settings",
+        schema: page,
+        dataSources: page.dataSources,
+        actions: page.actions,
+      });
+      return [
+        {
+          pluginId: manifest.id,
+          contributionId: tab.id,
+          contributionType: "menu" as const,
+          accessMode: "private" as const,
+          zoneId: "settings.tabs",
+          templateId: "admin.settings",
+          schema: declarativePageContributionSchema.parse({
+            id: tab.id,
+            title: tab.label,
+            templateId: "admin.settings",
+            access: "private",
+            data: { settingsTab: tab },
+          }),
+          requiredPermission: null,
+          version: manifest.version,
+        },
+        {
+          pluginId: manifest.id,
+          contributionId: panel.id,
+          contributionType: "page" as const,
+          accessMode: "private" as const,
+          zoneId: `settings.panel.${tab.id}`,
+          templateId: panel.templateId,
+          schema: page,
+          requiredPermission: null,
+          version: manifest.version,
+        },
+      ];
+    });
+    return [...surfaces, ...settingsTabs, ...settingsPanels, ...settingsSurfaceTabs];
   }
 
   private platformSettingsTabs(): SettingsTabResolution[] {
