@@ -96,6 +96,14 @@ function staticDataFor(pageData: Record<string, unknown>, dataSourceId: string, 
 function runtimeUnavailable(message = "Runtime Worker dispatch is not configured for this operation yet.") {
   return { status: "unavailable" as const, data: null, error: message, approvalId: null, auditEventId: null };
 }
+async function authAdminJson<T>(c: CoreContext, path: string, init: { method?: "GET" | "POST" | "PUT"; body?: string } = {}): Promise<T> {
+  const requestInit: { method?: string; body?: string; headers: Record<string, string> } = { headers: { "content-type": "application/json" } };
+  if (init.method) requestInit.method = init.method;
+  if (init.body) requestInit.body = init.body;
+  const response = await c.env.AUTH.fetch(`https://auth.internal${path}`, requestInit);
+  if (!response.ok) throw new Error(`Auth internal admin request failed: ${response.status}`);
+  return response.json() as Promise<T>;
+}
 async function maybeActionApproval(c: CoreContext, repo: CoreRepository, action: ActionDefinition, workspaceId: string, pluginId: string, contributionId: string, input: unknown) {
   if (action.risk !== "sensitive" && action.risk !== "dangerous") return undefined;
   const approval = await new ApprovalRequestRepository(c.env.CORE_DB).create({
@@ -450,6 +458,63 @@ app.put("/workspaces/:workspaceId/domains/:domainId", async (c) => { const denie
 app.post("/workspaces/:workspaceId/domains/:domainId/verify", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.verify"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "verified", c.get("user")?.id) }); });
 app.post("/workspaces/:workspaceId/domains/:domainId/activate", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "active", c.get("user")?.id) }); });
 app.post("/workspaces/:workspaceId/domains/:domainId/disable", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "disabled", c.get("user")?.id) }); });
+app.get("/workspaces/:workspaceId/auth/security-summary", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "auth.read");
+  if (denied) return denied;
+  return c.json(await authAdminJson(c, `/admin/auth/security-summary?workspaceId=${encodeURIComponent(workspaceId)}`));
+});
+app.get("/workspaces/:workspaceId/auth/sessions/summary", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "auth.session.read");
+  if (denied) return denied;
+  return c.json(await authAdminJson(c, `/admin/auth/sessions/summary?workspaceId=${encodeURIComponent(workspaceId)}`));
+});
+app.get("/workspaces/:workspaceId/auth/methods", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "auth.read");
+  if (denied) return denied;
+  return c.json(await authAdminJson(c, `/admin/auth/methods?workspaceId=${encodeURIComponent(workspaceId)}`));
+});
+app.put("/workspaces/:workspaceId/auth/methods/:methodId", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "auth.method.publish");
+  if (denied) return denied;
+  const body = await c.req.json();
+  const result = await authAdminJson(c, `/admin/auth/methods/${encodeURIComponent(c.req.param("methodId"))}`, { method: "PUT", body: JSON.stringify({ ...(body as Record<string, unknown>), workspaceId }) });
+  await new CoreRepository(c.env.CORE_DB).audit(workspaceId, "auth.method.update", { methodId: c.req.param("methodId") }, c.get("user")?.id);
+  return c.json(result);
+});
+app.get("/workspaces/:workspaceId/auth/policy", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "auth.read");
+  if (denied) return denied;
+  return c.json(await authAdminJson(c, `/admin/auth/policy?workspaceId=${encodeURIComponent(workspaceId)}`));
+});
+app.put("/workspaces/:workspaceId/auth/policy", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "auth.policy.write");
+  if (denied) return denied;
+  const body = await c.req.json();
+  const result = await authAdminJson(c, "/admin/auth/policy", { method: "PUT", body: JSON.stringify({ ...(body as Record<string, unknown>), workspaceId }) });
+  await new CoreRepository(c.env.CORE_DB).audit(workspaceId, "auth.policy.update", {}, c.get("user")?.id);
+  return c.json(result);
+});
+app.get("/workspaces/:workspaceId/auth/ui-contributions", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "auth.read");
+  if (denied) return denied;
+  return c.json(await authAdminJson(c, `/admin/auth/ui-contributions?workspaceId=${encodeURIComponent(workspaceId)}`));
+});
+app.put("/workspaces/:workspaceId/auth/ui-contributions/:contributionId", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "auth.ui.publish");
+  if (denied) return denied;
+  const body = await c.req.json();
+  const result = await authAdminJson(c, `/admin/auth/ui-contributions/${encodeURIComponent(c.req.param("contributionId"))}`, { method: "PUT", body: JSON.stringify({ ...(body as Record<string, unknown>), workspaceId }) });
+  await new CoreRepository(c.env.CORE_DB).audit(workspaceId, "auth.ui.update", { contributionId: c.req.param("contributionId") }, c.get("user")?.id);
+  return c.json(result);
+});
 app.get("/workspaces/:workspaceId/layout", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "layout.read"); if (denied) return denied; return c.json({ layout: (await new CoreRepository(c.env.CORE_DB).getLayout(c.req.param("workspaceId"))) ?? null }); });
 app.put("/layouts", async (c) => { const request = layoutWriteRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "layout.write"); if (denied) return denied; await new CoreRepository(c.env.CORE_DB).saveLayout(request.workspaceId, request.layout); return c.json({ saved: true, layout: request.layout }); });
 export default app;

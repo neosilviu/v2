@@ -7,6 +7,11 @@ import { AuthRuntimeRepository } from "./runtime-config";
 const app = new Hono<{ Bindings: AuthEnv }>();
 type AuthContext = Context<{ Bindings: AuthEnv }>;
 
+function isInternalRequest(c: AuthContext) {
+  const url = new URL(c.req.url);
+  return url.hostname === "auth.internal" && !c.req.header("origin");
+}
+
 app.get("/health", (c) => c.json({ ok: true, service: "auth-worker", configured: parseAuthConfig(c.env).ok }));
 app.use("/api/auth/*", cors({
   origin: (origin, c) => {
@@ -48,6 +53,7 @@ app.get("/public/auth/login-config", async (c) => {
 async function requireAdmin(c: AuthContext) {
   const parsed = parseAuthConfig(c.env);
   if (!parsed.ok) return { ok: false as const, response: c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503) };
+  if (isInternalRequest(c)) return { ok: true as const, config: parsed.config };
   if (!await isAuthAdmin(parsed.config, c.req.raw.headers)) return { ok: false as const, response: c.json(errorResponse(failure("not_authorized", "Auth recovery administrator access is disabled or not authorized.")), 403) };
   return { ok: true as const, config: parsed.config };
 }
