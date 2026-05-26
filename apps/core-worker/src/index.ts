@@ -28,7 +28,6 @@ async function requirePermission(c: CoreContext, workspaceId: string, permission
   if (c.get("internal")) return undefined;
   const repo = new CoreRepository(c.env.CORE_DB);
   const user = c.get("user");
-  if (isPlatformAdmin(c.env, user)) await repo.bootstrapOwner(workspaceId, user);
   return await repo.hasPermission(workspaceId, user, permission) ? undefined : c.json(errorResponse(failure("not_authorized", `${permission} permission is required.`)), 403);
 }
 async function requireAnyPermission(c: CoreContext, workspaceId: string, permissions: WorkspacePermission[]): Promise<Response | undefined> {
@@ -37,7 +36,6 @@ async function requireAnyPermission(c: CoreContext, workspaceId: string, permiss
   if (c.get("internal")) return undefined;
   const repo = new CoreRepository(c.env.CORE_DB);
   const user = c.get("user");
-  if (isPlatformAdmin(c.env, user)) await repo.bootstrapOwner(workspaceId, user);
   for (const permission of permissions) if (await repo.hasPermission(workspaceId, user, permission)) return undefined;
   return c.json(errorResponse(failure("not_authorized", `${permissions.join(" or ")} permission is required.`)), 403);
 }

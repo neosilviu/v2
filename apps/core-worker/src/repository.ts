@@ -106,7 +106,9 @@ export type WorkspaceDomain = {
 };
 export const workspacePermissions = [
   "workspace.read", "workspace.admin", "workspace.members.manage", "workspace.settings.read", "workspace.settings.write",
-  "auth.read", "auth.admin", "domains.read", "domains.write", "domains.verify",
+  "auth.read", "auth.admin", "auth.method.publish", "auth.policy.write", "auth.ui.publish", "auth.session.read",
+  "domains.read", "domains.write", "domains.verify",
+  "mail.read", "mail.configure", "mail.test", "mail.template.write",
   "marketplace.read", "marketplace.publish", "plugin.install", "plugin.activate", "plugin.update", "plugin.uninstall", "plugin.grantCapability",
   "approval.read", "tool.approve", "audit.read", "layout.read", "layout.write", "publication.read", "publication.publish",
   "agent.read", "agent.use", "provider.read", "provider.configure",
@@ -167,8 +169,8 @@ function matchRoutePattern(pattern: string, path: string): Record<string, string
 export class CoreRepository {
   constructor(private readonly db: D1Database) {}
 
-  async ensureWorkspace(workspaceId: string, name = "Default Workspace") {
-    await this.db.prepare("INSERT OR IGNORE INTO workspaces (id, name) VALUES (?, ?)").bind(workspaceId, name).run();
+  async ensureWorkspace(workspaceId: string, name = "Default Workspace", status: "unprovisioned" | "provisioning" | "active" | "suspended" = "unprovisioned") {
+    await this.db.prepare("INSERT OR IGNORE INTO workspaces (id, name, status) VALUES (?, ?, ?)").bind(workspaceId, name, status).run();
   }
 
   private rolePermissions(systemKey: "owner" | "admin" | "operator" | "viewer"): WorkspacePermission[] {
@@ -218,7 +220,6 @@ export class CoreRepository {
   }
 
   async permissionsForUser(workspaceId: string, userId: string): Promise<WorkspacePermission[]> {
-    await this.ensureWorkspaceRbac(workspaceId);
     const rows = await this.db.prepare(`SELECT DISTINCT permission
       FROM workspace_role_permissions permissions
       INNER JOIN workspace_member_roles member_roles ON member_roles.workspace_id = permissions.workspace_id AND member_roles.role_id = permissions.role_id
@@ -232,14 +233,12 @@ export class CoreRepository {
 
   async hasPermission(workspaceId: string, user: { id: string; email: string } | null, permission: WorkspacePermission): Promise<boolean> {
     if (!user) return false;
-    await this.bootstrapOwner(workspaceId, user);
     const permissions = await this.permissionsForUser(workspaceId, user.id);
     return permissions.includes(permission) || permissions.includes("workspace.admin");
   }
 
   async memberSummary(workspaceId: string, user: { id: string; email: string } | null) {
     if (!user) return { user: null, roles: [], permissions: [], bootstrap: false };
-    await this.bootstrapOwner(workspaceId, user);
     const rows = await this.db.prepare(`SELECT roles.name, roles.system_key
       FROM workspace_member_roles member_roles
       INNER JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id

@@ -1,7 +1,13 @@
 import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 const now = sql`CURRENT_TIMESTAMP`;
-export const workspaces = sqliteTable("workspaces", { id: text("id").primaryKey(), name: text("name").notNull(), createdAt: text("created_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) });
+export const workspaces = sqliteTable("workspaces", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  status: text("status", { enum: ["unprovisioned", "provisioning", "active", "suspended"] }).notNull().default("unprovisioned"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+});
 export const workspaceMembers = sqliteTable("workspace_members", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull(),

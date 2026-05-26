@@ -170,6 +170,17 @@ function testAuthRuntimeBootstrapPolicy() {
   pass("Auth runtime bootstrap is seed-only and does not reset published passkey/social methods");
 }
 
+function testNoImplicitWorkspaceOwnerBootstrap() {
+  const repoSource = fs.readFileSync(path.join(root, "apps/core-worker/src/repository.ts"), "utf8");
+  const hasPermissionBody = repoSource.match(/async hasPermission[\s\S]*?\n  \}/)?.[0] ?? "";
+  const memberSummaryBody = repoSource.match(/async memberSummary[\s\S]*?\n  \}/)?.[0] ?? "";
+  if (hasPermissionBody.includes("bootstrapOwner(")) fail("CoreRepository.hasPermission still bootstraps an owner as a permission-check side effect");
+  if (memberSummaryBody.includes("bootstrapOwner(")) fail("CoreRepository.memberSummary still bootstraps an owner as a read side effect");
+  const coreIndex = fs.readFileSync(path.join(root, "apps/core-worker/src/index.ts"), "utf8");
+  if (coreIndex.includes("await repo.bootstrapOwner")) fail("Core routes still bootstrap owner from normal request authorization");
+  pass("Workspace owner bootstrap is explicit and not a permission side effect");
+}
+
 function testMigrationDrift() {
   if (!process.argv.includes("--check-migrations")) {
     note("Migration drift check skipped; run `pnpm test:generated -- --check-migrations` for Drizzle generate checks");
@@ -211,6 +222,7 @@ const manifests = await discoverPluginManifests();
 testManifestContracts(manifests);
 testRuntimeFirstArchitecture();
 testAuthRuntimeBootstrapPolicy();
+testNoImplicitWorkspaceOwnerBootstrap();
 testMigrationDrift();
 await testHttpScenarios();
 console.log("==================");
