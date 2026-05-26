@@ -13,6 +13,8 @@ export interface AuthEnv {
   DEPLOYMENT_ENV?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
+  RECOVERY_ADMIN_EMAILS?: string;
+  RECOVERY_ADMIN_ENABLED?: string;
   PLATFORM_ADMIN_EMAILS?: string;
 }
 
@@ -25,6 +27,7 @@ export type AuthConfig = {
   github?: { clientId: string; clientSecret: string };
   passkey: { rpID: string; rpName: string; origin: string };
   adminEmails: string[];
+  recoveryAdminEnabled: boolean;
 };
 
 export type AuthConfigResult = { ok: true; config: AuthConfig } | { ok: false; message: string };
@@ -50,7 +53,8 @@ export function parseAuthConfig(env: AuthEnv): AuthConfigResult {
     if (production && (base.protocol !== "https:" || isLocalOrigin(base))) throw new Error("Production authentication URL must be HTTPS and non-local");
     if (production && trustedOrigins.some((origin) => { const url = new URL(origin); return url.protocol !== "https:" || isLocalOrigin(url); })) throw new Error("Production trusted origins must be HTTPS and non-local");
     const github = env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET ? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } : undefined;
-    return { ok: true, config: { db: env.AUTH_DB, secret, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin }, adminEmails: parseOrigins(env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase()) } };
+    const recoveryAdminEnabled = env.RECOVERY_ADMIN_ENABLED === "true";
+    return { ok: true, config: { db: env.AUTH_DB, secret, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin }, adminEmails: recoveryAdminEnabled ? parseOrigins(env.RECOVERY_ADMIN_EMAILS || env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase()) : [], recoveryAdminEnabled } };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Invalid authentication configuration" };
   }
@@ -62,6 +66,7 @@ export async function readAuthUser(config: AuthConfig, headers: Headers) {
 }
 
 export async function isAuthAdmin(config: AuthConfig, headers: Headers) {
+  if (!config.recoveryAdminEnabled) return false;
   const user = await readAuthUser(config, headers);
   return Boolean(user && config.adminEmails.includes(user.email.toLowerCase()));
 }

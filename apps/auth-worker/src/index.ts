@@ -48,7 +48,7 @@ app.get("/public/auth/login-config", async (c) => {
 async function requireAdmin(c: AuthContext) {
   const parsed = parseAuthConfig(c.env);
   if (!parsed.ok) return { ok: false as const, response: c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503) };
-  if (!await isAuthAdmin(parsed.config, c.req.raw.headers)) return { ok: false as const, response: c.json(errorResponse(failure("not_authorized", "Authentication administrator permission is required.")), 403) };
+  if (!await isAuthAdmin(parsed.config, c.req.raw.headers)) return { ok: false as const, response: c.json(errorResponse(failure("not_authorized", "Auth recovery administrator access is disabled or not authorized.")), 403) };
   return { ok: true as const, config: parsed.config };
 }
 app.post("/admin/auth/methods", async (c) => {

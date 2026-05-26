@@ -38,8 +38,11 @@ export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreS
   }
 }
 
-export function isPlatformAdmin(env: CoreEnv, user: CoreSessionUser | null): boolean {
+export function isRecoveryAdmin(env: CoreEnv, user: CoreSessionUser | null): boolean {
   if (!user) return false;
-  const admins = csv(env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase());
+  if (env.RECOVERY_ADMIN_ENABLED !== "true") return false;
+  const admins = csv(env.RECOVERY_ADMIN_EMAILS || env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase());
   return admins.includes(user.email.toLowerCase());
 }
+
+export const isPlatformAdmin = isRecoveryAdmin;

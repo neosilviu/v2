@@ -6,5 +6,7 @@ export interface CoreEnv {
   AUTH: Fetcher;
   APP_ORIGIN?: string;
   TRUSTED_ORIGINS?: string;
+  RECOVERY_ADMIN_EMAILS?: string;
+  RECOVERY_ADMIN_ENABLED?: string;
   PLATFORM_ADMIN_EMAILS?: string;
 }
