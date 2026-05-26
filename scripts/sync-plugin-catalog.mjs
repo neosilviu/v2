@@ -11,6 +11,7 @@ const catalog = [
   { module: "../plugins/ai-providers/src/index.ts", exportName: "aiProvidersPlugin", category: "ai", demoAvailable: false },
   { module: "../plugins/agent-ai/manifest.ts", exportName: "agentAiManifest", category: "ai", demoAvailable: false },
   { module: "../plugins/theme-studio/src/index.ts", exportName: "themeStudioPlugin", category: "design", demoAvailable: false },
+  { module: "../plugins/local-node/manifest.ts", exportName: "localNodeManifest", category: "operations", demoAvailable: false },
   { module: "../plugins/website-studio/manifest.ts", exportName: "websiteStudioManifest", category: "site", demoAvailable: true },
   { module: "../plugins/commerce/manifest.ts", exportName: "commerceManifest", category: "commerce", demoAvailable: true },
 ];

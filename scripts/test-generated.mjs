@@ -61,7 +61,7 @@ function testManifestContracts(manifests) {
   }
   pass(`Discovered ${manifests.length} plugin manifests`);
   assertUnique(manifests.map((item) => ({ id: item.manifest.id })), "plugin", "plugin manifests");
-  const globalIds = { tools: new Map(), providers: new Map(), surfaces: new Map(), publicRoutes: new Map(), publicSurfaces: new Map(), publicTools: new Map() };
+  const globalIds = { tools: new Map(), providers: new Map(), surfaces: new Map(), publicRoutes: new Map(), publicSurfaces: new Map(), publicTools: new Map(), settingsTabs: new Map(), settingsPanels: new Map() };
   for (const item of manifests) {
     const owner = `${relativePath(root, item.file)}#${item.exportName}`;
     const contributions = item.manifest.contributes;

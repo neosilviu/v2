@@ -265,6 +265,16 @@ importers:
         specifier: 'catalog:'
         version: 6.0.3
 
+  packages/local-node-contracts:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
   packages/mcp-contracts:
     dependencies:
       zod:
@@ -514,6 +524,19 @@ importers:
       wrangler:
         specifier: 'catalog:'
         version: 4.94.0(@cloudflare/workers-types@4.20260525.1)
+
+  plugins/local-node:
+    dependencies:
+      '@v2/local-node-contracts':
+        specifier: workspace:*
+        version: link:../../packages/local-node-contracts
+      '@v2/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
 
   plugins/theme-studio:
     dependencies:
