@@ -244,6 +244,9 @@ importers:
       '@v2/plugin-contracts':
         specifier: workspace:*
         version: link:../plugin-contracts
+      '@v2/ui-schema':
+        specifier: workspace:*
+        version: link:../ui-schema
       zod:
         specifier: 'catalog:'
         version: 4.4.3

@@ -99,6 +99,8 @@ export const authUiContributions = sqliteTable("auth_ui_contributions", {
   workspaceId: text("workspace_id"),
   contributionId: text("contribution_id").notNull(),
   slot: text("slot", { enum: ["login.header", "login.branding", "login.beforeMethods", "login.password", "login.socialMethods", "login.passkey", "login.afterMethods", "login.footer", "login.legal"] }).notNull(),
+  templateId: text("template_id").notNull().default("auth.login"),
+  schemaJson: text("schema_json").notNull().default("{}"),
   rendererJson: text("renderer_json").notNull(),
   status: text("status", { enum: ["draft", "published", "unpublished"] }).notNull().default("draft"),
   displayOrder: integer("display_order").notNull().default(0),

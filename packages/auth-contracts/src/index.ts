@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { declarativeUiSchema } from "@v2/plugin-contracts";
+import { slotContributionSchema, templateIdSchema } from "@v2/ui-schema";
 
 export const authMethodTypeSchema = z.enum(["password", "passkey", "social"]);
 export const authMethodStatusSchema = z.enum(["draft", "enabled", "disabled"]);
@@ -33,6 +34,8 @@ export const authUiContributionSchema = z.object({
   workspaceId: z.string().min(1).nullable().default(null),
   contributionId: z.string().min(1),
   slot: loginSlotSchema,
+  templateId: templateIdSchema.default("auth.login"),
+  schema: slotContributionSchema.optional(),
   renderer: declarativeUiSchema,
   status: authUiContributionStatusSchema.default("draft"),
   displayOrder: z.number().int().default(0),
@@ -59,6 +62,8 @@ export const authUiContributionWriteSchema = z.object({
   workspaceId: z.string().min(1).nullable().optional(),
   contributionId: z.string().min(1),
   slot: loginSlotSchema,
+  templateId: templateIdSchema.default("auth.login"),
+  schema: slotContributionSchema.optional(),
   renderer: declarativeUiSchema,
   status: authUiContributionStatusSchema.default("draft"),
   displayOrder: z.number().int().default(0),
