@@ -88,19 +88,23 @@ export class AuthRuntimeRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
-    const uiContributions = uiRows.results.map((row) => authUiContributionSchema.parse({
-      id: row.id,
-      workspaceId: row.workspace_id,
-      contributionId: row.contribution_id,
-      slot: row.slot,
-      templateId: row.template_id,
-      schema: JSON.parse(row.schema_json) as unknown,
-      renderer: JSON.parse(row.renderer_json) as unknown,
-      status: row.status,
-      displayOrder: row.display_order,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    const uiContributions = uiRows.results.map((row) => {
+      const renderer = JSON.parse(row.renderer_json) as { body?: unknown[] };
+      const schema = JSON.parse(row.schema_json) as { id?: unknown; slot?: unknown };
+      return authUiContributionSchema.parse({
+        id: row.id,
+        workspaceId: row.workspace_id,
+        contributionId: row.contribution_id,
+        slot: row.slot,
+        templateId: row.template_id,
+        schema: typeof schema.id === "string" && typeof schema.slot === "string" ? schema : { id: row.contribution_id, slot: row.slot, displayOrder: row.display_order, blocks: renderer.body ?? [] },
+        renderer,
+        status: row.status,
+        displayOrder: row.display_order,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+    });
     return authPublicLoginConfigSchema.parse({
       workspaceId: workspace,
       methods,
