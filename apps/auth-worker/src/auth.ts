@@ -36,6 +36,7 @@ export type AuthConfig = {
 };
 
 export type AuthConfigResult = { ok: true; config: AuthConfig } | { ok: false; message: string };
+type CoreTrustConfig = { baseURL: string | null; trustedOrigins: string[]; passkey: { rpID: string; origin: string } | null };
 
 function parseUrl(value: string | undefined, name: string): URL {
   if (!value) throw new Error(`${name} is required`);
@@ -62,6 +63,23 @@ export function parseAuthConfig(env: AuthEnv): AuthConfigResult {
     return { ok: true, config: { db: env.AUTH_DB, secret, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin }, adminEmails: recoveryAdminEnabled ? parseOrigins(env.RECOVERY_ADMIN_EMAILS || env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase()) : [], recoveryAdminEnabled, ...(env.CORE ? { core: env.CORE } : {}), workspaceId: env.AUTH_WORKSPACE_ID || "default" } };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Invalid authentication configuration" };
+  }
+}
+
+export async function resolveAuthConfig(env: AuthEnv, workspaceId = env.AUTH_WORKSPACE_ID || "default"): Promise<AuthConfigResult> {
+  const parsed = parseAuthConfig(env);
+  if (!parsed.ok || !env.CORE) return parsed;
+  try {
+    const response = await env.CORE.fetch(`https://core.internal/internal/workspaces/${encodeURIComponent(workspaceId)}/auth/trust-config`);
+    if (!response.ok) return parsed;
+    const trust = await response.json() as CoreTrustConfig;
+    if (!trust.baseURL || !trust.passkey) return parsed;
+    const base = parseUrl(trust.baseURL, "Core auth domain");
+    const trustedOrigins = [...new Set([base.origin, ...trust.trustedOrigins])];
+    for (const origin of trustedOrigins) parseUrl(origin, "Core trusted origin");
+    return { ok: true, config: { ...parsed.config, baseURL: base.origin, trustedOrigins, passkey: { ...parsed.config.passkey, rpID: trust.passkey.rpID, origin: trust.passkey.origin }, workspaceId } };
+  } catch {
+    return parsed;
   }
 }
 

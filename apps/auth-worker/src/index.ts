@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { errorResponse, failure } from "@v2/feedback-runtime";
-import { createAuth, isAuthAdmin, parseAuthConfig, type AuthEnv } from "./auth";
+import { createAuth, isAuthAdmin, parseAuthConfig, resolveAuthConfig, type AuthEnv } from "./auth";
 import { AuthRuntimeRepository } from "./runtime-config";
 
 const app = new Hono<{ Bindings: AuthEnv }>();
@@ -45,13 +45,13 @@ app.use("/admin/auth/*", cors({
   credentials: true,
 }));
 app.get("/public/auth/login-config", async (c) => {
-  const parsed = parseAuthConfig(c.env);
+  const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   const config = await new AuthRuntimeRepository(parsed.config.db).publicLoginConfig(c.req.query("workspaceId") ?? null, { github: Boolean(parsed.config.github) });
   return c.json(config);
 });
 async function requireAdmin(c: AuthContext) {
-  const parsed = parseAuthConfig(c.env);
+  const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
   if (!parsed.ok) return { ok: false as const, response: c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503) };
   if (isInternalRequest(c)) return { ok: true as const, config: parsed.config };
   if (!await isAuthAdmin(parsed.config, c.req.raw.headers)) return { ok: false as const, response: c.json(errorResponse(failure("not_authorized", "Auth recovery administrator access is disabled or not authorized.")), 403) };
@@ -126,14 +126,14 @@ app.get("/admin/auth/sessions/summary", async (c) => {
   return c.json({ summary });
 });
 app.post("/api/auth/sign-up/email", async (c) => {
-  const parsed = parseAuthConfig(c.env);
+  const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   const policy = await new AuthRuntimeRepository(parsed.config.db).publicPolicy(null);
   if (policy.registrationMode !== "open") return c.json(errorResponse(failure("not_authorized", "Password registration is not open.")), 403);
   return createAuth(parsed.config).handler(c.req.raw);
 });
 app.post("/setup/owner/sign-up/email", async (c) => {
-  const parsed = parseAuthConfig(c.env);
+  const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   if (!parsed.config.core) return c.json(errorResponse(failure("dependency_unavailable", "Core service binding is required for owner setup.")), 503);
   const body = await c.req.json().catch(() => null) as { token?: unknown; email?: unknown; password?: unknown; name?: unknown } | null;
@@ -164,8 +164,8 @@ app.post("/setup/owner/sign-up/email", async (c) => {
   if (!consumeResponse.ok) return c.json(errorResponse(failure("conflict", "Owner account was created but workspace membership could not be finalized. Retry with the same setup link.")), 409);
   return response;
 });
-app.on(["POST", "GET"], "/api/auth/*", (c) => {
-  const parsed = parseAuthConfig(c.env);
+app.on(["POST", "GET"], "/api/auth/*", async (c) => {
+  const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   return createAuth(parsed.config).handler(c.req.raw);
 });

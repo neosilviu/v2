@@ -12,8 +12,38 @@ async function mcpTools(env: BridgeEnv): Promise<ToolContribution[]> {
   return payload.tools.filter((tool) => tool.exposure.includes("mcp"));
 }
 function result(id: string | number | null | undefined, value: unknown) { return { jsonrpc: "2.0" as const, id: id ?? null, result: value }; }
+function runtimeBindings(env: BridgeEnv): Record<string, string> {
+  try {
+    const parsed = JSON.parse(env.PLUGIN_RUNTIME_BINDINGS ?? "{}") as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, string> : {};
+  } catch {
+    return {};
+  }
+}
+function pluginRuntime(env: BridgeEnv, pluginId: string): Fetcher | null {
+  const bindingName = runtimeBindings(env)[pluginId];
+  const binding = bindingName ? env[bindingName] : null;
+  return binding && typeof (binding as Fetcher).fetch === "function" ? binding as Fetcher : null;
+}
 
 app.get("/health", (c) => c.json({ ok: true, service: "runtime-bridge" }));
+app.post("/dispatch", async (c) => {
+  const body = await c.req.json().catch(() => null) as { pluginId?: unknown; workspaceId?: unknown; kind?: unknown; operationId?: unknown; contributionId?: unknown; input?: unknown; routeParams?: unknown; queryParams?: unknown } | null;
+  const pluginId = typeof body?.pluginId === "string" ? body.pluginId : "";
+  const workspaceId = typeof body?.workspaceId === "string" ? body.workspaceId : "";
+  const operationId = typeof body?.operationId === "string" ? body.operationId : "";
+  const kind = body?.kind === "tool" || body?.kind === "action" || body?.kind === "data" ? body.kind : "";
+  if (!pluginId || !workspaceId || !operationId || !kind) return c.json({ status: "denied", error: "A valid plugin runtime dispatch request is required." }, 400);
+  const runtime = pluginRuntime(c.env, pluginId);
+  if (!runtime) return c.json({ status: "unavailable", error: "Plugin runtime binding is not configured." }, 501);
+  const dispatch = body;
+  const response = await runtime.fetch("https://plugin-runtime.internal/runtime/execute", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspaceId, kind, operationId, contributionId: dispatch?.contributionId, input: dispatch?.input, routeParams: dispatch?.routeParams, queryParams: dispatch?.queryParams }),
+  });
+  return new Response(response.body, { status: response.status, headers: response.headers });
+});
 app.post("/mcp", async (c) => {
   const request = mcpRequestSchema.parse(await c.req.json());
   if (request.method === "initialize") return c.json(result(request.id, { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "v2-runtime-bridge", version: "0.1.0" } }));

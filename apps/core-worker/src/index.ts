@@ -73,20 +73,33 @@ function domainInput(input: unknown): DomainInput | null {
 }
 async function verifyDnsDomain(domain: { hostname: string; verificationMethod: "manual" | "dns-txt" | "dns-cname"; verificationInstructions: Record<string, unknown> | null }) {
   if (domain.verificationMethod === "manual") return { ok: false, error: "Manual verification requires an explicit audited recovery path." };
-  const record = typeof domain.verificationInstructions?.txtRecord === "string" ? domain.verificationInstructions.txtRecord : `_v2-verify.${domain.hostname}`;
-  const token = typeof domain.verificationInstructions?.token === "string" ? domain.verificationInstructions.token : "";
-  if (!token) return { ok: false, error: "Domain verification token is missing." };
+  const record = domain.verificationMethod === "dns-cname"
+    ? typeof domain.verificationInstructions?.cnameRecord === "string" ? domain.verificationInstructions.cnameRecord : `_v2-verify.${domain.hostname}`
+    : typeof domain.verificationInstructions?.txtRecord === "string" ? domain.verificationInstructions.txtRecord : `_v2-verify.${domain.hostname}`;
+  const expected = domain.verificationMethod === "dns-cname"
+    ? typeof domain.verificationInstructions?.target === "string" ? domain.verificationInstructions.target.toLowerCase() : ""
+    : typeof domain.verificationInstructions?.token === "string" ? domain.verificationInstructions.token.toLowerCase() : "";
+  if (!expected) return { ok: false, error: "Domain verification target is missing." };
   const type = domain.verificationMethod === "dns-cname" ? "CNAME" : "TXT";
   const response = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(record)}&type=${type}`, { headers: { accept: "application/dns-json" } });
   if (!response.ok) return { ok: false, error: "DNS verification lookup failed." };
   const body = await response.json() as { Answer?: Array<{ data?: string }> };
   const answers = (body.Answer ?? []).map((answer) => String(answer.data ?? "").replaceAll("\"", "").toLowerCase());
-  const expected = domain.verificationMethod === "dns-cname" ? domain.hostname.toLowerCase() : token.toLowerCase();
   return answers.some((answer) => answer.includes(expected)) ? { ok: true } : { ok: false, error: "Expected DNS verification record was not found." };
 }
 async function sha256Hex(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+function randomToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+function firstOrigin(input?: string) {
+  return (input ?? "").split(",").map((item) => item.trim()).filter(Boolean)[0] ?? "";
 }
 async function readApprovalId(c: CoreContext): Promise<string | undefined> {
   if (!c.req.header("content-type")?.includes("application/json")) return undefined;
@@ -117,22 +130,13 @@ function staticDataFor(pageData: Record<string, unknown>, dataSourceId: string, 
 function runtimeUnavailable(message = "Runtime Worker dispatch is not configured for this operation yet.") {
   return { status: "unavailable" as const, data: null, error: message, approvalId: null, auditEventId: null };
 }
-async function websiteStudioDispatch(c: CoreContext, workspaceId: string, commandId: string, input: unknown) {
-  if (!c.env.WEBSITE_RUNTIME) return null;
-  const payload = input && typeof input === "object" ? input as Record<string, unknown> : {};
-  const pageId = typeof payload.pageId === "string" ? payload.pageId : "";
-  const init = (method: string, body?: unknown) => ({ method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  const base = `https://plugin-runtime.internal/workspaces/${encodeURIComponent(workspaceId)}`;
-  const request =
-    commandId === "website.listPages" ? { url: `${base}/pages`, init: init("GET") } :
-    commandId === "website.installDefaults" ? { url: `${base}/seed/defaults`, init: init("POST") } :
-    commandId === "website.installDemoData" ? { url: `${base}/demo/install`, init: init("POST") } :
-    commandId === "website.publishPage" && pageId ? { url: `${base}/pages/${encodeURIComponent(pageId)}/publish`, init: init("POST") } :
-    commandId === "website.updateSection" && pageId ? { url: `${base}/pages/${encodeURIComponent(pageId)}/sections`, init: init("POST", payload) } :
-    commandId === "website.readPageContext" && pageId ? { url: `${base}/context/${encodeURIComponent(pageId)}`, init: init("GET") } :
-    null;
-  if (!request) return null;
-  const response = await c.env.WEBSITE_RUNTIME.fetch(request.url, request.init);
+async function pluginRuntimeDispatch(c: CoreContext, request: { workspaceId: string; pluginId: string; kind: "tool" | "action" | "data"; operationId: string; contributionId?: string; input?: unknown; routeParams?: Record<string, string>; queryParams?: Record<string, string | string[]> }) {
+  if (!c.env.PLUGIN_RUNTIME) return null;
+  const response = await c.env.PLUGIN_RUNTIME.fetch("https://plugin-runtime.internal/dispatch", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
   return { response, body: await response.json().catch(() => null) };
 }
 async function authAdminJson<T>(c: CoreContext, path: string, init: { method?: "GET" | "POST" | "PUT"; body?: string } = {}): Promise<T> {
@@ -176,7 +180,7 @@ app.post("/setup/owner/consume", async (c) => {
   const token = typeof body?.token === "string" ? body.token : "";
   if (token.length < 24) return c.json(errorResponse(failure("validation_failed", "A valid owner setup token is required.")), 400);
   const result = await new CoreRepository(c.env.CORE_DB).consumeOwnerProvisioningToken(await sha256Hex(token), c.get("user"));
-  if (result.status === "consumed") return c.json(result);
+  if (result.status === "consumed" && "workspaceId" in result) return c.json(result);
   const code = result.status === "not_authenticated" ? "not_authenticated" : result.status === "email_mismatch" ? "not_authorized" : result.status === "not_found" ? "not_found" : "conflict";
   return c.json(errorResponse(failure(code, "Owner setup link cannot be consumed.")), code === "not_authenticated" ? 401 : code === "not_authorized" ? 403 : code === "not_found" ? 404 : 409);
 });
@@ -188,14 +192,57 @@ app.post("/internal/setup/owner/consume", async (c) => {
   const user = rawUser && typeof rawUser.id === "string" && typeof rawUser.email === "string" ? { id: rawUser.id, email: rawUser.email, ...(typeof rawUser.name === "string" ? { name: rawUser.name } : {}) } : null;
   if (token.length < 24 || !user) return c.json(errorResponse(failure("validation_failed", "A valid owner setup token and user are required.")), 400);
   const result = await new CoreRepository(c.env.CORE_DB).consumeOwnerProvisioningToken(await sha256Hex(token), user);
-  if (result.status === "consumed") return c.json(result);
+  if (result.status === "consumed" && "workspaceId" in result) return c.json(result);
   const code = result.status === "email_mismatch" ? "not_authorized" : result.status === "not_found" ? "not_found" : "conflict";
   return c.json(errorResponse(failure(code, "Owner setup link cannot be consumed.")), code === "not_authorized" ? 403 : code === "not_found" ? 404 : 409);
+});
+app.post("/internal/provision/workspace", async (c) => {
+  const provided = c.req.header("x-v2-provisioning-secret");
+  if (!c.get("internal") && (!c.env.PROVISIONING_SECRET || provided !== c.env.PROVISIONING_SECRET)) return c.json(errorResponse(failure("not_authorized", "Workspace provisioning requires internal or provisioner credentials.")), 403);
+  const body = await c.req.json().catch(() => null) as { workspaceId?: unknown; workspaceName?: unknown; ownerEmail?: unknown; ttlHours?: unknown; setupBaseUrl?: unknown; breakGlassPrintToken?: unknown } | null;
+  const workspaceId = typeof body?.workspaceId === "string" && body.workspaceId.trim() ? body.workspaceId.trim() : "";
+  const workspaceName = typeof body?.workspaceName === "string" && body.workspaceName.trim() ? body.workspaceName.trim() : "Default Workspace";
+  const ownerEmail = typeof body?.ownerEmail === "string" ? body.ownerEmail.trim().toLowerCase() : "";
+  const ttlHours = typeof body?.ttlHours === "number" && Number.isFinite(body.ttlHours) ? body.ttlHours : 24;
+  const setupBaseUrl = typeof body?.setupBaseUrl === "string" && body.setupBaseUrl.trim() ? body.setupBaseUrl.trim() : firstOrigin(c.env.APP_ORIGIN) || "http://localhost:5173";
+  if (!workspaceId || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ownerEmail)) return c.json(errorResponse(failure("validation_failed", "A valid workspaceId and ownerEmail are required.")), 400);
+  const token = randomToken();
+  const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+  const setupUrl = `${setupBaseUrl.replace(/\/$/, "")}/setup/owner?token=${encodeURIComponent(token)}`;
+  const repo = new CoreRepository(c.env.CORE_DB, c.env);
+  await repo.createOwnerProvisioningRequest({ workspaceId, workspaceName, ownerEmail, tokenHash: await sha256Hex(token), expiresAt, createdBy: "provision:workspace:core", metadata: { setupBaseUrl } });
+  const delivery = await repo.sendMail({ workspaceId, purpose: "owner_setup", templateKey: "owner_setup", to: ownerEmail, variables: { setupUrl } });
+  if (!delivery.ok || delivery.status !== "sent") return c.json(errorResponse(failure("dependency_unavailable", delivery.errorSafe ?? "Owner setup mail was not accepted by Core Mail Runtime.")), 503);
+  await repo.audit(workspaceId, "workspace.provisioning.owner.mail.sent", { ownerEmail, eventId: delivery.eventId }, "provision:workspace:core");
+  return c.json({ workspaceId, ownerEmail, expiresAt, mailEventId: delivery.eventId, ...(body?.breakGlassPrintToken === true ? { setupUrl } : {}) }, 201);
+});
+app.get("/internal/workspaces/:workspaceId/auth/trust-config", async (c) => {
+  if (!c.get("internal")) return c.json(errorResponse(failure("not_authorized", "Auth trust config requires an internal service binding.")), 403);
+  const workspaceId = c.req.param("workspaceId");
+  const domains = await new CoreRepository(c.env.CORE_DB).activeDomains(workspaceId, ["auth", "admin"]);
+  const authDomain = domains.find((domain) => domain.kind === "auth");
+  const origins = domains.map((domain) => `https://${domain.hostname}`);
+  return c.json({
+    workspaceId,
+    version: domains.map((domain) => `${domain.id}:${domain.updatedAt}`).join("|"),
+    baseURL: authDomain ? `https://${authDomain.hostname}` : null,
+    trustedOrigins: origins,
+    passkey: authDomain ? { rpID: authDomain.hostname, origin: `https://${authDomain.hostname}` } : null,
+  });
 });
 app.get("/workspaces/:workspaceId/rbac/me", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.read");
   if (denied) return denied;
   return c.json(await new CoreRepository(c.env.CORE_DB).memberSummary(c.req.param("workspaceId"), c.get("user")));
+});
+app.post("/workspaces/:workspaceId/rbac/roles/:roleId/permissions", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "workspace.members.manage");
+  if (denied) return denied;
+  const body = await c.req.json().catch(() => null) as { permissions?: unknown } | null;
+  if (!Array.isArray(body?.permissions) || !body.permissions.every((permission) => typeof permission === "string" && permission.length > 0)) return c.json(errorResponse(failure("validation_failed", "permissions must be a string array.")), 400);
+  const permissions = await new CoreRepository(c.env.CORE_DB).assignRolePermissions(workspaceId, c.req.param("roleId"), body.permissions, c.get("user")?.id);
+  return permissions ? c.json({ roleId: c.req.param("roleId"), permissions }) : c.json(errorResponse(failure("validation_failed", "Role or permission is not available in this workspace.")), 400);
 });
 app.get("/public/:workspaceId/*", async (c) => {
   const workspaceId = c.req.param("workspaceId");
@@ -222,7 +269,7 @@ app.get("/marketplace/plugins", async (c) => {
     const catalog = await repo.catalogPlugins();
     return c.json({ plugins: catalog.map((item) => ({ ...item, installed: false, active: false })) });
   }
-  const denied = requireRead(c);
+  const denied = await requirePermission(c, workspaceId, "marketplace.read");
   if (denied) return denied;
   const workspacePlugins = await repo.workspacePlugins(workspaceId);
   const installed = new Set(workspacePlugins.map((plugin) => plugin.pluginId));
@@ -418,11 +465,11 @@ app.post("/tools/execute", async (c) => {
   }
   await runtime.events.emit("tool.executed", { workspaceId: request.workspaceId, toolId: tool.id, input: executionInput });
   if (consumedApprovalId) await approvals.consume(consumedApprovalId);
-  const websiteResult = await websiteStudioDispatch(c, request.workspaceId, tool.id, executionInput);
-  if (websiteResult) {
-    if (!websiteResult.response.ok) return c.json({ status: "denied", toolId: tool.id, reason: "Website Studio runtime rejected the operation" }, websiteResult.response.status === 404 ? 404 : 403);
-    await repo.audit(request.workspaceId, "tool.execute", { toolId: tool.id, pluginId: owner.id, approvalId: consumedApprovalId ?? null, dispatched: "website-runtime" }, c.get("user")?.id);
-    return c.json({ status: "executed", toolId: tool.id, ...(consumedApprovalId ? { approvalId: consumedApprovalId } : {}), result: websiteResult.body });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: owner.id, kind: "tool", operationId: tool.id, input: executionInput });
+  if (runtimeResult) {
+    if (!runtimeResult.response.ok) return c.json({ status: "denied", toolId: tool.id, reason: "Plugin runtime rejected the operation" }, runtimeResult.response.status === 404 ? 404 : 403);
+    await repo.audit(request.workspaceId, "tool.execute", { toolId: tool.id, pluginId: owner.id, approvalId: consumedApprovalId ?? null, dispatched: "plugin-runtime" }, c.get("user")?.id);
+    return c.json({ status: "executed", toolId: tool.id, ...(consumedApprovalId ? { approvalId: consumedApprovalId } : {}), result: runtimeResult.body });
   }
   await repo.audit(request.workspaceId, "tool.execute", { toolId: tool.id, pluginId: owner.id, approvalId: consumedApprovalId ?? null }, c.get("user")?.id);
   return c.json({ status: "executed", toolId: tool.id, ...(consumedApprovalId ? { approvalId: consumedApprovalId } : {}), result: { accepted: true } });
@@ -436,11 +483,18 @@ app.post("/runtime/ui/data", async (c) => {
   if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
   const dataSource = resolved.page.dataSources.find((item) => item.id === request.dataSourceId);
   if (!dataSource) return c.json({ status: "denied", data: null, error: "Data source is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
-  const denied = await requirePermission(c, request.workspaceId, resolved.page.access === "permission-gated" ? "workspace.read" : "workspace.read");
+  const dataPermission = dataSource.access === "permission-gated" || resolved.page.access === "permission-gated" ? resolved.requiredPermission ?? "workspace.read" : "workspace.read";
+  const denied = await requirePermission(c, request.workspaceId, dataPermission);
   if (denied) return denied;
   if (resolved.pluginId === "platform" && dataSource.id === "platform.settings.general.read") return c.json({ status: "ok", data: await repo.generalSettings(request.workspaceId), error: null, approvalId: null, auditEventId: null });
   if (resolved.pluginId === "platform" && dataSource.id === "platform.settings.domains.list") return c.json({ status: "ok", data: { rows: await repo.listDomains(request.workspaceId) }, error: null, approvalId: null, auditEventId: null });
   if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor(resolved.page.data, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, kind: "data", operationId: dataSource.resource ?? dataSource.id, contributionId: request.contributionId, routeParams: request.routeParams, queryParams: request.queryParams });
+  if (runtimeResult) {
+    if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the data request.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
+    await repo.audit(request.workspaceId, "runtime.ui.data.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id, dispatched: "plugin-runtime" }, c.get("user")?.id);
+    return c.json({ status: "ok", data: runtimeResult.body, error: null, approvalId: null, auditEventId: null });
+  }
   await repo.audit(request.workspaceId, "runtime.ui.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
@@ -463,11 +517,11 @@ app.post("/runtime/ui/actions", async (c) => {
   }
   const approval = await maybeActionApproval(c, repo, action, request.workspaceId, resolved.pluginId, request.contributionId, request.input);
   if (approval) return c.json(approval, 202);
-  const websiteResult = await websiteStudioDispatch(c, request.workspaceId, action.commandId, request.input);
-  if (websiteResult) {
-    if (!websiteResult.response.ok) return c.json({ status: "denied", data: null, error: "Website Studio runtime rejected the operation.", approvalId: null, auditEventId: null }, websiteResult.response.status === 404 ? 404 : 403);
-    await repo.audit(request.workspaceId, "runtime.ui.action.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId, dispatched: "website-runtime" }, c.get("user")?.id);
-    return c.json({ status: "ok", data: websiteResult.body, error: null, approvalId: null, auditEventId: null });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, kind: "action", operationId: action.commandId, contributionId: request.contributionId, input: request.input, routeParams: request.routeParams });
+  if (runtimeResult) {
+    if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the operation.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
+    await repo.audit(request.workspaceId, "runtime.ui.action.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId, dispatched: "plugin-runtime" }, c.get("user")?.id);
+    return c.json({ status: "ok", data: runtimeResult.body, error: null, approvalId: null, auditEventId: null });
   }
   await repo.audit(request.workspaceId, "runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
@@ -505,7 +559,7 @@ app.get("/workspaces/:workspaceId/settings/tabs", async (c) => {
   const repo = new CoreRepository(c.env.CORE_DB);
   const tabs = await repo.settingsTabs(c.req.param("workspaceId"));
   const permissions = new Set((await repo.memberSummary(c.req.param("workspaceId"), c.get("user"))).permissions);
-  return c.json({ tabs: tabs.filter((tab) => tab.status === "active" && (!tab.requiredPermission || permissions.has(tab.requiredPermission as WorkspacePermission) || permissions.has("workspace.admin"))) });
+  return c.json({ tabs: tabs.filter((tab) => tab.status === "active" && (!tab.requiredPermission || permissions.has(tab.requiredPermission) || permissions.has("workspace.admin"))) });
 });
 app.get("/workspaces/:workspaceId/settings/tabs/:tabId", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read");
@@ -514,7 +568,7 @@ app.get("/workspaces/:workspaceId/settings/tabs/:tabId", async (c) => {
   const resolved = await repo.settingsTab(c.req.param("workspaceId"), c.req.param("tabId"));
   if (resolved?.tab.requiredPermission) {
     const permissions = new Set((await repo.memberSummary(c.req.param("workspaceId"), c.get("user"))).permissions);
-    if (!permissions.has(resolved.tab.requiredPermission as WorkspacePermission) && !permissions.has("workspace.admin")) return c.json(errorResponse(failure("not_authorized", "Settings tab permission is required.")), 403);
+    if (!permissions.has(resolved.tab.requiredPermission) && !permissions.has("workspace.admin")) return c.json(errorResponse(failure("not_authorized", "Settings tab permission is required.")), 403);
   }
   return resolved ? c.json(resolved) : c.json(errorResponse(failure("not_found", "Settings tab is not available.")), 404);
 });
@@ -535,12 +589,20 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
   if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
   const dataSource = resolved.page.dataSources.find((item) => item.id === request.dataSourceId);
   if (!dataSource) return c.json({ status: "denied", data: null, error: "Data source is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  const permissionDenied = await requirePermission(c, request.workspaceId, dataSource.access === "permission-gated" || resolved.page.access === "permission-gated" ? resolved.requiredPermission ?? "workspace.settings.read" : "workspace.settings.read");
+  if (permissionDenied) return permissionDenied;
   if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor(resolved.page.data, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, kind: "data", operationId: dataSource.resource ?? dataSource.id, contributionId: request.contributionId, routeParams: request.routeParams, queryParams: request.queryParams });
+  if (runtimeResult) {
+    if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the data request.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
+    await repo.audit(request.workspaceId, "settings.runtime.ui.data.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id, dispatched: "plugin-runtime" }, c.get("user")?.id);
+    return c.json({ status: "ok", data: runtimeResult.body, error: null, approvalId: null, auditEventId: null });
+  }
   await repo.audit(request.workspaceId, "settings.runtime.ui.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
 app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
-  const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.write");
+  const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read");
   if (denied) return denied;
   const request = runtimeActionRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
   const repo = new CoreRepository(c.env.CORE_DB);
@@ -548,8 +610,19 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
   if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
   const action = resolved.page.actions.find((item) => item.id === request.actionId);
   if (!action) return c.json({ status: "denied", data: null, error: "Action is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  const runtime = await runtimeFor(repo);
+  const toolOwner = runtime.plugins.all().find((plugin) => plugin.contributes.tools.some((tool) => tool.id === action.commandId));
+  const tool = toolOwner?.contributes.tools.find((item) => item.id === action.commandId);
+  const permissionDenied = await requireAllPermissions(c, request.workspaceId, tool?.permissions.length ? tool.permissions : [resolved.requiredPermission ?? "workspace.settings.write"]);
+  if (permissionDenied) return permissionDenied;
   const approval = await maybeActionApproval(c, repo, action, request.workspaceId, resolved.pluginId, request.contributionId, request.input);
   if (approval) return c.json(approval, 202);
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, kind: "action", operationId: action.commandId, contributionId: request.contributionId, input: request.input, routeParams: request.routeParams });
+  if (runtimeResult) {
+    if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the operation.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
+    await repo.audit(request.workspaceId, "settings.runtime.ui.action.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId, dispatched: "plugin-runtime" }, c.get("user")?.id);
+    return c.json({ status: "ok", data: runtimeResult.body, error: null, approvalId: null, auditEventId: null });
+  }
   await repo.audit(request.workspaceId, "settings.runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });

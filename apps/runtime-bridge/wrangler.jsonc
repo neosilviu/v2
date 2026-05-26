@@ -2,5 +2,11 @@
   "name": "v2-runtime-bridge",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-25",
-  "services": [{ "binding": "CORE", "service": "v2-core-worker" }]
+  "services": [
+    { "binding": "CORE", "service": "v2-core-worker" },
+    { "binding": "WEBSITE_STUDIO", "service": "v2-plugin-website-studio" }
+  ],
+  "vars": {
+    "PLUGIN_RUNTIME_BINDINGS": "{\"website-studio\":\"WEBSITE_STUDIO\"}"
+  }
 }

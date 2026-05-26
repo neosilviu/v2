@@ -10,7 +10,7 @@
   ],
   "services": [
     { "binding": "AUTH", "service": "v2-auth-worker" },
-    { "binding": "WEBSITE_RUNTIME", "service": "v2-plugin-website-studio" }
+    { "binding": "PLUGIN_RUNTIME", "service": "v2-runtime-bridge" }
   ],
   "vars": {
     "APP_ORIGIN": "http://localhost:5173,http://127.0.0.1:5173",

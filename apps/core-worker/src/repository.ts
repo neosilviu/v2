@@ -86,6 +86,7 @@ export type RuntimeContributionResolution = {
   pluginId: string;
   contributionId: string;
   page: DeclarativePageContribution;
+  requiredPermission: string | null;
   policy?: { id: string | null; access: PublicContributionAccess; authenticationMode: "anonymous" | "customer" | "verified"; allowedOperations: string[]; enabled: boolean };
 };
 export type SettingsTabResolution = {
@@ -622,8 +623,11 @@ export class CoreRepository {
           bundle?.ui.mode ?? "declarative",
         ),
       this.db.prepare("DELETE FROM plugin_capabilities WHERE plugin_id = ?").bind(manifest.id),
+      this.db.prepare("DELETE FROM plugin_permissions WHERE plugin_id = ?").bind(manifest.id),
       this.db.prepare("DELETE FROM plugin_ui_contributions WHERE plugin_id = ? AND version = ?").bind(manifest.id, manifest.version),
       ...manifest.capabilities.map((capability) => this.db.prepare("INSERT INTO plugin_capabilities (plugin_id, capability_id, description, risk) VALUES (?, ?, ?, ?)")
+        .bind(manifest.id, capability.id, capability.description ?? null, capability.risk)),
+      ...manifest.capabilities.map((capability) => this.db.prepare("INSERT INTO plugin_permissions (plugin_id, permission, description, risk) VALUES (?, ?, ?, ?)")
         .bind(manifest.id, capability.id, capability.description ?? null, capability.risk)),
       ...uiContributions.map((contribution) => this.db.prepare(`INSERT INTO plugin_ui_contributions
         (id, plugin_id, contribution_id, contribution_type, access_mode, zone_id, template_id, schema_json, required_permission, version, updated_at)
@@ -891,6 +895,8 @@ export class CoreRepository {
         updated_at = CURRENT_TIMESTAMP`)
       .bind(workspaceId, pluginId, active ? 1 : 0, active ? 1 : 0, active ? 1 : 0).run();
     if (active) {
+      const permissions = await this.declaredPluginPermissions(pluginId);
+      const ownerRoleId = `${workspaceId}:owner`;
       await this.db.prepare(`INSERT OR IGNORE INTO workspace_ui_activations
         (workspace_id, plugin_id, contribution_id, enabled, zone_override, order_index, configuration_json)
         SELECT ?, plugin_id, contribution_id, 1, zone_id, rowid, NULL
@@ -898,6 +904,9 @@ export class CoreRepository {
         WHERE plugin_id = ? AND access_mode != 'public-candidate'`)
         .bind(workspaceId, pluginId)
         .run();
+      if (permissions.length) {
+        await this.db.batch(permissions.map((permission) => this.db.prepare("INSERT OR IGNORE INTO workspace_role_permissions (workspace_id, role_id, permission) VALUES (?, ?, ?)").bind(workspaceId, ownerRoleId, permission)));
+      }
       await this.db.prepare("UPDATE workspace_ui_activations SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId).run();
     } else {
       await this.db.prepare("UPDATE workspace_ui_activations SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId).run();
@@ -945,7 +954,7 @@ export class CoreRepository {
   }
 
   async privateRuntimeContribution(workspaceId: string, contributionId: string): Promise<RuntimeContributionResolution | undefined> {
-    const row = await this.db.prepare(`SELECT c.plugin_id, c.contribution_id, c.schema_json
+    const row = await this.db.prepare(`SELECT c.plugin_id, c.contribution_id, c.schema_json, c.required_permission
       FROM workspace_ui_activations a
       INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
       INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
@@ -953,8 +962,8 @@ export class CoreRepository {
       ORDER BY a.order_index
       LIMIT 1`)
       .bind(workspaceId, contributionId)
-      .first<{ plugin_id: string; contribution_id: string; schema_json: string }>();
-    return row ? { workspaceId, pluginId: row.plugin_id, contributionId: row.contribution_id, page: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)) } : undefined;
+      .first<{ plugin_id: string; contribution_id: string; schema_json: string; required_permission: string | null }>();
+    return row ? { workspaceId, pluginId: row.plugin_id, contributionId: row.contribution_id, page: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)), requiredPermission: row.required_permission } : undefined;
   }
 
   async settingsTabs(workspaceId: string): Promise<Array<SettingsTabResolution["tab"]>> {
@@ -1017,6 +1026,7 @@ export class CoreRepository {
       pluginId: row.plugin_id,
       contributionId: row.contribution_id,
       page: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)),
+      requiredPermission: null,
       policy: { id: row.policy_id, access: row.access, authenticationMode: row.authentication_mode, allowedOperations: JSON.parse(row.allowed_operations_json) as string[], enabled: row.policy_enabled === 1 },
     } : undefined;
   }
@@ -1024,6 +1034,33 @@ export class CoreRepository {
   async declaredCapabilities(pluginId: string): Promise<string[]> {
     const rows = await this.db.prepare("SELECT capability_id FROM plugin_capabilities WHERE plugin_id = ?").bind(pluginId).all<{ capability_id: string }>();
     return rows.results.map((row) => row.capability_id);
+  }
+
+  async declaredPluginPermissions(pluginId: string): Promise<string[]> {
+    const rows = await this.db.prepare("SELECT permission FROM plugin_permissions WHERE plugin_id = ?").bind(pluginId).all<{ permission: string }>();
+    return rows.results.map((row) => row.permission);
+  }
+
+  async assignRolePermissions(workspaceId: string, roleId: string, permissions: string[], actorId?: string) {
+    await this.ensureWorkspaceRbac(workspaceId);
+    const role = await this.db.prepare("SELECT id FROM workspace_roles WHERE workspace_id = ? AND id = ? LIMIT 1").bind(workspaceId, roleId).first<{ id: string }>();
+    if (!role) return null;
+    const platform = new Set(workspacePermissions);
+    const pluginRows = await this.db.prepare(`SELECT DISTINCT permission
+      FROM plugin_permissions permissions
+      INNER JOIN workspace_plugins active ON active.plugin_id = permissions.plugin_id AND active.workspace_id = ? AND active.active = 1`)
+      .bind(workspaceId)
+      .all<{ permission: string }>();
+    const allowed = new Set([...platform, ...pluginRows.results.map((row) => row.permission)]);
+    if (!permissions.every((permission) => allowed.has(permission))) return null;
+    await this.db.batch(permissions.map((permission) => this.db.prepare("INSERT OR IGNORE INTO workspace_role_permissions (workspace_id, role_id, permission) VALUES (?, ?, ?)").bind(workspaceId, roleId, permission)));
+    await this.audit(workspaceId, "rbac.role.permissions.assign", { roleId, permissions }, actorId);
+    return this.rolePermissionsFor(workspaceId, roleId);
+  }
+
+  async rolePermissionsFor(workspaceId: string, roleId: string): Promise<string[]> {
+    const rows = await this.db.prepare("SELECT permission FROM workspace_role_permissions WHERE workspace_id = ? AND role_id = ? ORDER BY permission").bind(workspaceId, roleId).all<{ permission: string }>();
+    return rows.results.map((row) => row.permission);
   }
 
   async grantCapabilities(workspaceId: string, pluginId: string, capabilities: string[]) {
@@ -1105,6 +1142,15 @@ export class CoreRepository {
     return rows.results.map((row) => this.domainRow(row));
   }
 
+  async activeDomains(workspaceId: string, kinds: WorkspaceDomain["kind"][]): Promise<WorkspaceDomain[]> {
+    const placeholders = kinds.map(() => "?").join(", ");
+    const rows = await this.db.prepare(`SELECT id, workspace_id, hostname, kind, status, verification_method, verification_instructions_json, publication_id, is_primary, created_at, verified_at, updated_at
+      FROM workspace_domains WHERE workspace_id = ? AND status = 'active' AND kind IN (${placeholders}) ORDER BY is_primary DESC, updated_at DESC`)
+      .bind(workspaceId, ...kinds)
+      .all<{ id: string; workspace_id: string; hostname: string; kind: WorkspaceDomain["kind"]; status: WorkspaceDomain["status"]; verification_method: WorkspaceDomain["verificationMethod"]; verification_instructions_json: string | null; publication_id: string | null; is_primary: number; created_at: string; verified_at: string | null; updated_at: string }>();
+    return rows.results.map((row) => this.domainRow(row));
+  }
+
   async domain(workspaceId: string, domainId: string): Promise<WorkspaceDomain | null> {
     const row = await this.db.prepare(`SELECT id, workspace_id, hostname, kind, status, verification_method, verification_instructions_json, publication_id, is_primary, created_at, verified_at, updated_at
       FROM workspace_domains WHERE workspace_id = ? AND id = ? LIMIT 1`)
@@ -1117,11 +1163,14 @@ export class CoreRepository {
     await this.ensureWorkspace(workspaceId);
     const hostname = input.hostname.trim().toLowerCase();
     const token = crypto.randomUUID();
-    const instructions = { method: input.verificationMethod ?? "manual", txtRecord: `_v2-verify.${hostname}`, token };
+    const method = input.verificationMethod ?? "manual";
+    const instructions = method === "dns-cname"
+      ? { method, cnameRecord: `_v2-verify.${hostname}`, target: `${token}.verify.v2.local` }
+      : { method, txtRecord: `_v2-verify.${hostname}`, token };
     await this.db.prepare(`INSERT INTO workspace_domains
       (id, workspace_id, hostname, kind, status, verification_method, verification_token_hash, verification_instructions_json, is_primary, updated_at)
       VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
-      .bind(crypto.randomUUID(), workspaceId, hostname, input.kind, input.verificationMethod ?? "manual", await this.sha256(token), JSON.stringify(instructions), input.isPrimary ? 1 : 0)
+      .bind(crypto.randomUUID(), workspaceId, hostname, input.kind, method, await this.sha256(token), JSON.stringify(instructions), input.isPrimary ? 1 : 0)
       .run();
     await this.audit(workspaceId, "domain.create", { hostname, kind: input.kind }, actorId);
     return this.listDomains(workspaceId);
