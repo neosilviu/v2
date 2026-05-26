@@ -15,28 +15,6 @@ function needsBrowserCors(path: string) {
   return path.startsWith("/api/auth/") || path.startsWith("/public/auth/") || path.startsWith("/admin/auth/") || path.startsWith("/setup/owner/");
 }
 
-function applyCorsHeaders(headers: Headers, origin: string) {
-  headers.set("Access-Control-Allow-Origin", origin);
-  headers.set("Access-Control-Allow-Credentials", "true");
-  headers.set("Access-Control-Expose-Headers", "Content-Length");
-  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
-  headers.set("Access-Control-Max-Age", "600");
-  headers.set("Vary", "Origin");
-}
-
-function corsHeaders(origin: string) {
-  const headers = new Headers();
-  applyCorsHeaders(headers, origin);
-  return headers;
-}
-
-function addCorsHeaders(response: Response, origin: string) {
-  const headers = new Headers(response.headers);
-  applyCorsHeaders(headers, origin);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
-}
-
 app.get("/health", (c) => c.json({ ok: true, service: "auth-worker", configured: parseAuthConfig(c.env).ok }));
 app.use("*", async (c, next) => {
   const origin = c.req.header("origin") ?? "";
@@ -46,11 +24,17 @@ app.use("*", async (c, next) => {
   }
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
   const allowed = parsed.ok && parsed.config.trustedOrigins.includes(origin);
-  if (c.req.method === "OPTIONS") {
-    return new Response(null, { status: allowed ? 204 : 403, headers: allowed ? corsHeaders(origin) : undefined });
-  }
+  c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+  c.header("Access-Control-Max-Age", "600");
+  if (c.req.method === "OPTIONS") return c.body(null, allowed ? 204 : 403);
   await next();
-  if (allowed) c.res = addCorsHeaders(c.res, origin);
+  if (allowed) {
+    c.header("Access-Control-Allow-Origin", origin);
+    c.header("Access-Control-Allow-Credentials", "true");
+    c.header("Access-Control-Expose-Headers", "Content-Length");
+    c.header("Vary", "Origin");
+  }
 });
 app.get("/public/auth/login-config", async (c) => {
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
