@@ -151,6 +151,20 @@ export const pluginUiContributions = sqliteTable("plugin_ui_contributions", {
 export const pluginCapabilities = sqliteTable("plugin_capabilities", { pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }), capabilityId: text("capability_id").notNull(), description: text("description"), risk: text("risk").notNull().default("safe") }, (table) => [primaryKey({ columns: [table.pluginId, table.capabilityId] })]);
 export const pluginPermissions = sqliteTable("plugin_permissions", { pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }), permission: text("permission").notNull(), description: text("description"), risk: text("risk").notNull().default("safe") }, (table) => [primaryKey({ columns: [table.pluginId, table.permission] }), index("plugin_permissions_permission_idx").on(table.permission)]);
 export const workspacePlugins = sqliteTable("workspace_plugins", { workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }), active: integer("active", { mode: "boolean" }).notNull().default(true), activatedAt: text("activated_at"), deactivatedAt: text("deactivated_at"), updatedAt: text("updated_at").notNull().default(now) }, (table) => [primaryKey({ columns: [table.workspaceId, table.pluginId] }), index("workspace_plugins_workspace_idx").on(table.workspaceId, table.active)]);
+export const pluginRuntimeDeployments = sqliteTable("plugin_runtime_deployments", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }),
+  releaseId: text("release_id").notNull(),
+  runtimeKey: text("runtime_key").notNull(),
+  runtimeKind: text("runtime_kind", { enum: ["dispatch-namespace", "local-dev", "none"] }).notNull().default("dispatch-namespace"),
+  runtimeStatus: text("runtime_status", { enum: ["pending", "active", "disabled", "error"] }).notNull().default("pending"),
+  deployedVersion: text("deployed_version"),
+  deploymentId: text("deployment_id"),
+  createdAt: text("created_at").notNull().default(now),
+  activatedAt: text("activated_at"),
+  disabledAt: text("disabled_at"),
+  lastError: text("last_error"),
+}, (table) => [primaryKey({ columns: [table.workspaceId, table.pluginId] }), index("plugin_runtime_workspace_status_idx").on(table.workspaceId, table.runtimeStatus), index("plugin_runtime_key_idx").on(table.runtimeKey)]);
 export const workspaceUiActivations = sqliteTable("workspace_ui_activations", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }),

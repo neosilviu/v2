@@ -115,7 +115,8 @@ async function installDemo(db: D1Database, workspaceId: string) {
 
 app.use("*", async (c, next) => {
   const url = new URL(c.req.url);
-  if (url.hostname !== "plugin-runtime.internal" || c.req.header("origin")) {
+  const localRuntimeBridge = (url.hostname === "localhost" || url.hostname === "127.0.0.1") && c.req.header("x-v2-runtime-bridge-dev") === "1";
+  if ((!localRuntimeBridge && url.hostname !== "plugin-runtime.internal") || c.req.header("origin")) {
     return c.json(errorResponse(failure("not_authorized", "Website Studio runtime is only available through the internal Core binding.")), 403);
   }
   await next();

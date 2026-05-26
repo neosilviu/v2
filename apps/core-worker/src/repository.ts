@@ -11,6 +11,21 @@ export type PluginWorkspaceState = {
   updatedAt: string;
 };
 
+export type PluginRuntimeDeployment = {
+  workspaceId: string;
+  pluginId: string;
+  releaseId: string;
+  runtimeKey: string;
+  runtimeKind: "dispatch-namespace" | "local-dev" | "none";
+  runtimeStatus: "pending" | "active" | "disabled" | "error";
+  deployedVersion: string | null;
+  deploymentId: string | null;
+  createdAt: string;
+  activatedAt: string | null;
+  disabledAt: string | null;
+  lastError: string | null;
+};
+
 export type CatalogPlugin = {
   manifest: PluginManifest;
   category: string;
@@ -883,7 +898,8 @@ export class CoreRepository {
   }
 
   async setActive(workspaceId: string, pluginId: string, active: boolean): Promise<PluginWorkspaceState | undefined> {
-    if (!await this.installedById(pluginId)) return undefined;
+    const manifest = await this.installedById(pluginId);
+    if (!manifest) return undefined;
     await this.ensureWorkspace(workspaceId);
     await this.db.prepare(`INSERT INTO workspace_plugins
       (workspace_id, plugin_id, active, activated_at, deactivated_at, updated_at)
@@ -908,11 +924,68 @@ export class CoreRepository {
         await this.db.batch(permissions.map((permission) => this.db.prepare("INSERT OR IGNORE INTO workspace_role_permissions (workspace_id, role_id, permission) VALUES (?, ?, ?)").bind(workspaceId, ownerRoleId, permission)));
       }
       await this.db.prepare("UPDATE workspace_ui_activations SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId).run();
+      await this.upsertPluginRuntimeDeployment({
+        workspaceId,
+        pluginId,
+        releaseId: `${pluginId}@${manifest.version}`,
+        runtimeKey: pluginId,
+        runtimeKind: "dispatch-namespace",
+        runtimeStatus: "active",
+        deployedVersion: manifest.version,
+        deploymentId: null,
+        lastError: null,
+      });
     } else {
       await this.db.prepare("UPDATE workspace_ui_activations SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId).run();
+      await this.db.prepare(`UPDATE plugin_runtime_deployments
+        SET runtime_status = 'disabled', disabled_at = CURRENT_TIMESTAMP, last_error = NULL
+        WHERE workspace_id = ? AND plugin_id = ?`)
+        .bind(workspaceId, pluginId)
+        .run();
     }
     await this.audit(workspaceId, active ? "plugin.activate" : "plugin.deactivate", { pluginId });
     return { workspaceId, pluginId, active, updatedAt: new Date().toISOString() };
+  }
+
+  async upsertPluginRuntimeDeployment(input: Omit<PluginRuntimeDeployment, "createdAt" | "activatedAt" | "disabledAt">) {
+    await this.db.prepare(`INSERT INTO plugin_runtime_deployments
+      (workspace_id, plugin_id, release_id, runtime_key, runtime_kind, runtime_status, deployed_version, deployment_id, activated_at, disabled_at, last_error)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'active' THEN CURRENT_TIMESTAMP ELSE NULL END, CASE WHEN ? = 'disabled' THEN CURRENT_TIMESTAMP ELSE NULL END, ?)
+      ON CONFLICT(workspace_id, plugin_id) DO UPDATE SET
+        release_id = excluded.release_id,
+        runtime_key = excluded.runtime_key,
+        runtime_kind = excluded.runtime_kind,
+        runtime_status = excluded.runtime_status,
+        deployed_version = excluded.deployed_version,
+        deployment_id = excluded.deployment_id,
+        activated_at = CASE WHEN excluded.runtime_status = 'active' THEN CURRENT_TIMESTAMP ELSE plugin_runtime_deployments.activated_at END,
+        disabled_at = CASE WHEN excluded.runtime_status = 'disabled' THEN CURRENT_TIMESTAMP ELSE NULL END,
+        last_error = excluded.last_error`)
+      .bind(input.workspaceId, input.pluginId, input.releaseId, input.runtimeKey, input.runtimeKind, input.runtimeStatus, input.deployedVersion, input.deploymentId, input.runtimeStatus, input.runtimeStatus, input.lastError)
+      .run();
+  }
+
+  async activePluginRuntime(workspaceId: string, pluginId: string): Promise<PluginRuntimeDeployment | undefined> {
+    const row = await this.db.prepare(`SELECT workspace_id, plugin_id, release_id, runtime_key, runtime_kind, runtime_status, deployed_version, deployment_id, created_at, activated_at, disabled_at, last_error
+      FROM plugin_runtime_deployments
+      WHERE workspace_id = ? AND plugin_id = ? AND runtime_status = 'active'
+      LIMIT 1`)
+      .bind(workspaceId, pluginId)
+      .first<{ workspace_id: string; plugin_id: string; release_id: string; runtime_key: string; runtime_kind: PluginRuntimeDeployment["runtimeKind"]; runtime_status: PluginRuntimeDeployment["runtimeStatus"]; deployed_version: string | null; deployment_id: string | null; created_at: string; activated_at: string | null; disabled_at: string | null; last_error: string | null }>();
+    return row ? {
+      workspaceId: row.workspace_id,
+      pluginId: row.plugin_id,
+      releaseId: row.release_id,
+      runtimeKey: row.runtime_key,
+      runtimeKind: row.runtime_kind,
+      runtimeStatus: row.runtime_status,
+      deployedVersion: row.deployed_version,
+      deploymentId: row.deployment_id,
+      createdAt: row.created_at,
+      activatedAt: row.activated_at,
+      disabledAt: row.disabled_at,
+      lastError: row.last_error,
+    } : undefined;
   }
 
   activate(workspaceId: string, pluginId: string) { return this.setActive(workspaceId, pluginId, true); }

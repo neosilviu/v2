@@ -92,6 +92,13 @@
       "when": 1779808719419,
       "tag": "0012_brave_fenris",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1779813130183,
+      "tag": "0013_parched_hellfire_club",
+      "breakpoints": true
     }
   ]
 }

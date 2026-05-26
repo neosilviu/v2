@@ -1,5 +1,4 @@
 export interface BridgeEnv {
-  CORE: Fetcher;
-  PLUGIN_RUNTIME_BINDINGS?: string;
-  [binding: string]: unknown;
+  DISPATCHER?: { get(name: string): Fetcher };
+  PLUGIN_RUNTIME_LOCAL_ORIGIN?: string;
 }
