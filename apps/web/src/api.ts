@@ -2,7 +2,7 @@ import type { PluginBundle, PluginManifest, ToolContribution } from "@v2/plugin-
 import type { SurfaceContribution } from "@v2/plugin-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
+import type { DeclarativePageContribution, RuntimeResultEnvelope, SettingsPanelContribution, SettingsTabContribution } from "@v2/ui-schema";
 const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 const workspaceId = "default";
 export class CoreAuthRequiredError extends Error {
@@ -26,12 +26,17 @@ export type MarketplacePlugin = {
 export type PluginInstallResult =
   | { status: "installed"; plugin: MarketplacePlugin }
   | { status: "approval-required"; approvalId: string; pluginId: string; version: string; sha256: string; sensitiveCapabilities: string[] };
+export type RuntimeSettingsTab = SettingsTabContribution & { ownerName: string; orderIndex: number };
+export type RuntimeSettingsTabResolution = { tab: RuntimeSettingsTab; panel: SettingsPanelContribution };
 export async function loadCoreSession(): Promise<CoreSession> { return json<CoreSession>("/session"); }
 export function runtimeSurfaceUrl(surfaceId: string): string { return `${coreUrl}/runtime/ui/surfaces/${encodeURIComponent(surfaceId)}?workspaceId=${encodeURIComponent(workspaceId)}`; }
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await json<{ layout: WorkspaceLayout | null }>(`/workspaces/${workspaceId}/layout`)).layout; }
 export async function saveLayout(state: ShellState): Promise<void> { await json("/layouts", { method: "PUT", body: JSON.stringify({ workspaceId, layout: { zones: state.zones, placements: state.placements } }) }); }
 export async function loadActivePlugins(): Promise<string[]> { return (await json<{ active: string[] }>(`/workspaces/${workspaceId}/plugins`)).active; }
 export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> { return (await json<{ surfaces: SurfaceContribution[] }>(`/workspaces/${workspaceId}/ui/surfaces`)).surfaces; }
+export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> { return (await json<{ tabs: RuntimeSettingsTab[] }>(`/workspaces/${workspaceId}/settings/tabs`)).tabs; }
+export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTabResolution> { return json<RuntimeSettingsTabResolution>(`/workspaces/${workspaceId}/settings/tabs/${encodeURIComponent(tabId)}`); }
+export async function saveSettingsTabOrder(tabIds: string[]): Promise<void> { await json(`/workspaces/${workspaceId}/settings/tabs/order`, { method: "POST", body: JSON.stringify({ tabIds }) }); }
 export async function loadPublicPage(pathname: string): Promise<{ page: DeclarativePageContribution; routeParams: Record<string, string> }> { return json<{ page: DeclarativePageContribution; routeParams: Record<string, string> }>(pathname); }
 export async function loadRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>("/runtime/ui/data", { method: "POST", body: JSON.stringify({ workspaceId, contributionId, dataSourceId, routeParams }) }); }
 export async function executeRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>("/runtime/ui/actions", { method: "POST", body: JSON.stringify({ workspaceId, contributionId, actionId, input, routeParams }) }); }
