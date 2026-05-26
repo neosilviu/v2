@@ -161,6 +161,15 @@ function runCommand(args, label) {
   else fail(`${label} failed\n${result.stdout}${result.stderr}`);
 }
 
+function testAuthRuntimeBootstrapPolicy() {
+  const source = fs.readFileSync(path.join(root, "apps/auth-worker/src/runtime-config.ts"), "utf8");
+  if (source.includes("UPDATE auth_methods SET status = 'draft'")) fail("Auth runtime bootstrap still resets published passkey/social methods");
+  for (const expected of ["VALUES ('password'", "VALUES ('passkey'", "VALUES ('social.github'"]) {
+    if (!source.includes("INSERT OR IGNORE INTO auth_methods") || !source.includes(expected)) fail(`Auth runtime bootstrap is missing seed-only default ${expected}`);
+  }
+  pass("Auth runtime bootstrap is seed-only and does not reset published passkey/social methods");
+}
+
 function testMigrationDrift() {
   if (!process.argv.includes("--check-migrations")) {
     note("Migration drift check skipped; run `pnpm test:generated -- --check-migrations` for Drizzle generate checks");
@@ -201,6 +210,7 @@ console.log("==================");
 const manifests = await discoverPluginManifests();
 testManifestContracts(manifests);
 testRuntimeFirstArchitecture();
+testAuthRuntimeBootstrapPolicy();
 testMigrationDrift();
 await testHttpScenarios();
 console.log("==================");

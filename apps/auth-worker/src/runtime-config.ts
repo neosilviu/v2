@@ -60,7 +60,6 @@ export class AuthRuntimeRepository {
       ...(providerState.github ? [this.db.prepare(`INSERT OR IGNORE INTO auth_methods
         (id, workspace_id, type, provider_id, title, status, public_visible, display_order, configuration_ref)
         VALUES ('social.github', NULL, 'social', 'github', 'GitHub', 'draft', 0, 20, 'env:GITHUB_CLIENT_ID')`)] : []),
-      this.db.prepare("UPDATE auth_methods SET status = 'draft', public_visible = 0, updated_at = CURRENT_TIMESTAMP WHERE type IN ('passkey', 'social') AND workspace_id IS NULL"),
       this.db.prepare(`INSERT OR IGNORE INTO auth_policies
         (id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin)
         VALUES ('global', NULL, 'disabled', 0, 0, 0)`),
