@@ -15,8 +15,7 @@ function needsBrowserCors(path: string) {
   return path.startsWith("/api/auth/") || path.startsWith("/public/auth/") || path.startsWith("/admin/auth/") || path.startsWith("/setup/owner/");
 }
 
-function corsHeaders(origin: string) {
-  const headers = new Headers();
+function applyCorsHeaders(headers: Headers, origin: string) {
   headers.set("Access-Control-Allow-Origin", origin);
   headers.set("Access-Control-Allow-Credentials", "true");
   headers.set("Access-Control-Expose-Headers", "Content-Length");
@@ -24,12 +23,17 @@ function corsHeaders(origin: string) {
   headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
   headers.set("Access-Control-Max-Age", "600");
   headers.set("Vary", "Origin");
+}
+
+function corsHeaders(origin: string) {
+  const headers = new Headers();
+  applyCorsHeaders(headers, origin);
   return headers;
 }
 
 function addCorsHeaders(response: Response, origin: string) {
   const headers = new Headers(response.headers);
-  for (const [key, value] of corsHeaders(origin)) headers.set(key, value);
+  applyCorsHeaders(headers, origin);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
