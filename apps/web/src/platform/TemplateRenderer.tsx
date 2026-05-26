@@ -118,15 +118,18 @@ export function TemplateRenderer(props: TemplateRendererProps) {
   const contributionId = props.runtime?.contributionId ?? props.page.id;
   const routeParams = props.runtime?.routeParams ?? {};
   const routeParamsKey = JSON.stringify(routeParams);
+  const dataSources = props.runtime?.public ? props.page.dataSources : props.page.dataSources.filter((dataSource) => dataSource.access !== "public-candidate");
+  const dataSourceKey = dataSources.map((dataSource) => dataSource.id).join("|");
 
   useEffect(() => {
     let alive = true;
-    if (!props.page.dataSources.length) {
+    if (!dataSources.length) {
+      setStatus(null);
       setRuntimeData(props.data ?? props.page.data);
       return () => { alive = false; };
     }
     setStatus("Loading data...");
-    void Promise.all(props.page.dataSources.map(async (dataSource) => {
+    void Promise.all(dataSources.map(async (dataSource) => {
       const result = props.runtime?.public
         ? await loadPublicRuntimeData(contributionId, dataSource.id, routeParams, props.runtime.workspaceId)
         : await loadRuntimeData(contributionId, dataSource.id, routeParams);
@@ -144,7 +147,7 @@ export function TemplateRenderer(props: TemplateRendererProps) {
       if (alive) setStatus(error instanceof Error ? error.message : "Runtime data unavailable");
     });
     return () => { alive = false; };
-  }, [contributionId, props.data, props.page, props.runtime?.public, routeParamsKey]);
+  }, [contributionId, dataSourceKey, props.data, props.page, props.runtime?.public, props.runtime?.workspaceId, routeParamsKey]);
 
   const dispatchAction = async (action: ActionDefinition, input?: unknown) => {
     if (props.callbacks?.onAction && input === undefined) {
