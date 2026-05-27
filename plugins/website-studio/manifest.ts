@@ -1,5 +1,8 @@
 import { definePlugin } from "@v2/plugin-sdk";
 
+const noInput = { type: "object" as const, properties: {}, required: [], additionalProperties: false };
+const pageInput = { type: "object" as const, properties: { pageId: { type: "string" as const, minLength: 1 } }, required: ["pageId"], additionalProperties: false };
+
 export const websiteStudioManifest = definePlugin({
   id: "website-studio",
   name: "Website Studio",
@@ -12,6 +15,17 @@ export const websiteStudioManifest = definePlugin({
     { id: "website.publish", description: "Publish website page changes", risk: "sensitive" },
     { id: "website.context.share", description: "Share approved page context with Agent AI", risk: "safe" }
   ],
+  api: {
+    version: 1,
+    operations: [
+      { id: "website.listPages", title: "List pages", permission: "website.pages.read", risk: "safe", input: noInput, output: { type: "unknown" } },
+      { id: "website.updateSection", title: "Update section", permission: "website.pages.write", risk: "reversible", input: { type: "object", properties: { pageId: { type: "string", minLength: 1 }, sortOrder: { type: "number" }, kind: { type: "string" }, content: { type: "unknown" }, aiContextEnabled: { type: "boolean" } }, required: ["pageId"], additionalProperties: false }, output: { type: "unknown" } },
+      { id: "website.publishPage", title: "Publish page", permission: "website.publish", risk: "sensitive", input: pageInput, output: { type: "unknown" } },
+      { id: "website.installDefaults", title: "Install defaults", permission: "website.pages.write", risk: "reversible", input: noInput, output: { type: "unknown" } },
+      { id: "website.installDemoData", title: "Install demo data", permission: "website.pages.write", risk: "reversible", input: noInput, output: { type: "unknown" } },
+      { id: "website.readPageContext", title: "Read approved page context", permission: "website.context.share", risk: "safe", input: { type: "object", properties: { pageId: { type: "string", minLength: 1 } }, required: [], additionalProperties: false }, output: { type: "unknown" } }
+    ]
+  },
   contributes: {
     settingsTabs: [{
       id: "website-studio.settings",
