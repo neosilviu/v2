@@ -31,6 +31,24 @@ export const commerceManifest = definePlugin({
         input: { type: "object", properties: { orderId: { type: "string" } }, required: ["orderId"], additionalProperties: false },
         output: { type: "object", properties: { order: { type: "unknown" } }, required: ["order"], additionalProperties: false },
       },
+      {
+        id: "commerce.updateProduct",
+        title: "Update product",
+        permission: "commerce.catalog.write",
+        risk: "reversible",
+        input: {
+          type: "object",
+          properties: {
+            productId: { type: "string" },
+            title: { type: "string" },
+            status: { type: "string" },
+            price: { type: "string" },
+          },
+          required: ["productId"],
+          additionalProperties: false,
+        },
+        output: { type: "object", properties: { product: { type: "unknown" } }, required: ["product"], additionalProperties: false },
+      },
     ],
   },
   contributes: {

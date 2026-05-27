@@ -1,11 +1,21 @@
 import { hc } from "hono/client";
 import type { ProviderConnection } from "@v2/provider-contracts";
-import type { AiProvidersApi } from "../server/app";
+type AiProvidersApi = typeof import("../server/app").default;
+type ProviderApiClient = {
+  manage: {
+    connections: {
+      $get(args: { query: { workspaceId: string } }): Promise<Response>;
+      "workers-ai": {
+        $post(args: { json: { workspaceId: string; title: string; modelId?: string } }): Promise<Response>;
+      };
+    };
+  };
+};
 
 const workspaceId = "default";
 const configuredUrl = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_AI_PROVIDERS_API_URL;
 const baseUrl = (configuredUrl ?? "http://localhost:8792").replace(/\/$/, "");
-const providerApi: any = hc<AiProvidersApi>(baseUrl, { init: { credentials: "include" } });
+const providerApi = hc<AiProvidersApi>(baseUrl, { init: { credentials: "include" } }) as unknown as ProviderApiClient;
 
 async function read<T>(request: Promise<Response>): Promise<T> {
   const response = await request;

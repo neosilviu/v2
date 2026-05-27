@@ -7,7 +7,7 @@ import type { ApprovalRequest, Notification } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { activateDomain, activateMailProvider, configureMailProvider, createDomain, createWorkspacePublication, deleteWorkspacePublication, decideApprovalRequest, disableDomain, disableMailProvider, loadActivePlugins, loadAuditEvents, loadDomains, loadGeneralSettings, loadInstalledPlugins, loadMailSummary, loadMarketplacePlugins, loadPendingApprovalRequests, loadSecurityBootstrap, loadSettingsTab, loadSettingsTabs, loadWorkspacePublications, loadWorkspaceUiSurfaces, saveGeneralSettings, testMailProvider, updateWorkspacePublication, verifyDomain, type MailSummary, type MarketplacePlugin, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type WorkspaceDomain, type WorkspaceSummary, CoreRequestError } from "./api";
-import { saveAuthMethod, saveAuthPolicy, type AuthSecuritySummary } from "./auth-api";
+import { saveAuthMethod, saveAuthPolicy, type AuthSecuritySummary } from "./api";
 import { CrudRenderer } from "./platform/CrudRenderer";
 import { PluginManagerPanel } from "./platform/PluginManagerPanel";
 import { RuntimeShellEditor } from "./platform/RuntimeShellEditor";

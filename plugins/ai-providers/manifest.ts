@@ -37,6 +37,14 @@ export const aiProvidersPlugin = definePlugin({
         input: { type: "object", properties: { connectionId: { type: "string" }, modelId: { type: "string" } }, required: ["connectionId"], additionalProperties: false },
         output: { type: "unknown" },
       },
+      {
+        id: "providers.addWorkersAiConnection",
+        title: "Add Workers AI connection",
+        permission: "providers.manage",
+        risk: "reversible",
+        input: { type: "object", properties: { workspaceId: { type: "string" }, title: { type: "string" }, modelId: { type: "string" } }, required: ["workspaceId", "title"], additionalProperties: false },
+        output: { type: "object", properties: { connection: { type: "unknown" } }, required: ["connection"], additionalProperties: false },
+      },
     ],
   },
   contributes: {
@@ -76,6 +84,7 @@ export const aiProvidersPlugin = definePlugin({
       { id: "providers.testConnection", title: "Test AI provider", permissions: ["providers.manage"], risk: "sensitive", exposure: ["agent-ai", "mcp", "command"] },
       { id: "providers.listConnections", title: "List provider connections", permissions: ["providers.manage"], risk: "safe", exposure: ["agent-ai", "command"] },
       { id: "providers.chat", title: "Invoke AI provider chat", permissions: ["providers.use"], risk: "sensitive", exposure: ["agent-ai"] },
+      { id: "providers.addWorkersAiConnection", title: "Add Workers AI connection", permissions: ["providers.manage"], risk: "reversible", exposure: ["agent-ai", "command"] },
     ],
   },
 });

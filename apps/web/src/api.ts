@@ -5,7 +5,7 @@ import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayou
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
 import type { MailProviderConfigure, MailProviderPublicSummary, MailProviderTestResult, MailTemplate } from "@v2/mail-contracts";
-import { authPublicLoginConfigSchema, type AuthPublicLoginConfig } from "@v2/auth-contracts";
+import { authMethodSchema, authPolicySchema, authUiContributionSchema } from "@v2/auth-contracts";
 import { approvalRequestListSchema, auditEventListSchema, authSecurityBootstrapSchema, coreSessionSchema, mailSummarySchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, workspaceDomainSchema, workspacePublicationEnvelopeSchema, workspacePublicationListSchema, type AuditEvent, type AuditEventList, type AuthSecurityBootstrap, type CoreSession, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceDomain, type WorkspacePublication, type WorkspacePublicationList, type WorkspaceSummary } from "./platform-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 import { authUrl } from "./auth-client";
@@ -13,7 +13,54 @@ export type { AuthSecurityBootstrap, CoreSession, MarketplacePlugin, PluginInsta
 export type { AuditEvent, AuditEventList, WorkspacePublication, WorkspacePublicationList } from "./platform-contracts";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
-export const coreApi: any = hc(coreUrl, { init: { credentials: "include" } });
+type HonoRequestArgs = {
+  param?: Record<string, string>;
+  query?: Record<string, unknown>;
+  json?: unknown;
+  body?: BodyInit | null;
+  headers?: HeadersInit;
+};
+type HonoRoute = {
+  $get(args?: HonoRequestArgs): Promise<Response>;
+  $post(args?: HonoRequestArgs): Promise<Response>;
+  $put(args?: HonoRequestArgs): Promise<Response>;
+  $delete(args?: HonoRequestArgs): Promise<Response>;
+};
+type CoreApiClient = {
+  session: { $get(args?: HonoRequestArgs): Promise<Response> };
+  workspaces: {
+    current: { bootstrap: HonoRoute };
+    ":workspaceId": {
+      bootstrap: HonoRoute;
+      rbac: { me: HonoRoute };
+      settings: {
+        tabs: { order: { $post(args?: HonoRequestArgs): Promise<Response> }; ":tabId": HonoRoute };
+        general: HonoRoute;
+        ":scope": HonoRoute;
+        runtime: { data: HonoRoute; actions: HonoRoute };
+      };
+      publications: HonoRoute;
+      "audit-events": HonoRoute;
+      "approval-requests": HonoRoute;
+      "tool-approvals": HonoRoute;
+      plugins: { ":pluginId": { operations: { ":operationId": HonoRoute } } };
+      domains: { $get(args?: HonoRequestArgs): Promise<Response>; $post(args?: HonoRequestArgs): Promise<Response>; ":domainId": { verify: { $post(args?: HonoRequestArgs): Promise<Response> }; activate: { $post(args?: HonoRequestArgs): Promise<Response> }; disable: { $post(args?: HonoRequestArgs): Promise<Response> } } };
+      mail: { $get(args?: HonoRequestArgs): Promise<Response>; providers: { $post(args?: HonoRequestArgs): Promise<Response>; ":providerId": { activate: { $post(args?: HonoRequestArgs): Promise<Response> }; disable: { $post(args?: HonoRequestArgs): Promise<Response> }; test: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
+      auth: { "security-bootstrap": HonoRoute; "security-summary": HonoRoute; sessions: { summary: HonoRoute }; methods: { ":methodId": HonoRoute }; policy: HonoRoute; "ui-contributions": HonoRoute };
+    };
+  };
+  setup: { owner: { $get(args?: HonoRequestArgs): Promise<Response>; consume: { $post(args?: HonoRequestArgs): Promise<Response> } } };
+  layouts: { $put(args?: HonoRequestArgs): Promise<Response> };
+  public: { ":workspaceId": { runtime: { data: HonoRoute; actions: HonoRoute } } };
+  plugins: { activate: { $post(args?: HonoRequestArgs): Promise<Response> }; deactivate: { $post(args?: HonoRequestArgs): Promise<Response> }; upload: { $post(args?: HonoRequestArgs): Promise<Response> }; install: { $post(args?: HonoRequestArgs): Promise<Response> }; grants: { $post(args?: HonoRequestArgs): Promise<Response> } };
+  settings: { $put(args?: HonoRequestArgs): Promise<Response> };
+  "tool-approvals": { decision: { $post(args?: HonoRequestArgs): Promise<Response> } };
+  "approval-requests": { ":approvalId": { decision: { $post(args?: HonoRequestArgs): Promise<Response> } } };
+  marketplace: { plugins: { $get(args?: HonoRequestArgs): Promise<Response>; ":pluginId": { releases: { $post(args?: HonoRequestArgs): Promise<Response> }; install: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
+  publications: { $post(args?: HonoRequestArgs): Promise<Response>; ":publicationId": { $put(args?: HonoRequestArgs): Promise<Response>; $delete(args?: HonoRequestArgs): Promise<Response> } };
+  tools: { execute: { $post(args?: HonoRequestArgs): Promise<Response> } };
+};
+export const coreApi = hc(coreUrl, { init: { credentials: "include" } }) as unknown as CoreApiClient;
 
 let activeWorkspaceId: string | null = null;
 let shellBootstrap: Promise<ShellBootstrap> | null = null;
@@ -114,6 +161,7 @@ export type RuntimeSettingsTabValue = RuntimeSettingsTab;
 export type MarketplacePluginValue = MarketplacePlugin;
 export type PluginInstallResultValue = PluginInstallResult;
 export type AuthSecurityBootstrapValue = AuthSecurityBootstrap;
+export type AuthSecuritySummary = AuthSecurityBootstrap["summary"];
 export type WorkspaceDomainValue = WorkspaceDomain;
 
 export type MailSummary = {
@@ -198,6 +246,41 @@ export async function loadWorkspacePublications(): Promise<WorkspacePublicationL
   return coreResponse(coreApi.workspaces[":workspaceId"].publications.$get({ param: { workspaceId: currentWorkspaceId() } }), workspacePublicationListSchema);
 }
 
+export async function loadAuthSecuritySummary(workspaceId = currentWorkspaceId()): Promise<AuthSecuritySummary> {
+  return (await coreResponse(coreApi.workspaces[":workspaceId"].auth["security-bootstrap"].$get({ param: { workspaceId } }), authSecurityBootstrapSchema)).summary;
+}
+
+export async function loadAuthSessionsSummary(workspaceId = currentWorkspaceId()): Promise<AuthSecurityBootstrap["sessions"]> {
+  return (await coreResponse(coreApi.workspaces[":workspaceId"].auth["security-bootstrap"].$get({ param: { workspaceId } }), authSecurityBootstrapSchema)).sessions;
+}
+
+export async function saveAuthPolicy(policy: AuthSecuritySummary["policy"], workspaceId = currentWorkspaceId()): Promise<AuthSecuritySummary["policy"]> {
+  const result = await coreResponse(
+    coreApi.workspaces[":workspaceId"].auth.policy.$put({
+      param: { workspaceId },
+      json: { workspaceId, registrationMode: policy.registrationMode, requireEmailVerification: policy.requireEmailVerification, allowPasskeyRegistration: policy.allowPasskeyRegistration, allowPasskeySignin: policy.allowPasskeySignin },
+    }),
+    { parse: (value) => z.object({ policy: authPolicySchema }).parse(value) },
+  );
+  return result.policy;
+}
+
+export async function saveAuthMethod(method: AuthSecuritySummary["methods"][number], workspaceId = currentWorkspaceId()): Promise<AuthSecuritySummary["methods"][number]> {
+  const result = await coreResponse(
+    coreApi.workspaces[":workspaceId"].auth.methods[":methodId"].$put({
+      param: { workspaceId, methodId: method.id },
+      json: { workspaceId, type: method.type, providerId: method.providerId, title: method.title, status: method.status, publicVisible: method.publicVisible, displayOrder: method.displayOrder },
+    }),
+    { parse: (value) => z.object({ method: authMethodSchema }).parse(value) },
+  );
+  return result.method;
+}
+
+export async function loadAuthUiContributions(workspaceId = currentWorkspaceId()): Promise<import("@v2/auth-contracts").AuthUiContribution[]> {
+  const result = await coreResponse(coreApi.workspaces[":workspaceId"].auth["ui-contributions"].$get({ param: { workspaceId } }), { parse: (value) => z.object({ contributions: z.array(authUiContributionSchema) }).parse(value) });
+  return result.contributions;
+}
+
 export async function createWorkspacePublication(input: { pluginId: string; contributionKind: "route" | "surface" | "tool"; contributionId: string; publicPath?: string; title?: string; access?: "anonymous" | "authenticated" }): Promise<WorkspacePublication> {
   return (await coreResponse(coreApi.publications.$post({ json: { workspaceId: currentWorkspaceId(), ...input } }), workspacePublicationEnvelopeSchema)).publication;
 }
@@ -236,23 +319,21 @@ export async function executeRuntimeAction(contributionId: string, actionId: str
   return invokePluginOperation(workspace.currentWorkspace.id, actionId, input, routeParams);
 }
 
-export async function loadPublicRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}, publicWorkspaceId = currentWorkspaceId(), pluginId?: string): Promise<RuntimeResultEnvelope> {
-  if (!pluginId) throw new CoreRequestError(404, "not_found", "Public plugin operations require a plugin identifier.");
+export async function loadPublicRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}, publicWorkspaceId = currentWorkspaceId()): Promise<RuntimeResultEnvelope> {
   return coreResponse(
-    coreApi.workspaces[":workspaceId"].plugins[":pluginId"].operations[":operationId"].$post({
-      param: { workspaceId: publicWorkspaceId, pluginId, operationId: dataSourceId },
-      json: { input: { contributionId, routeParams }, routeParams },
+    coreApi.public[":workspaceId"].runtime.data.$post({
+      param: { workspaceId: publicWorkspaceId },
+      json: { workspaceId: publicWorkspaceId, contributionId, dataSourceId, routeParams, queryParams: {} },
     }),
     runtimeResultEnvelopeSchema,
   );
 }
 
-export async function executePublicRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}, publicWorkspaceId = currentWorkspaceId(), pluginId?: string): Promise<RuntimeResultEnvelope> {
-  if (!pluginId) throw new CoreRequestError(404, "not_found", "Public plugin operations require a plugin identifier.");
+export async function executePublicRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}, publicWorkspaceId = currentWorkspaceId()): Promise<RuntimeResultEnvelope> {
   return coreResponse(
-    coreApi.workspaces[":workspaceId"].plugins[":pluginId"].operations[":operationId"].$post({
-      param: { workspaceId: publicWorkspaceId, pluginId, operationId: actionId },
-      json: { input, routeParams },
+    coreApi.public[":workspaceId"].runtime.actions.$post({
+      param: { workspaceId: publicWorkspaceId },
+      json: { workspaceId: publicWorkspaceId, contributionId, actionId, input, routeParams, approvalId: undefined },
     }),
     runtimeResultEnvelopeSchema,
   );
@@ -343,11 +424,11 @@ export async function executeTool(toolId: string, approvalId?: string): Promise<
 }
 
 export async function decideToolApproval(approvalId: string, decision: "approved" | "denied"): Promise<ToolApproval> {
-  return (await coreResponse(coreApi.toolApprovals.decision.$post({ json: { workspaceId: currentWorkspaceId(), approvalId, decision } }), { parse: (value) => value as { approval: ToolApproval } })).approval;
+  return (await coreResponse(coreApi["tool-approvals"].decision.$post({ json: { workspaceId: currentWorkspaceId(), approvalId, decision } }), { parse: (value) => value as { approval: ToolApproval } })).approval;
 }
 
 export async function loadPendingToolApprovals(): Promise<ToolApproval[]> {
-  return (await coreResponse(coreApi.workspaces[":workspaceId"].toolApprovals.$get({ param: { workspaceId: currentWorkspaceId() } }), { parse: (value) => value as { approvals: ToolApproval[] } })).approvals;
+  return (await coreResponse(coreApi.workspaces[":workspaceId"]["tool-approvals"].$get({ param: { workspaceId: currentWorkspaceId() } }), { parse: (value) => value as { approvals: ToolApproval[] } })).approvals;
 }
 
 export async function approveToolApproval(approvalId: string): Promise<ToolApproval> {
@@ -359,11 +440,11 @@ export async function denyToolApproval(approvalId: string): Promise<ToolApproval
 }
 
 export async function loadPendingApprovalRequests(): Promise<ApprovalRequest[]> {
-  return (await coreResponse(coreApi.workspaces[":workspaceId"].approvalRequests.$get({ param: { workspaceId: currentWorkspaceId() } }), approvalRequestListSchema)).approvals;
+  return (await coreResponse(coreApi.workspaces[":workspaceId"]["approval-requests"].$get({ param: { workspaceId: currentWorkspaceId() } }), approvalRequestListSchema)).approvals;
 }
 
 export async function decideApprovalRequest(approvalId: string, decision: "approved" | "denied"): Promise<ApprovalRequest> {
-  return (await coreResponse(coreApi.approvalRequests[":approvalId"].decision.$post({ param: { approvalId }, json: { workspaceId: currentWorkspaceId(), decision } }), z.object({ approval: approvalRequestSchema }))).approval;
+  return (await coreResponse(coreApi["approval-requests"][":approvalId"].decision.$post({ param: { approvalId }, json: { workspaceId: currentWorkspaceId(), decision } }), z.object({ approval: approvalRequestSchema }))).approval;
 }
 
 export async function loadInstalledPlugins(): Promise<PluginManifest[]> {

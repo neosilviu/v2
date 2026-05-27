@@ -6,7 +6,30 @@ import type { AgentAiApi } from "../server/app";
 const workspaceId = "default";
 const configuredBaseUrl = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_AGENT_AI_API_URL;
 const agentUrl = (configuredBaseUrl ?? "http://localhost:8791").replace(/\/$/, "");
-const agentApi: any = hc<AgentAiApi>(agentUrl, { init: { credentials: "include" } });
+type AgentApiClient = {
+  workspaces: {
+    ":workspaceId": {
+      channels: { $get(args: { param: { workspaceId: string } }): Promise<Response> };
+      providers: { $get(args: { param: { workspaceId: string } }): Promise<Response> };
+    };
+  };
+  "provider-runtime": { connections: { $get(args: { query: { workspaceId: string } }): Promise<Response> } };
+  channels: {
+    ":channelId": {
+      messages: { $get(args: { param: { channelId: string } }): Promise<Response> };
+      "tool-calls": { $get(args: { param: { channelId: string } }): Promise<Response> };
+      provider: { $put(args: { param: { channelId: string }; json: { providerId: string | null } }): Promise<Response> };
+    };
+  };
+  providers: { $post(args: { json: { workspaceId: string; contributionId: string; connectionId: string; title: string; model: string } }): Promise<Response> };
+  messages: { $post(args: { json: { workspaceId: string; channelId: string; content: string } }): Promise<Response> };
+  runs: { $post(args: { json: { workspaceId: string; channelId: string } }): Promise<Response> };
+  "tool-calls": {
+    $post(args: { json: { workspaceId: string; channelId: string; toolId: string; input: unknown; approvalId?: string } }): Promise<Response>;
+    ":toolCallId": { refresh: { $post(args: { param: { toolCallId: string }; json: { workspaceId: string; approvalId?: string } }): Promise<Response> } };
+  };
+};
+const agentApi = hc<AgentAiApi>(agentUrl, { init: { credentials: "include" } }) as unknown as AgentApiClient;
 
 async function read<T>(request: Promise<Response>): Promise<T> {
   const response = await request;

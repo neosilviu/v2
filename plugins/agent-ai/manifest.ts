@@ -42,6 +42,41 @@ export const agentAiManifest = definePlugin({
           additionalProperties: false,
         },
       },
+      {
+        id: "agent.executeTool",
+        title: "Execute approved tool",
+        permission: "agent.tools.execute",
+        risk: "sensitive",
+        input: {
+          type: "object",
+          properties: {
+            workspaceId: { type: "string" },
+            channelId: { type: "string" },
+            toolId: { type: "string" },
+            input: { type: "unknown" },
+          },
+          required: ["channelId", "toolId"],
+          additionalProperties: false,
+        },
+        output: { type: "object", properties: { toolCall: { type: "unknown" } }, required: ["toolCall"], additionalProperties: false },
+      },
+      {
+        id: "agent.searchHelp",
+        title: "Search help knowledge",
+        permission: "agent.knowledge.query",
+        risk: "safe",
+        input: {
+          type: "object",
+          properties: {
+            workspaceId: { type: "string" },
+            query: { type: "string" },
+            limit: { type: "number", integer: true },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+        output: { type: "object", properties: { results: { type: "array", items: { type: "unknown" } } }, required: ["results"], additionalProperties: false },
+      },
     ],
   },
   contributes: {

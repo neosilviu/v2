@@ -1,11 +1,27 @@
 import { hc } from "hono/client";
-import { authPolicySchema, authPublicLoginConfigSchema, type AuthMethod, type AuthPolicy, type AuthPublicLoginConfig, type AuthUiContribution, ownerSetupSignupRequestSchema } from "@v2/auth-contracts";
+import { authPublicLoginConfigSchema, ownerSetupSignupRequestSchema, type AuthPublicLoginConfig } from "@v2/auth-contracts";
 import { errorResponseSchema } from "@v2/rpc-contracts";
-import { currentWorkspaceId } from "./api";
 import { authUrl } from "./auth-client";
-import { authSecurityBootstrapSchema, authSecuritySummarySchema } from "./platform-contracts";
 
-export const authApi: any = hc(authUrl, { init: { credentials: "include" } });
+type HonoRequestArgs = {
+  param?: Record<string, string>;
+  query?: Record<string, unknown>;
+  json?: unknown;
+  body?: BodyInit | null;
+  headers?: HeadersInit;
+};
+type HonoRoute = {
+  $get(args?: HonoRequestArgs): Promise<Response>;
+  $post(args?: HonoRequestArgs): Promise<Response>;
+  $put(args?: HonoRequestArgs): Promise<Response>;
+  $delete(args?: HonoRequestArgs): Promise<Response>;
+};
+type AuthApiClient = {
+  public: { auth: { "login-config": HonoRoute } };
+  api: { auth: { "update-user": { $post(args?: HonoRequestArgs): Promise<Response> }; "sign-in": { email: { $post(args?: HonoRequestArgs): Promise<Response> } }; "sign-out": { $post(args?: HonoRequestArgs): Promise<Response> } } };
+  setup: { owner: { "sign-up": { email: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
+};
+export const authApi = hc(authUrl, { init: { credentials: "include" } }) as unknown as AuthApiClient;
 const loginConfigCache = new Map<string, Promise<AuthPublicLoginConfig>>();
 
 export class AuthRequestError extends Error {
@@ -47,36 +63,6 @@ export async function loadLoginConfig(workspaceId = "default"): Promise<AuthPubl
     }));
   }
   return loginConfigCache.get(key)!;
-}
-
-export type AuthSecuritySummary = {
-  policy: AuthPolicy;
-  methods: AuthMethod[];
-  publishedLoginContributions: number;
-  serverSideAvailability: { password: boolean; passkey: boolean; github: boolean };
-  emailDelivery: { verification: boolean; passwordReset: boolean; status: string };
-  bootstrapAdmin: boolean;
-};
-
-export async function loadAuthSecuritySummary(workspaceId = currentWorkspaceId()): Promise<AuthSecuritySummary> {
-  return (await authResponse(authApi.workspaces[":workspaceId"].auth["security-bootstrap"].$get({ param: { workspaceId } }), authSecurityBootstrapSchema)).summary;
-}
-
-export async function loadAuthSessionsSummary(workspaceId = currentWorkspaceId()): Promise<{ sessions: number; passkeys: number }> {
-  return (await authResponse(authApi.workspaces[":workspaceId"].auth["security-bootstrap"].$get({ param: { workspaceId } }), authSecurityBootstrapSchema)).sessions;
-}
-
-export async function saveAuthPolicy(policy: AuthPolicy, workspaceId = currentWorkspaceId()): Promise<AuthPolicy> {
-  const result = await authResponse(authApi.workspaces[":workspaceId"].auth.policy.$put({ param: { workspaceId }, json: { workspaceId, registrationMode: policy.registrationMode, requireEmailVerification: policy.requireEmailVerification, allowPasskeyRegistration: policy.allowPasskeyRegistration, allowPasskeySignin: policy.allowPasskeySignin } }), { parse: (value) => value as { policy: AuthPolicy } });
-  return authPolicySchema.parse(result.policy);
-}
-
-export async function saveAuthMethod(method: AuthMethod, workspaceId = currentWorkspaceId()): Promise<AuthMethod> {
-  return (await authResponse(authApi.workspaces[":workspaceId"].auth.methods[":methodId"].$put({ param: { workspaceId, methodId: method.id }, json: { workspaceId, type: method.type, providerId: method.providerId, title: method.title, status: method.status, publicVisible: method.publicVisible, displayOrder: method.displayOrder } }), { parse: (value) => value as { method: AuthMethod } })).method;
-}
-
-export async function loadAuthUiContributions(workspaceId = currentWorkspaceId()): Promise<AuthUiContribution[]> {
-  return (await authResponse(authApi.workspaces[":workspaceId"].auth["ui-contributions"].$get({ param: { workspaceId } }), { parse: (value) => value as { contributions: AuthUiContribution[] } })).contributions;
 }
 
 export async function updateAuthProfile(input: { name: string }): Promise<void> {

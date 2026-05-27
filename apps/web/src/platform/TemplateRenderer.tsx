@@ -148,7 +148,7 @@ export function TemplateRenderer(props: TemplateRendererProps) {
     setStatus("Loading data...");
     void Promise.all(dataSources.map(async (dataSource) => {
       const result = props.runtime?.public
-        ? await loadPublicRuntimeData(contributionId, dataSource.id, routeParams, props.runtime.workspaceId, props.runtime.pluginId)
+        ? await loadPublicRuntimeData(contributionId, dataSource.id, routeParams, props.runtime.workspaceId)
         : await loadRuntimeData(contributionId, dataSource.id, routeParams);
       return { id: dataSource.id, result };
     })).then((results) => {
@@ -174,7 +174,7 @@ export function TemplateRenderer(props: TemplateRendererProps) {
     setStatus("Running action...");
     try {
       const result = props.runtime?.public
-        ? await executePublicRuntimeAction(contributionId, action.id, input, routeParams, props.runtime.workspaceId, props.runtime.pluginId)
+        ? await executePublicRuntimeAction(contributionId, action.id, input, routeParams, props.runtime.workspaceId)
         : await executeRuntimeAction(contributionId, action.id, input, routeParams);
       setStatus(result.status === "ok" ? "Action completed" : result.approvalId ? `Approval required: ${result.approvalId.slice(0, 8)}` : result.error ?? result.status);
     } catch (error) {

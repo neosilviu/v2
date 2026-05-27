@@ -33,6 +33,14 @@ app.post("/runtime/execute", async (c) => {
   const repo = repository(c.env);
   if (!repo) return c.json(unavailable("Provider connection storage is not configured."), 503);
   if (operationId === "providers.listConnections") return c.json({ connections: await repo.list(typeof body?.workspaceId === "string" ? body.workspaceId : "default") });
+  if (operationId === "providers.addWorkersAiConnection") {
+    const payload = createWorkersAiConnectionSchema.parse({
+      workspaceId: body?.workspaceId,
+      title: typeof input.title === "string" ? input.title : "",
+      modelId: typeof input.modelId === "string" ? input.modelId : undefined,
+    });
+    return c.json({ connection: await repo.createWorkersAi(payload.workspaceId, payload.title, payload.modelId, Boolean(c.env.AI)) }, 201);
+  }
   const connectionId = typeof input.connectionId === "string" ? input.connectionId : "";
   if (!connectionId) return c.json(errorResponse(failure("validation_failed", "connectionId is required.")), 400);
   const result = await resolved(c.env, connectionId);

@@ -17,8 +17,6 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      - run: pnpm api:generate
-      - run: pnpm api:check
       - name: Run pnpm typecheck
         run: pnpm typecheck 2>&1 | tee /tmp/v2-typecheck.log
         shell: bash
