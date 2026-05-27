@@ -2,6 +2,7 @@ import type { ActionDefinition, DeclarativePageContribution, FieldDefinition, Sl
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { useEffect, useState, type FormEvent, type ReactElement } from "react";
 import { executePublicRuntimeAction, executeRuntimeAction, loadPublicRuntimeData, loadRuntimeData } from "../api";
+import { CrudRenderer } from "./CrudRenderer";
 
 export type TemplateCallbacks = {
   onAction?: (action: ActionDefinition) => void | Promise<void>;
@@ -97,6 +98,7 @@ function PublicContentPage({ page }: TemplateRendererProps) {
 
 const registry: Record<TemplateId, (props: TemplateRendererProps) => ReactElement> = {
   "admin.dashboard": AdminTable,
+  "admin.crud": AdminTable,
   "admin.table": AdminTable,
   "admin.detail": AdminForm,
   "admin.form": AdminForm,
@@ -127,12 +129,14 @@ function isNativePlatformSettingsPanel(contributionId: string): boolean {
 export function TemplateRenderer(props: TemplateRendererProps) {
   const [runtimeData, setRuntimeData] = useState<unknown>(props.data ?? props.page.data);
   const [status, setStatus] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const contributionId = props.runtime?.contributionId ?? props.page.id;
   const routeParams = props.runtime?.routeParams ?? {};
   const routeParamsKey = JSON.stringify(routeParams);
   const nativePlatformPanel = isNativePlatformSettingsPanel(contributionId);
   const dataSources = nativePlatformPanel ? [] : props.runtime?.public ? props.page.dataSources : props.page.dataSources.filter((dataSource) => dataSource.access !== "public-candidate");
   const dataSourceKey = dataSources.map((dataSource) => dataSource.id).join("|");
+  const isCrudPage = Boolean(props.page.crud);
 
   useEffect(() => {
     let alive = true;
@@ -160,7 +164,7 @@ export function TemplateRenderer(props: TemplateRendererProps) {
       if (alive) setStatus(error instanceof Error ? error.message : "Runtime data unavailable");
     });
     return () => { alive = false; };
-  }, [contributionId, dataSourceKey, props.data, props.page, props.runtime?.public, props.runtime?.workspaceId, routeParamsKey]);
+  }, [contributionId, dataSourceKey, props.data, props.page, props.runtime?.public, props.runtime?.workspaceId, routeParamsKey, refreshNonce]);
 
   const dispatchAction = async (action: ActionDefinition, input?: unknown) => {
     if (props.callbacks?.onAction && input === undefined) {
@@ -179,6 +183,39 @@ export function TemplateRenderer(props: TemplateRendererProps) {
   };
 
   if (nativePlatformPanel) return null;
+  const crud = props.page.crud;
+  if (isCrudPage && crud) {
+    const rows = rowsFrom(runtimeData ?? props.page.data);
+    const crudAction = (id: string) => {
+      const action = props.page.actions.find((candidate) => candidate.id === id);
+      if (!action) throw new Error(`CRUD action ${id} is not declared on ${props.page.id}.`);
+      return action;
+    };
+    return <div className="template-runtime">
+      {status ? <p className="message">{status}</p> : null}
+      <CrudRenderer
+        title={props.page.title}
+        status={status ?? undefined}
+        rows={rows.map((row) => row && typeof row === "object" ? row as Record<string, unknown> : {})}
+        columns={props.page.columns}
+        fields={props.page.fields}
+        crud={crud}
+        onRefresh={() => setRefreshNonce((value) => value + 1)}
+        onCreate={async (values) => {
+          await dispatchAction(crudAction(crud.createActionId), values);
+          setRefreshNonce((value) => value + 1);
+        }}
+        onUpdate={async (row, values) => {
+          await dispatchAction(crudAction(crud.updateActionId), { ...values, [crud.rowIdField]: row[crud.rowIdField] });
+          setRefreshNonce((value) => value + 1);
+        }}
+        onDelete={async (row) => {
+          await dispatchAction(crudAction(crud.deleteActionId), { [crud.rowIdField]: row[crud.rowIdField] });
+          setRefreshNonce((value) => value + 1);
+        }}
+      />
+    </div>;
+  }
   const Template = registry[props.page.templateId];
   return <div className="template-runtime">
     {status ? <p className="message">{status}</p> : null}

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const templateIdSchema = z.enum([
   "admin.dashboard",
+  "admin.crud",
   "admin.table",
   "admin.detail",
   "admin.form",
@@ -58,6 +59,17 @@ export const columnDefinitionSchema = z.object({
   sortable: z.boolean().default(false),
 });
 
+export const crudDefinitionSchema = z.object({
+  entityLabel: z.string().min(1),
+  entityLabelPlural: z.string().min(1),
+  rowIdField: operationIdSchema.default("id"),
+  rowTitleField: operationIdSchema.optional(),
+  listEmptyMessage: z.string().min(1).optional(),
+  createActionId: operationIdSchema,
+  updateActionId: operationIdSchema,
+  deleteActionId: operationIdSchema,
+});
+
 export const safeRichTextBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string(), tone: z.enum(["default", "muted", "accent"]).default("default") }),
   z.object({ type: z.literal("heading"), text: z.string(), level: z.enum(["h1", "h2", "h3"]).default("h2") }),
@@ -77,6 +89,7 @@ export const declarativePageContributionSchema = z.object({
   title: z.string().min(1),
   templateId: templateIdSchema,
   access: accessModeSchema.default("private"),
+  crud: crudDefinitionSchema.optional(),
   dataSources: z.array(dataSourceDefinitionSchema).default([]),
   actions: z.array(actionDefinitionSchema).default([]),
   fields: z.array(fieldDefinitionSchema).default([]),
@@ -109,7 +122,7 @@ export const settingsPanelContributionSchema = z.object({
   id: operationIdSchema,
   pluginId: operationIdSchema,
   tabId: operationIdSchema,
-  templateId: z.enum(["admin.settings", "admin.table", "admin.form", "admin.dashboard"]),
+  templateId: z.enum(["admin.settings", "admin.crud", "admin.table", "admin.form", "admin.dashboard"]),
   schema: declarativePageContributionSchema,
   dataSources: z.array(dataSourceDefinitionSchema).default([]),
   actions: z.array(actionDefinitionSchema).default([]),
@@ -152,6 +165,7 @@ export type DataSourceDefinition = z.output<typeof dataSourceDefinitionSchema>;
 export type ActionDefinition = z.output<typeof actionDefinitionSchema>;
 export type FieldDefinition = z.output<typeof fieldDefinitionSchema>;
 export type ColumnDefinition = z.output<typeof columnDefinitionSchema>;
+export type CrudDefinition = z.output<typeof crudDefinitionSchema>;
 export type SlotContribution = z.output<typeof slotContributionSchema>;
 export type DeclarativePageContribution = z.output<typeof declarativePageContributionSchema>;
 export type PublicRouteContribution = z.output<typeof publicRouteContributionSchema>;
