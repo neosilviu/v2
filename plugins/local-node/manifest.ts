@@ -1,5 +1,7 @@
 import { definePlugin } from "@v2/plugin-sdk";
 
+const noInput = { type: "object" as const, properties: {}, required: [], additionalProperties: false };
+
 export const localNodeManifest = definePlugin({
   id: "local-node",
   name: "Local Node",
@@ -11,6 +13,14 @@ export const localNodeManifest = definePlugin({
     { id: "localnode.configure", description: "Configure runner endpoint and pairing metadata", risk: "sensitive" },
     { id: "localnode.execute", description: "Execute approved local runner commands", risk: "dangerous" }
   ],
+  api: {
+    version: 1,
+    operations: [
+      { id: "localnode.health", title: "Check Local Node health", permission: "localnode.read", risk: "safe", input: noInput, output: { type: "unknown" } },
+      { id: "localnode.saveConfig", title: "Save Local Node runner config", permission: "localnode.configure", risk: "sensitive", input: { type: "object", properties: { runnerBaseUrl: { type: "string", minLength: 1 }, mockMode: { type: "boolean" } }, required: ["runnerBaseUrl"], additionalProperties: false }, output: { type: "unknown" } },
+      { id: "localnode.executeCommand", title: "Execute Local Node command", permission: "localnode.execute", risk: "dangerous", input: { type: "object", properties: { commandId: { type: "string", minLength: 1 }, arguments: { type: "unknown" } }, required: ["commandId"], additionalProperties: false }, output: { type: "unknown" } }
+    ]
+  },
   contributes: {
     settingsTabs: [{
       id: "local-node.settings",
