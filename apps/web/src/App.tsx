@@ -408,7 +408,7 @@ export function App() {
         {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} workspace={workspace} permissions={permissions} onOpenPlugins={() => setActivePage("plugins")} onOpenSettings={() => openPage("settings", "/settings")} /> : null}
         {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} permissions={permissions} onChanged={() => void refreshPlugins()} /></div> : null}
         {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
-        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} workspace={workspace} permissions={permissions} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
+        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} workspace={workspace} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
         {activePage === "profile" ? <ProfilePage session={session} workspaces={workspaces} currentWorkspace={workspace} onSessionChanged={setSession} onOpenSecurity={openSecuritySettings} emit={emit} /> : null}
         {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
       </main>
@@ -447,7 +447,7 @@ function OwnerSetupPage() {
     try {
       setStatus("Activating workspace owner...");
       const result = await consumeOwnerSetup(token);
-      setStatus("Owner activated. Opening workspace...");
+      setStatus("Owner activated. Opening Security administration...");
       window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(result.workspaceId)}`);
     } catch (error) {
       setStatus(ownerSetupErrorMessage(error, "Owner setup could not be consumed by the current session."));
@@ -469,7 +469,7 @@ function OwnerSetupPage() {
     try {
       setStatus("Creating owner account...");
       await ownerSetupSignUp({ token, email: setup.ownerEmail, name: name.trim() || setup.ownerEmail, password });
-      setStatus("Owner account created. Opening workspace...");
+      setStatus("Owner account created. Opening Security administration...");
       window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(setup.workspaceId)}`);
     } catch (error) {
       setStatus(ownerSetupErrorMessage(error, "Owner account could not be created. If the account already exists, sign in below and activate the setup link."));
@@ -488,7 +488,7 @@ function OwnerSetupPage() {
       const nextSession = await loadCoreSession();
       setSession(nextSession);
       await consumeOwnerSetup(token);
-      setStatus("Owner activated. Opening workspace...");
+      setStatus("Owner activated. Opening Security administration...");
       window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(setup.workspaceId)}`);
     } catch (error) {
       setStatus(ownerSetupErrorMessage(error, "Existing owner account could not activate this setup link."));

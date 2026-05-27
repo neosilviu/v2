@@ -145,6 +145,10 @@ async function resolvePluginOperation(operationId: string): Promise<{ pluginId: 
   return null;
 }
 
+function isPlatformSettingsOperation(operationId: string) {
+  return operationId.startsWith("platform.settings.");
+}
+
 async function invokePluginOperation(workspaceId: string, operationId: string, input?: unknown, routeParams: Record<string, string> = {}, queryParams: Record<string, string | string[]> = {}) {
   const resolved = await resolvePluginOperation(operationId);
   if (!resolved) throw new CoreRequestError(404, "not_found", `Plugin operation ${operationId} is not available.`);
@@ -234,7 +238,8 @@ export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> 
 }
 
 export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> {
-  return (await loadShellBootstrap()).settingsNavigation.pluginTabs;
+  const bootstrap = await loadShellBootstrap();
+  return bootstrap.settingsNavigation.tabs.map((item) => item.tab);
 }
 
 export async function reorderSettingsTabs(tabIds: string[]): Promise<void> {
@@ -243,7 +248,10 @@ export async function reorderSettingsTabs(tabIds: string[]): Promise<void> {
 }
 
 export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTabResolution> {
-  return coreResponse(coreApi.workspaces[":workspaceId"].settings.tabs[":tabId"].$get({ param: { workspaceId: currentWorkspaceId(), tabId } }), runtimeSettingsTabResolutionSchema);
+  const bootstrap = await loadShellBootstrap();
+  const resolution = bootstrap.settingsNavigation.tabs.find((item) => item.tab.id === tabId);
+  if (!resolution) throw new CoreRequestError(404, "not_found", `Settings tab ${tabId} is not available.`);
+  return runtimeSettingsTabResolutionSchema.parse(resolution);
 }
 
 export async function loadWorkspacePublications(): Promise<WorkspacePublicationList> {
@@ -310,6 +318,9 @@ export async function loadPublicPage(pathname: string): Promise<{ page: Declarat
 }
 
 export async function loadRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> {
+  if (isPlatformSettingsOperation(dataSourceId)) {
+    return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.data.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, dataSourceId, routeParams, queryParams: {} } }), runtimeResultEnvelopeSchema);
+  }
   const workspace = await loadShellBootstrap();
   const plugin = workspace.plugins.find((candidate) => candidate.api.operations.some((operation) => operation.id === dataSourceId || operation.id === contributionId));
   if (!plugin) throw new CoreRequestError(404, "not_found", `No plugin declares the ${dataSourceId} operation.`);
@@ -317,6 +328,9 @@ export async function loadRuntimeData(contributionId: string, dataSourceId: stri
 }
 
 export async function executeRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> {
+  if (isPlatformSettingsOperation(actionId)) {
+    return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, actionId, input, routeParams, approvalId: undefined } }), runtimeResultEnvelopeSchema);
+  }
   const workspace = await loadShellBootstrap();
   const plugin = workspace.plugins.find((candidate) => candidate.api.operations.some((operation) => operation.id === actionId));
   if (!plugin) throw new CoreRequestError(404, "not_found", `No plugin declares the ${actionId} operation.`);

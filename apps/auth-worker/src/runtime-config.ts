@@ -37,6 +37,20 @@ type AuthPolicyRow = {
   created_at: string;
   updated_at: string;
 };
+type ImpersonationSessionRow = {
+  id: string;
+  actor_user_id: string;
+  actor_session_id: string;
+  subject_user_id: string;
+  workspace_id: string;
+  reason: string;
+  status: "pending" | "active" | "revoked" | "expired" | "ended";
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  ended_at: string | null;
+  root_session_id: string | null;
+};
 
 export type RuntimeAuthProviderState = {
   github: boolean;
@@ -228,6 +242,48 @@ export class AuthRuntimeRepository {
     const sessionCount = await this.db.prepare("SELECT COUNT(*) AS count FROM session").first<{ count: number }>().catch(() => ({ count: 0 }));
     const passkeyCount = await this.db.prepare("SELECT COUNT(*) AS count FROM passkey").first<{ count: number }>().catch(() => ({ count: 0 }));
     return { sessions: sessionCount?.count ?? 0, passkeys: passkeyCount?.count ?? 0 };
+  }
+
+  async listImpersonationSessions(workspaceId?: string | null) {
+    const rows = await this.db.prepare(`SELECT id, actor_user_id, actor_session_id, subject_user_id, workspace_id, reason, status, created_at, expires_at, revoked_at, ended_at, root_session_id
+      FROM impersonation_sessions
+      WHERE workspace_id = ? OR ? IS NULL
+      ORDER BY created_at DESC`)
+      .bind(workspaceId ?? null, workspaceId ?? null)
+      .all<ImpersonationSessionRow>();
+    return rows.results.map((row) => ({
+      id: row.id,
+      actorUserId: row.actor_user_id,
+      actorSessionId: row.actor_session_id,
+      subjectUserId: row.subject_user_id,
+      workspaceId: row.workspace_id,
+      reason: row.reason,
+      status: row.status,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      revokedAt: row.revoked_at,
+      endedAt: row.ended_at,
+      rootSessionId: row.root_session_id,
+    }));
+  }
+
+  async startImpersonation(input: { actorUserId: string; actorSessionId: string; subjectUserId: string; workspaceId: string; reason: string; sessionId: string; expiresAt: string }) {
+    const id = crypto.randomUUID();
+    await this.db.prepare(`INSERT INTO impersonation_sessions
+      (id, actor_user_id, actor_session_id, subject_user_id, workspace_id, reason, status, created_at, expires_at, root_session_id)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, ?, ?)`)
+      .bind(id, input.actorUserId, input.actorSessionId, input.subjectUserId, input.workspaceId, input.reason, input.expiresAt, input.sessionId)
+      .run();
+    return { id, expiresAt: input.expiresAt, rootSessionId: input.sessionId };
+  }
+
+  async stopImpersonation(sessionId: string, actorUserId?: string) {
+    const row = await this.db.prepare("SELECT id, status FROM impersonation_sessions WHERE id = ? LIMIT 1").bind(sessionId).first<{ id: string; status: ImpersonationSessionRow["status"] }>();
+    if (!row || row.status === "revoked" || row.status === "ended") return null;
+    await this.db.batch([
+      this.db.prepare("UPDATE impersonation_sessions SET status = 'ended', ended_at = CURRENT_TIMESTAMP WHERE id = ?").bind(sessionId),
+    ]);
+    return this.listImpersonationSessions(null);
   }
 
   async upsertMethod(input: unknown) {

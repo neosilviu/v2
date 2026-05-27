@@ -94,14 +94,14 @@ test.describe("platform shell", () => {
 
     await page.goto(`/settings?workspace=${encodeURIComponent(workspaceId)}&tab=platform.settings.general`);
     await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
-    await page.getByLabel("Business name").fill("E2E Business");
+    await page.getByLabel("Workspace name").fill("E2E Business");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("General settings saved")).toBeVisible();
 
-    for (const tab of ["Domains", "Mail Delivery", "Marketplace / Plugins", "Interface"]) {
-      await page.getByRole("button", { name: tab }).click();
-      const heading = tab === "Marketplace / Plugins" ? "Plugin Manager" : tab === "Interface" ? "Zones & placements" : tab;
-      await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    for (const tab of ["Domains", "Mail Provider", "Plugins", "Interface"]) {
+      await page.locator(".settings-tabs").getByRole("button", { name: tab }).click();
+      const heading = tab;
+      await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible();
     }
 
     expect(failures).toEqual([]);

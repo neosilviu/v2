@@ -1,7 +1,7 @@
 import { declarativeUiSchema, pluginManifestSchema, type PluginBundle, type PluginManifest, type PublicContributionAccess, type PublicRouteContribution, type PublicSurfaceContribution, type PublicToolContribution, type SurfaceContribution } from "@v2/plugin-contracts";
 import type { MailDeliveryResult, MailMessageRequest, MailProviderConfigure, MailProviderPublicSummary, MailTemplate } from "@v2/mail-contracts";
 import type { SettingScope, WorkspaceLayout } from "@v2/rpc-contracts";
-import { declarativePageContributionSchema, publicRoutePatternSchema, settingsPanelContributionSchema, settingsTabContributionSchema, type AccessMode, type DeclarativePageContribution, type SettingsPanelContribution, type SettingsTabContribution } from "@v2/ui-schema";
+import { actionDefinitionSchema, columnDefinitionSchema, declarativePageContributionSchema, fieldDefinitionSchema, publicRoutePatternSchema, settingsPanelContributionSchema, settingsSectionSchema, settingsTabContributionSchema, type AccessMode, type DeclarativePageContribution, type SettingsPanelContribution, type SettingsSection, type SettingsTabContribution } from "@v2/ui-schema";
 import type { CoreEnv } from "./env";
 
 export type PluginWorkspaceState = {
@@ -99,6 +99,38 @@ export type WorkspacePublicationRecord = WorkspacePublication & {
   publishedAt: string | null;
   updatedAt: string;
 };
+export type WorkspaceRoleRecord = {
+  id: string;
+  name: string;
+  systemKey: string | null;
+  description: string | null;
+  permissions: string[];
+};
+export type WorkspaceMemberRecord = {
+  user: { id: string; email: string | null };
+  status: "active" | "invited" | "disabled";
+  roles: Array<{ id: string; name: string; systemKey: string | null }>;
+  permissions: WorkspacePermission[];
+  overrides: Array<{ permission: WorkspacePermission; effect: "allow" | "deny" }>;
+};
+export type PlanRecord = {
+  id: string;
+  name: string;
+  status: "active" | "draft" | "disabled";
+  limits: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+export type UserPlanAssignmentRecord = {
+  id: string;
+  userId: string;
+  planId: string;
+  status: "active" | "scheduled" | "expired" | "disabled";
+  startsAt: string | null;
+  endsAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 export type PublicDelivery = {
   publication: WorkspacePublication;
   manifest?: PluginManifest | undefined;
@@ -159,12 +191,13 @@ type MailProviderRow = {
   updated_at: string;
 };
 export const workspacePermissions = [
-  "workspace.read", "workspace.admin", "workspace.members.manage", "workspace.settings.read", "workspace.settings.write",
+  "workspace.read", "workspace.admin", "workspace.members.manage", "workspace.settings.read", "workspace.settings.write", "workspace.impersonate",
   "auth.read", "auth.admin", "auth.method.publish", "auth.policy.write", "auth.ui.publish", "auth.session.read",
   "domains.read", "domains.write", "domains.verify",
   "mail.read", "mail.configure", "mail.test", "mail.template.write",
   "marketplace.read", "marketplace.publish", "plugin.install", "plugin.activate", "plugin.update", "plugin.uninstall", "plugin.grantCapability",
   "approval.read", "tool.approve", "audit.read", "layout.read", "layout.write", "publication.read", "publication.publish",
+  "plan.read", "plan.write",
   "agent.read", "agent.use", "provider.read", "provider.configure",
   "localnode.read", "localnode.configure", "localnode.execute", "production.read", "production.execute", "production.approve",
 ] as const;
@@ -437,16 +470,37 @@ export class CoreRepository {
     return rows.results.map((row) => row.permission);
   }
 
+  async memberPermissionOverrides(workspaceId: string, userId: string) {
+    const rows = await this.db.prepare("SELECT permission, effect FROM workspace_member_permission_overrides WHERE workspace_id = ? AND user_id = ? ORDER BY permission")
+      .bind(workspaceId, userId)
+      .all<{ permission: WorkspacePermission; effect: "allow" | "deny" }>();
+    return rows.results;
+  }
+
+  async effectivePermissionsForUser(workspaceId: string, userId: string): Promise<WorkspacePermission[]> {
+    const permissions = new Set(await this.permissionsForUser(workspaceId, userId));
+    const overrides = await this.memberPermissionOverrides(workspaceId, userId);
+    for (const override of overrides) {
+      if (override.effect === "deny") permissions.delete(override.permission);
+      else permissions.add(override.permission);
+    }
+    return [...permissions].sort();
+  }
+
   async hasPermission(workspaceId: string, user: { id: string; email: string } | null, permission: WorkspacePermission): Promise<boolean> {
     if (!user) return false;
-    const permissions = await this.permissionsForUser(workspaceId, user.id);
+    const overrides = await this.memberPermissionOverrides(workspaceId, user.id);
+    if (overrides.some((override) => override.permission === permission && override.effect === "deny")) return false;
+    const permissions = await this.effectivePermissionsForUser(workspaceId, user.id);
     return permissions.includes(permission) || permissions.includes("workspace.admin");
   }
 
   async hasAllPermissions(workspaceId: string, user: { id: string; email: string } | null, permissions: WorkspacePermission[]): Promise<boolean> {
     if (!permissions.length) return await this.hasPermission(workspaceId, user, "workspace.read");
     if (!user) return false;
-    const granted = new Set(await this.permissionsForUser(workspaceId, user.id));
+    const overrides = await this.memberPermissionOverrides(workspaceId, user.id);
+    if (permissions.some((permission) => overrides.some((override) => override.permission === permission && override.effect === "deny"))) return false;
+    const granted = new Set(await this.effectivePermissionsForUser(workspaceId, user.id));
     if (granted.has("workspace.admin")) return true;
     return permissions.every((permission) => granted.has(permission));
   }
@@ -460,7 +514,7 @@ export class CoreRepository {
       ORDER BY roles.name`)
       .bind(workspaceId, user.id)
       .all<{ name: string; system_key: string | null }>();
-    return { user: { id: user.id, email: user.email }, roles: rows.results, permissions: await this.permissionsForUser(workspaceId, user.id), bootstrap: false };
+    return { user: { id: user.id, email: user.email }, roles: rows.results, permissions: await this.effectivePermissionsForUser(workspaceId, user.id), bootstrap: false };
   }
 
   async workspaceMembers(workspaceId: string) {
@@ -482,6 +536,161 @@ export class CoreRepository {
       member.permissions = await this.permissionsForUser(workspaceId, member.user.id);
     }
     return Array.from(members.values());
+  }
+
+  async workspaceMemberRecords(workspaceId: string): Promise<WorkspaceMemberRecord[]> {
+    const rows = await this.db.prepare(`SELECT members.user_id, members.email, members.status, roles.id AS role_id, roles.name, roles.system_key
+      FROM workspace_members members
+      LEFT JOIN workspace_member_roles member_roles ON member_roles.workspace_id = members.workspace_id AND member_roles.user_id = members.user_id
+      LEFT JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
+      WHERE members.workspace_id = ?
+      ORDER BY members.updated_at DESC, members.email, roles.name`)
+      .bind(workspaceId)
+      .all<{ user_id: string; email: string | null; status: "active" | "invited" | "disabled"; role_id: string | null; name: string | null; system_key: string | null }>();
+    const members = new Map<string, WorkspaceMemberRecord>();
+    for (const row of rows.results) {
+      const current = members.get(row.user_id) ?? { user: { id: row.user_id, email: row.email }, status: row.status, roles: [], permissions: [], overrides: [] };
+      if (row.role_id && row.name) current.roles.push({ id: row.role_id, name: row.name, systemKey: row.system_key });
+      members.set(row.user_id, current);
+    }
+    for (const member of members.values()) {
+      member.permissions = await this.effectivePermissionsForUser(workspaceId, member.user.id);
+      member.overrides = await this.memberPermissionOverrides(workspaceId, member.user.id);
+    }
+    return Array.from(members.values());
+  }
+
+  async workspaceRoles(workspaceId: string): Promise<WorkspaceRoleRecord[]> {
+    const rows = await this.db.prepare(`SELECT roles.id, roles.name, roles.system_key, roles.description
+      FROM workspace_roles roles
+      WHERE roles.workspace_id = ?
+      ORDER BY roles.system_key IS NULL, roles.name`)
+      .bind(workspaceId)
+      .all<{ id: string; name: string; system_key: string | null; description: string | null }>();
+    const result: WorkspaceRoleRecord[] = [];
+    for (const role of rows.results) {
+      result.push({ id: role.id, name: role.name, systemKey: role.system_key, description: role.description, permissions: await this.rolePermissionsFor(workspaceId, role.id) });
+    }
+    return result;
+  }
+
+  async createWorkspaceRole(workspaceId: string, input: { name: string; description?: string | null }, actorId?: string) {
+    const id = `${workspaceId}:${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || crypto.randomUUID()}`;
+    await this.ensureWorkspaceRbac(workspaceId);
+    await this.db.prepare(`INSERT INTO workspace_roles (id, workspace_id, name, system_key, description, updated_at)
+      VALUES (?, ?, ?, NULL, ?, CURRENT_TIMESTAMP)`)
+      .bind(id, workspaceId, input.name.trim(), input.description ?? null)
+      .run();
+    await this.audit(workspaceId, "rbac.role.create", { roleId: id, name: input.name }, actorId);
+    return { id, name: input.name.trim(), systemKey: null, description: input.description ?? null, permissions: [] as string[] };
+  }
+
+  async updateWorkspaceRole(workspaceId: string, roleId: string, input: { name?: string; description?: string | null }, actorId?: string) {
+    const current = await this.db.prepare("SELECT id, name, system_key, description FROM workspace_roles WHERE workspace_id = ? AND id = ? LIMIT 1").bind(workspaceId, roleId).first<{ id: string; name: string; system_key: string | null; description: string | null }>();
+    if (!current) return null;
+    if (current.system_key) return { ...current, permissions: await this.rolePermissionsFor(workspaceId, roleId) };
+    await this.db.prepare("UPDATE workspace_roles SET name = COALESCE(?, name), description = COALESCE(?, description), updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND id = ?")
+      .bind(input.name ?? null, input.description ?? null, workspaceId, roleId)
+      .run();
+    const updated = await this.db.prepare("SELECT id, name, system_key, description FROM workspace_roles WHERE workspace_id = ? AND id = ? LIMIT 1").bind(workspaceId, roleId).first<{ id: string; name: string; system_key: string | null; description: string | null }>();
+    if (!updated) return null;
+    await this.audit(workspaceId, "rbac.role.update", { roleId, name: updated.name }, actorId);
+    return { ...updated, permissions: await this.rolePermissionsFor(workspaceId, roleId) };
+  }
+
+  async deleteWorkspaceRole(workspaceId: string, roleId: string, actorId?: string) {
+    const current = await this.db.prepare("SELECT system_key FROM workspace_roles WHERE workspace_id = ? AND id = ? LIMIT 1").bind(workspaceId, roleId).first<{ system_key: string | null }>();
+    if (!current || current.system_key) return false;
+    await this.db.batch([
+      this.db.prepare("DELETE FROM workspace_member_roles WHERE workspace_id = ? AND role_id = ?").bind(workspaceId, roleId),
+      this.db.prepare("DELETE FROM workspace_role_permissions WHERE workspace_id = ? AND role_id = ?").bind(workspaceId, roleId),
+      this.db.prepare("DELETE FROM workspace_roles WHERE workspace_id = ? AND id = ?").bind(workspaceId, roleId),
+    ]);
+    await this.audit(workspaceId, "rbac.role.delete", { roleId }, actorId);
+    return true;
+  }
+
+  async setWorkspaceMemberRoles(workspaceId: string, userId: string, roleIds: string[], actorId?: string) {
+    await this.ensureWorkspaceRbac(workspaceId);
+    await this.db.batch([
+      this.db.prepare("DELETE FROM workspace_member_roles WHERE workspace_id = ? AND user_id = ?").bind(workspaceId, userId),
+      ...roleIds.map((roleId) => this.db.prepare("INSERT OR IGNORE INTO workspace_member_roles (workspace_id, user_id, role_id) VALUES (?, ?, ?)").bind(workspaceId, userId, roleId)),
+    ]);
+    await this.audit(workspaceId, "rbac.member.roles.assign", { userId, roleIds }, actorId);
+    return this.workspaceMemberRecords(workspaceId);
+  }
+
+  async setMemberPermissionOverride(workspaceId: string, userId: string, permission: WorkspacePermission, effect: "allow" | "deny", actorId?: string) {
+    await this.ensureWorkspaceRbac(workspaceId);
+    await this.db.prepare(`INSERT INTO workspace_member_permission_overrides (workspace_id, user_id, permission, effect, created_at, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(workspace_id, user_id, permission) DO UPDATE SET effect = excluded.effect, updated_at = CURRENT_TIMESTAMP`)
+      .bind(workspaceId, userId, permission, effect)
+      .run();
+    await this.audit(workspaceId, "rbac.member.override", { userId, permission, effect }, actorId);
+    return this.workspaceMemberRecords(workspaceId);
+  }
+
+  async removeMemberPermissionOverride(workspaceId: string, userId: string, permission: WorkspacePermission, actorId?: string) {
+    await this.db.prepare("DELETE FROM workspace_member_permission_overrides WHERE workspace_id = ? AND user_id = ? AND permission = ?").bind(workspaceId, userId, permission).run();
+    await this.audit(workspaceId, "rbac.member.override.remove", { userId, permission }, actorId);
+    return this.workspaceMemberRecords(workspaceId);
+  }
+
+  async plans(): Promise<PlanRecord[]> {
+    const rows = await this.db.prepare("SELECT id, name, status, limits_json, created_at, updated_at FROM plans ORDER BY name").all<{ id: string; name: string; status: PlanRecord["status"]; limits_json: string; created_at: string; updated_at: string }>();
+    return rows.results.map((row) => ({ id: row.id, name: row.name, status: row.status, limits: JSON.parse(row.limits_json || "{}") as Record<string, unknown>, createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
+  async upsertPlan(input: { id: string; name: string; status: PlanRecord["status"]; limits: Record<string, unknown> }, actorId?: string) {
+    await this.db.prepare(`INSERT INTO plans (id, name, status, limits_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, status = excluded.status, limits_json = excluded.limits_json, updated_at = CURRENT_TIMESTAMP`)
+      .bind(input.id, input.name, input.status, JSON.stringify(input.limits))
+      .run();
+    await this.audit(null, "plan.upsert", { planId: input.id, status: input.status }, actorId);
+    return this.plan(input.id);
+  }
+
+  async deletePlan(planId: string, actorId?: string) {
+    await this.db.prepare("DELETE FROM user_plan_assignments WHERE plan_id = ?").bind(planId).run();
+    await this.db.prepare("DELETE FROM plans WHERE id = ?").bind(planId).run();
+    await this.audit(null, "plan.delete", { planId }, actorId);
+    return true;
+  }
+
+  async plan(planId: string): Promise<PlanRecord | null> {
+    const row = await this.db.prepare("SELECT id, name, status, limits_json, created_at, updated_at FROM plans WHERE id = ? LIMIT 1").bind(planId).first<{ id: string; name: string; status: PlanRecord["status"]; limits_json: string; created_at: string; updated_at: string }>();
+    if (!row) return null;
+    return { id: row.id, name: row.name, status: row.status, limits: JSON.parse(row.limits_json || "{}") as Record<string, unknown>, createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  async userPlanAssignments(): Promise<UserPlanAssignmentRecord[]> {
+    const rows = await this.db.prepare("SELECT id, user_id, plan_id, status, starts_at, ends_at, created_at, updated_at FROM user_plan_assignments ORDER BY created_at DESC").all<{ id: string; user_id: string; plan_id: string; status: UserPlanAssignmentRecord["status"]; starts_at: string | null; ends_at: string | null; created_at: string; updated_at: string }>();
+    return rows.results.map((row) => ({ id: row.id, userId: row.user_id, planId: row.plan_id, status: row.status, startsAt: row.starts_at, endsAt: row.ends_at, createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
+  async upsertUserPlanAssignment(input: { id?: string; userId: string; planId: string; status: UserPlanAssignmentRecord["status"]; startsAt?: string | null; endsAt?: string | null }, actorId?: string) {
+    const id = input.id ?? crypto.randomUUID();
+    await this.db.prepare(`INSERT INTO user_plan_assignments (id, user_id, plan_id, status, starts_at, ends_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET user_id = excluded.user_id, plan_id = excluded.plan_id, status = excluded.status, starts_at = excluded.starts_at, ends_at = excluded.ends_at, updated_at = CURRENT_TIMESTAMP`)
+      .bind(id, input.userId, input.planId, input.status, input.startsAt ?? null, input.endsAt ?? null)
+      .run();
+    await this.audit(null, "plan.assignment.upsert", { assignmentId: id, userId: input.userId, planId: input.planId, status: input.status }, actorId);
+    return this.userPlanAssignment(id);
+  }
+
+  async deleteUserPlanAssignment(id: string, actorId?: string) {
+    await this.db.prepare("DELETE FROM user_plan_assignments WHERE id = ?").bind(id).run();
+    await this.audit(null, "plan.assignment.delete", { assignmentId: id }, actorId);
+    return true;
+  }
+
+  async userPlanAssignment(id: string): Promise<UserPlanAssignmentRecord | null> {
+    const row = await this.db.prepare("SELECT id, user_id, plan_id, status, starts_at, ends_at, created_at, updated_at FROM user_plan_assignments WHERE id = ? LIMIT 1").bind(id).first<{ id: string; user_id: string; plan_id: string; status: UserPlanAssignmentRecord["status"]; starts_at: string | null; ends_at: string | null; created_at: string; updated_at: string }>();
+    if (!row) return null;
+    return { id: row.id, userId: row.user_id, planId: row.plan_id, status: row.status, startsAt: row.starts_at, endsAt: row.ends_at, createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
   async accessibleWorkspaces(user: { id: string; email: string } | null): Promise<AccessibleWorkspace[]> {
@@ -632,22 +841,307 @@ export class CoreRepository {
   }
 
   private platformSettingsTabs(): SettingsTabResolution[] {
+    const field = (value: Parameters<typeof fieldDefinitionSchema.parse>[0]) => fieldDefinitionSchema.parse(value);
+    const column = (value: Parameters<typeof columnDefinitionSchema.parse>[0]) => columnDefinitionSchema.parse(value);
+    const action = (value: Parameters<typeof actionDefinitionSchema.parse>[0]) => actionDefinitionSchema.parse(value);
+    const section = (value: Parameters<typeof settingsSectionSchema.parse>[0]) => settingsSectionSchema.parse(value);
+    const sectionsByTab = {
+      general: [
+        section({
+          id: "general.workspace",
+          title: "Workspace settings",
+          description: "Workspace name, language, timezone, currency and branding.",
+          kind: "form",
+          dataSourceId: "platform.settings.general.read",
+          fields: [
+            field({ id: "workspaceName", label: "Workspace name", type: "text", required: true }),
+            field({ id: "language", label: "Language", type: "text" }),
+            field({ id: "timezone", label: "Timezone", type: "text" }),
+            field({ id: "defaultCurrency", label: "Default currency", type: "text" }),
+            field({ id: "brandingName", label: "Brand name", type: "text" }),
+            field({ id: "brandColor", label: "Brand color", type: "color" }),
+            field({ id: "contactEmailPublic", label: "Public contact email", type: "email" }),
+            field({ id: "contactPhonePublic", label: "Public contact phone", type: "text" }),
+          ],
+          actions: [action({ id: "platform.settings.general.save", title: "Save", commandId: "platform.settings.general.save", intent: "submit", variant: "primary", placement: "form", access: "permission-gated", requiredPermission: "workspace.settings.write", effects: [{ type: "toast", message: "General settings saved" }, { type: "refresh" }] })],
+        }),
+      ],
+      mail: [
+        section({
+          id: "mail.provider",
+          title: "Mail provider",
+          description: "Transactional provider configuration and verification.",
+          kind: "form",
+          dataSourceId: "platform.settings.mail.summary",
+          fields: [
+            field({ id: "kind", label: "Provider kind", type: "select", required: true, options: [{ value: "transactional-http", label: "Transactional HTTP" }, { value: "smtp", label: "SMTP" }, { value: "mock-development-only", label: "Mock development only" }] }),
+            field({ id: "label", label: "Label", type: "text", required: true }),
+            field({ id: "fromName", label: "From name", type: "text", required: true }),
+            field({ id: "fromEmail", label: "From email", type: "email", required: true }),
+            field({ id: "replyToEmail", label: "Reply-to email", type: "email" }),
+            field({ id: "configurationRef", label: "Secret reference", type: "text" }),
+          ],
+          actions: [action({ id: "platform.settings.mail.provider.save", title: "Save provider", commandId: "platform.settings.mail.provider.save", intent: "submit", variant: "primary", placement: "form", access: "permission-gated", requiredPermission: "mail.configure" })],
+        }),
+        section({
+          id: "mail.providers",
+          title: "Providers",
+          kind: "table",
+          dataSourceId: "platform.settings.mail.providers",
+          columns: [
+            column({ id: "label", label: "Label", field: "label", type: "text" }),
+            column({ id: "kind", label: "Kind", field: "kind", type: "text" }),
+            column({ id: "status", label: "Status", field: "status", type: "badge" }),
+            column({ id: "fromEmail", label: "From email", field: "fromEmail", type: "text" }),
+          ],
+          rowActions: [
+            action({ id: "platform.settings.mail.provider.activate", title: "Activate", commandId: "platform.settings.mail.provider.activate", variant: "primary", placement: "row", access: "permission-gated", requiredPermission: "mail.configure" }),
+            action({ id: "platform.settings.mail.provider.test", title: "Test", commandId: "platform.settings.mail.provider.test", placement: "row", access: "permission-gated", requiredPermission: "mail.test", confirmation: { title: "Send test mail", message: "This will send a test message to the provided address.", reasonRequired: false, fields: [field({ id: "to", label: "Recipient email", type: "email", required: true })] } }),
+            action({ id: "platform.settings.mail.provider.disable", title: "Disable", commandId: "platform.settings.mail.provider.disable", variant: "danger", placement: "row", access: "permission-gated", requiredPermission: "mail.configure", confirmation: { title: "Disable provider", reasonRequired: false, fields: [] } }),
+          ],
+        }),
+        section({
+          id: "mail.templates",
+          title: "Templates",
+          kind: "table",
+          dataSourceId: "platform.settings.mail.templates",
+          columns: [
+            column({ id: "templateKey", label: "Template", field: "templateKey", type: "text" }),
+            column({ id: "status", label: "Status", field: "status", type: "badge" }),
+            column({ id: "locale", label: "Locale", field: "locale", type: "text" }),
+            column({ id: "subjectTemplate", label: "Subject", field: "subjectTemplate", type: "text" }),
+          ],
+        }),
+        section({
+          id: "mail.events",
+          title: "Delivery events",
+          kind: "table",
+          dataSourceId: "platform.settings.mail.events",
+          columns: [
+            column({ id: "purpose", label: "Purpose", field: "purpose", type: "text" }),
+            column({ id: "status", label: "Status", field: "status", type: "badge" }),
+            column({ id: "templateKey", label: "Template", field: "templateKey", type: "text" }),
+            column({ id: "errorSafe", label: "Result", field: "errorSafe", type: "text" }),
+          ],
+        }),
+      ],
+      security: [
+        section({
+          id: "security.authentication",
+          title: "Authentication",
+          description: "Passkeys, email/password and registration policy.",
+          kind: "form",
+          dataSourceId: "platform.settings.security.bootstrap",
+          fields: [
+            field({ id: "registrationMode", label: "Registration policy", type: "select", required: true, options: [{ value: "disabled", label: "Disabled" }, { value: "open", label: "Open" }, { value: "invitation-only", label: "Invitation only" }, { value: "admin-created", label: "Admin created" }] }),
+            field({ id: "requireEmailVerification", label: "Require email verification", type: "boolean" }),
+            field({ id: "allowPasskeyRegistration", label: "Allow passkey registration", type: "boolean" }),
+            field({ id: "allowPasskeySignin", label: "Allow passkey sign-in", type: "boolean" }),
+          ],
+          actions: [action({ id: "platform.settings.security.policy.save", title: "Save policy", commandId: "platform.settings.security.policy.save", intent: "submit", variant: "primary", placement: "form", access: "permission-gated", requiredPermission: "auth.admin" })],
+        }),
+        section({
+          id: "security.roles",
+          title: "Roles & permissions",
+          kind: "crud",
+          dataSourceId: "platform.settings.rbac.roles",
+          columns: [
+            column({ id: "name", label: "Role", field: "name", type: "text" }),
+            column({ id: "systemKey", label: "System", field: "systemKey", type: "text" }),
+            column({ id: "description", label: "Description", field: "description", type: "text" }),
+            column({ id: "permissions", label: "Permissions", field: "permissions", type: "text" }),
+          ],
+          fields: [
+            field({ id: "name", label: "Name", type: "text", required: true }),
+            field({ id: "description", label: "Description", type: "textarea" }),
+          ],
+          crud: {
+            entityLabel: "Role",
+            entityLabelPlural: "Roles",
+            rowIdField: "id",
+            rowTitleField: "name",
+            createActionId: "platform.settings.rbac.role.create",
+            updateActionId: "platform.settings.rbac.role.update",
+            deleteActionId: "platform.settings.rbac.role.delete",
+          },
+        }),
+        section({
+          id: "security.members",
+          title: "Users & overrides",
+          kind: "table",
+          dataSourceId: "platform.settings.rbac.members",
+          columns: [
+            column({ id: "user", label: "User", field: "user", type: "text" }),
+            column({ id: "status", label: "Status", field: "status", type: "badge" }),
+            column({ id: "roles", label: "Roles", field: "roles", type: "text" }),
+            column({ id: "permissions", label: "Permissions", field: "permissions", type: "text" }),
+            column({ id: "overrides", label: "Overrides", field: "overrides", type: "text" }),
+          ],
+          rowActions: [
+            action({ id: "platform.settings.rbac.member.impersonate", title: "Impersonate", commandId: "platform.settings.rbac.member.impersonate", variant: "primary", placement: "row", access: "permission-gated", requiredPermission: "workspace.impersonate", confirmation: { title: "Impersonate user", message: "You will switch into the selected user session.", reasonRequired: true, fields: [field({ id: "reason", label: "Reason", type: "textarea", required: true })] } }),
+            action({ id: "platform.settings.rbac.member.override.allow", title: "Allow", commandId: "platform.settings.rbac.member.override.allow", placement: "row", access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Allow permission", reasonRequired: false, fields: [field({ id: "permission", label: "Permission", type: "text", required: true })] } }),
+            action({ id: "platform.settings.rbac.member.override.deny", title: "Deny", commandId: "platform.settings.rbac.member.override.deny", variant: "danger", placement: "row", access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Deny permission", reasonRequired: false, fields: [field({ id: "permission", label: "Permission", type: "text", required: true })] } }),
+            action({ id: "platform.settings.rbac.member.override.remove", title: "Remove override", commandId: "platform.settings.rbac.member.override.remove", placement: "row", access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Remove override", reasonRequired: false, fields: [field({ id: "permission", label: "Permission", type: "text", required: true })] } }),
+          ],
+        }),
+      ],
+      audit: [
+        section({
+          id: "audit.events",
+          title: "Audit log",
+          description: "Read-only workspace activity stream.",
+          kind: "table",
+          dataSourceId: "platform.settings.audit.events",
+          columns: [
+            column({ id: "actorId", label: "Actor", field: "actorId", type: "text" }),
+            column({ id: "action", label: "Action", field: "action", type: "text" }),
+            column({ id: "payload", label: "Target / result", field: "payload", type: "text" }),
+            column({ id: "createdAt", label: "Time", field: "createdAt", type: "date" }),
+          ],
+        }),
+      ],
+      plans: [
+        section({
+          id: "plans.catalog",
+          title: "Plans",
+          kind: "crud",
+          dataSourceId: "platform.settings.plans.list",
+          columns: [
+            column({ id: "id", label: "Plan ID", field: "id", type: "text" }),
+            column({ id: "name", label: "Name", field: "name", type: "text" }),
+            column({ id: "status", label: "Status", field: "status", type: "badge" }),
+            column({ id: "limits", label: "Limits", field: "limits", type: "text" }),
+          ],
+          fields: [
+            field({ id: "id", label: "Plan ID", type: "text", required: true }),
+            field({ id: "name", label: "Name", type: "text", required: true }),
+            field({ id: "status", label: "Status", type: "select", required: true, options: [{ value: "active", label: "Active" }, { value: "draft", label: "Draft" }, { value: "disabled", label: "Disabled" }] }),
+            field({ id: "limits", label: "Limits JSON", type: "textarea", required: true }),
+          ],
+          crud: {
+            entityLabel: "Plan",
+            entityLabelPlural: "Plans",
+            rowIdField: "id",
+            rowTitleField: "name",
+            createActionId: "platform.settings.plans.upsert",
+            updateActionId: "platform.settings.plans.upsert",
+            deleteActionId: "platform.settings.plans.delete",
+          },
+        }),
+        section({
+          id: "plans.assignments",
+          title: "User plan assignments",
+          kind: "crud",
+          dataSourceId: "platform.settings.plans.assignments",
+          columns: [
+            column({ id: "userId", label: "User", field: "userId", type: "text" }),
+            column({ id: "planId", label: "Plan", field: "planId", type: "text" }),
+            column({ id: "status", label: "Status", field: "status", type: "badge" }),
+            column({ id: "startsAt", label: "Starts", field: "startsAt", type: "date" }),
+            column({ id: "endsAt", label: "Ends", field: "endsAt", type: "date" }),
+          ],
+          fields: [
+            field({ id: "userId", label: "User ID", type: "text", required: true }),
+            field({ id: "planId", label: "Plan ID", type: "text", required: true }),
+            field({ id: "status", label: "Status", type: "select", required: true, options: [{ value: "active", label: "Active" }, { value: "scheduled", label: "Scheduled" }, { value: "expired", label: "Expired" }, { value: "disabled", label: "Disabled" }] }),
+            field({ id: "startsAt", label: "Starts at", type: "date" }),
+            field({ id: "endsAt", label: "Ends at", type: "date" }),
+          ],
+          crud: {
+            entityLabel: "Assignment",
+            entityLabelPlural: "Assignments",
+            rowIdField: "id",
+            rowTitleField: "planId",
+            createActionId: "platform.settings.plans.assignment.upsert",
+            updateActionId: "platform.settings.plans.assignment.upsert",
+            deleteActionId: "platform.settings.plans.assignment.delete",
+          },
+        }),
+      ],
+      domains: [
+        section({
+          id: "domains.manage",
+          title: "Domains",
+          kind: "crud",
+          dataSourceId: "platform.settings.domains.list",
+          columns: [
+            column({ id: "hostname", label: "Hostname", field: "hostname", type: "text" }),
+            column({ id: "kind", label: "Kind", field: "kind", type: "text" }),
+            column({ id: "status", label: "Status", field: "status", type: "badge" }),
+            column({ id: "verificationMethod", label: "Verification", field: "verificationMethod", type: "text" }),
+            column({ id: "publicationId", label: "Publication", field: "publicationId", type: "text" }),
+          ],
+          fields: [
+            field({ id: "hostname", label: "Hostname", type: "text", required: true }),
+            field({ id: "kind", label: "Kind", type: "select", required: true, options: [{ value: "admin", label: "Admin" }, { value: "auth", label: "Auth" }, { value: "website", label: "Website" }, { value: "storefront", label: "Storefront" }, { value: "public-chat", label: "Public chat" }, { value: "mail", label: "Mail sender" }] }),
+            field({ id: "verificationMethod", label: "Verification method", type: "select", required: true, options: [{ value: "manual", label: "Manual" }, { value: "dns-txt", label: "DNS TXT" }, { value: "dns-cname", label: "DNS CNAME" }] }),
+            field({ id: "isPrimary", label: "Primary domain", type: "boolean" }),
+          ],
+          crud: {
+            entityLabel: "Domain",
+            entityLabelPlural: "Domains",
+            rowIdField: "id",
+            rowTitleField: "hostname",
+            createActionId: "platform.settings.domains.create",
+            updateActionId: "platform.settings.domains.create",
+            deleteActionId: "platform.settings.domains.delete",
+          },
+          rowActions: [
+            action({ id: "platform.settings.domains.verify", title: "Verify", commandId: "platform.settings.domains.verify", placement: "row", access: "permission-gated", requiredPermission: "domains.verify" }),
+            action({ id: "platform.settings.domains.activate", title: "Activate", commandId: "platform.settings.domains.activate", placement: "row", access: "permission-gated", requiredPermission: "domains.write" }),
+            action({ id: "platform.settings.domains.disable", title: "Disable", commandId: "platform.settings.domains.disable", variant: "danger", placement: "row", access: "permission-gated", requiredPermission: "domains.write" }),
+          ],
+        }),
+      ],
+      plugins: [
+        section({
+          id: "plugins.installed",
+          title: "Installed plugins",
+          kind: "table",
+          dataSourceId: "platform.settings.plugins.list",
+          columns: [
+            column({ id: "id", label: "Plugin", field: "id", type: "text" }),
+            column({ id: "version", label: "Version", field: "version", type: "text" }),
+            column({ id: "active", label: "Active", field: "active", type: "badge" }),
+            column({ id: "workerIsolation", label: "Runtime", field: "workerIsolation", type: "text" }),
+          ],
+          rowActions: [
+            action({ id: "platform.settings.plugins.activate", title: "Activate", commandId: "platform.settings.plugins.activate", placement: "row", access: "permission-gated", requiredPermission: "plugin.activate" }),
+            action({ id: "platform.settings.plugins.deactivate", title: "Deactivate", commandId: "platform.settings.plugins.deactivate", variant: "danger", placement: "row", access: "permission-gated", requiredPermission: "plugin.activate" }),
+          ],
+        }),
+      ],
+      interface: [
+        section({
+          id: "interface.shell",
+          title: "Shell layout",
+          description: "Workspace chrome, zones and placements.",
+          kind: "summary",
+          dataSourceId: "platform.settings.interface.layout",
+          actions: [
+            action({
+              id: "platform.settings.interface.save",
+              title: "Save layout",
+              commandId: "platform.settings.interface.save",
+              intent: "submit",
+              variant: "primary",
+              placement: "form",
+              access: "permission-gated",
+              requiredPermission: "layout.write",
+            }),
+          ],
+        }),
+      ],
+    } satisfies Record<string, SettingsSection[]>;
     const specs = [
-      { id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read" as const, templateId: "admin.form" as const, dataSourceId: "platform.settings.general.read", actionId: "platform.settings.general.save", fields: [
-        { id: "workspaceName", label: "Workspace name", type: "text" as const, required: true },
-        { id: "businessDisplayName", label: "Business display name", type: "text" as const },
-        { id: "locale", label: "Locale", type: "text" as const },
-        { id: "timezone", label: "Timezone", type: "text" as const },
-        { id: "currency", label: "Currency", type: "text" as const },
-        { id: "contactEmailPublic", label: "Public contact email", type: "email" as const },
-        { id: "contactPhonePublic", label: "Public contact phone", type: "text" as const },
-        { id: "communicationLanguage", label: "Default communication language", type: "text" as const },
-      ], slots: [{ id: "general.status", slot: "header", blocks: [{ type: "text" as const, text: "Workspace metadata, regional defaults, sender status and service health are managed here.", tone: "muted" as const }] }] },
-      { id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.admin" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "security.summary", slot: "header", blocks: [{ type: "text" as const, text: "Auth methods, registration policy, passkeys, sessions and approvals are protected Auth/Core administration controls.", tone: "muted" as const }] }] },
-      { id: "platform.settings.domains", label: "Domains", icon: "globe", order: 30, permission: "domains.read" as const, templateId: "admin.table" as const, dataSourceId: "platform.settings.domains.list", fields: [], slots: [{ id: "domains.boundary", slot: "header", blocks: [{ type: "text" as const, text: "Only verified active domains may become public delivery or Auth trust candidates.", tone: "muted" as const }] }] },
-      { id: "platform.settings.mail", label: "Mail Delivery", icon: "mail", order: 35, permission: "mail.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "mail.boundary", slot: "header", blocks: [{ type: "text" as const, text: "Transactional owner setup, invitations, verification and reset messages use Core-owned mail providers.", tone: "muted" as const }] }] },
-      { id: "platform.settings.marketplace", label: "Marketplace", icon: "package", order: 40, permission: "marketplace.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "marketplace.lifecycle", slot: "header", blocks: [{ type: "text" as const, text: "Catalog releases, package uploads, installs and persistent approvals live in this platform tab.", tone: "muted" as const }] }] },
-      { id: "platform.settings.interface", label: "Interface", icon: "layout", order: 50, permission: "layout.read" as const, templateId: "admin.settings" as const, fields: [], slots: [{ id: "interface.runtime", slot: "header", blocks: [{ type: "text" as const, text: "Shell zones, placements and theme tokens are runtime configuration, not plugin-specific Web code.", tone: "muted" as const }] }] },
+      { id: "platform.settings.general", label: "General Settings", icon: "settings", order: 10, permission: "workspace.settings.read" as const, sections: sectionsByTab.general },
+      { id: "platform.settings.mail", label: "Mail Provider", icon: "mail", order: 20, permission: "mail.read" as const, sections: sectionsByTab.mail },
+      { id: "platform.settings.security", label: "Security", icon: "shield", order: 30, permission: "auth.read" as const, sections: sectionsByTab.security },
+      { id: "platform.settings.audit", label: "Audit", icon: "history" as const, order: 40, permission: "audit.read" as const, sections: sectionsByTab.audit },
+      { id: "platform.settings.plans", label: "Plans & Limits", icon: "badge-dollar-sign" as const, order: 50, permission: "plan.read" as const, sections: sectionsByTab.plans },
+      { id: "platform.settings.domains", label: "Domains", icon: "globe", order: 60, permission: "domains.read" as const, sections: sectionsByTab.domains },
+      { id: "platform.settings.plugins", label: "Plugins", icon: "package", order: 70, permission: "marketplace.read" as const, sections: sectionsByTab.plugins },
+      { id: "platform.settings.interface", label: "Interface", icon: "layout", order: 80, permission: "layout.read" as const, sections: sectionsByTab.interface },
     ];
     return specs.map((spec) => {
       const panelId = `${spec.id}.panel`;
@@ -655,15 +1149,12 @@ export class CoreRepository {
       const schema = declarativePageContributionSchema.parse({
         id: panelId,
         title: spec.label,
-        templateId: spec.templateId,
+        templateId: "admin.settings",
         access: "private",
-        fields: spec.fields,
-        slots: spec.slots,
-        dataSources: spec.dataSourceId ? [{ id: spec.dataSourceId, title: spec.label, kind: "resource", resource: spec.dataSourceId, access: "permission-gated" }] : [],
-        actions: spec.actionId ? [{ id: spec.actionId, title: "Save", commandId: spec.actionId, intent: "submit", variant: "primary", access: "permission-gated" }] : [],
-        data: { workspaceName: "Default Workspace", locale: "ro-RO", timezone: "Europe/Bucharest", currency: "RON" },
+        slots: [{ id: `${spec.id}.header`, slot: "header", blocks: [{ type: "text", text: `${spec.label} is rendered from schema-driven settings sections.`, tone: "muted" }] }],
+        data: {},
       });
-      const panel = settingsPanelContributionSchema.parse({ id: panelId, pluginId: "platform", tabId: spec.id, templateId: spec.templateId, schema, requiredPermission: spec.permission });
+      const panel = settingsPanelContributionSchema.parse({ id: panelId, pluginId: "platform", tabId: spec.id, templateId: "admin.settings", schema, sections: spec.sections, requiredPermission: spec.permission });
       return { tab: { ...tab, ownerName: "Platform", orderIndex: spec.order }, panel };
     });
   }
@@ -1256,7 +1747,25 @@ export class CoreRepository {
       LIMIT 1`)
       .bind(workspaceId, contributionId)
       .first<{ plugin_id: string; contribution_id: string; schema_json: string; required_permission: string | null }>();
-    return row ? { workspaceId, pluginId: row.plugin_id, contributionId: row.contribution_id, page: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)), requiredPermission: row.required_permission } : undefined;
+    if (!row) return undefined;
+    const raw = JSON.parse(row.schema_json) as unknown;
+    const panel = settingsPanelContributionSchema.safeParse(raw);
+    if (panel.success) {
+      const settingsPage = declarativePageContributionSchema.parse({
+        id: panel.data.schema.id,
+        title: panel.data.schema.title,
+        templateId: panel.data.templateId,
+        access: panel.data.schema.access,
+        dataSources: panel.data.sections.flatMap((section) => section.dataSourceId ? [{ id: section.dataSourceId, title: section.title, kind: "static", resource: section.dataSourceId, access: "private" as const }] : []),
+        actions: panel.data.sections.flatMap((section) => section.actions),
+        fields: [],
+        columns: [],
+        slots: panel.data.schema.slots,
+        data: { ...panel.data.schema.data, settingsPanel: panel.data, settingsSections: panel.data.sections },
+      });
+      return { workspaceId, pluginId: row.plugin_id, contributionId: row.contribution_id, page: settingsPage, requiredPermission: row.required_permission };
+    }
+    return { workspaceId, pluginId: row.plugin_id, contributionId: row.contribution_id, page: declarativePageContributionSchema.parse(raw), requiredPermission: row.required_permission };
   }
 
   async settingsTabs(workspaceId: string): Promise<Array<SettingsTabResolution["tab"]>> {
@@ -1386,24 +1895,30 @@ export class CoreRepository {
     const settings = await this.listSettings(workspaceId, "platform");
     return {
       workspaceName: settings.workspaceName ?? workspace?.name ?? "Default Workspace",
+      language: settings.language ?? settings.communicationLanguage ?? "ro-RO",
       businessDisplayName: settings.businessDisplayName ?? "",
       locale: settings.locale ?? "ro-RO",
       timezone: settings.timezone ?? "Europe/Bucharest",
       currency: settings.currency ?? "RON",
+      defaultCurrency: settings.defaultCurrency ?? settings.currency ?? "RON",
+      brandingName: settings.brandingName ?? "",
+      brandColor: settings.brandColor ?? "#1f2937",
       contactEmailPublic: settings.contactEmailPublic ?? "",
       contactPhonePublic: settings.contactPhonePublic ?? "",
-      communicationLanguage: settings.communicationLanguage ?? "ro-RO",
+      communicationLanguage: settings.communicationLanguage ?? settings.language ?? "ro-RO",
       emailDeliveryStatus: (await this.activeMailProvider(workspaceId)) ? "configured" : "unavailable",
       serviceHealth: { core: "ok", auth: "external", marketplace: "ok" },
     };
   }
 
   async saveGeneralSettings(workspaceId: string, input: Record<string, unknown>, actorId?: string) {
-    const allowed = ["workspaceName", "businessDisplayName", "locale", "timezone", "currency", "contactEmailPublic", "contactPhonePublic", "communicationLanguage"];
+    const allowed = ["workspaceName", "language", "businessDisplayName", "locale", "timezone", "currency", "defaultCurrency", "brandingName", "brandColor", "contactEmailPublic", "contactPhonePublic", "communicationLanguage"];
     await this.ensureWorkspace(workspaceId);
     const statements = allowed.map((key) => this.db.prepare("INSERT INTO workspace_settings (workspace_id, scope, key, value_json, updated_at) VALUES (?, 'platform', ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(workspace_id, scope, key) DO UPDATE SET value_json = excluded.value_json, updated_at = CURRENT_TIMESTAMP")
       .bind(workspaceId, key, JSON.stringify(input[key] ?? "")));
     if (typeof input.workspaceName === "string" && input.workspaceName.trim()) statements.push(this.db.prepare("UPDATE workspaces SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(input.workspaceName.trim(), workspaceId));
+    if (typeof input.language === "string" && input.language.trim()) statements.push(this.db.prepare("INSERT INTO workspace_settings (workspace_id, scope, key, value_json, updated_at) VALUES (?, 'platform', 'communicationLanguage', ?, CURRENT_TIMESTAMP) ON CONFLICT(workspace_id, scope, key) DO UPDATE SET value_json = excluded.value_json, updated_at = CURRENT_TIMESTAMP").bind(workspaceId, JSON.stringify(input.language.trim())));
+    if (typeof input.defaultCurrency === "string" && input.defaultCurrency.trim()) statements.push(this.db.prepare("INSERT INTO workspace_settings (workspace_id, scope, key, value_json, updated_at) VALUES (?, 'platform', 'currency', ?, CURRENT_TIMESTAMP) ON CONFLICT(workspace_id, scope, key) DO UPDATE SET value_json = excluded.value_json, updated_at = CURRENT_TIMESTAMP").bind(workspaceId, JSON.stringify(input.defaultCurrency.trim())));
     await this.db.batch(statements);
     await this.audit(workspaceId, "settings.general.save", { keys: allowed }, actorId);
     return this.generalSettings(workspaceId);
@@ -1470,6 +1985,12 @@ export class CoreRepository {
     const verifiedAt = status === "verified" || status === "active" ? ", verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)" : "";
     await this.db.prepare(`UPDATE workspace_domains SET status = ?, updated_at = CURRENT_TIMESTAMP${verifiedAt} WHERE workspace_id = ? AND id = ?`).bind(status, workspaceId, domainId).run();
     await this.audit(workspaceId, `domain.${status}`, { domainId }, actorId);
+    return this.listDomains(workspaceId);
+  }
+
+  async deleteDomain(workspaceId: string, domainId: string, actorId?: string) {
+    await this.db.prepare("DELETE FROM workspace_domains WHERE workspace_id = ? AND id = ?").bind(workspaceId, domainId).run();
+    await this.audit(workspaceId, "domain.delete", { domainId }, actorId);
     return this.listDomains(workspaceId);
   }
 
@@ -1558,6 +2079,20 @@ export class CoreRepository {
       .bind(providerId, workspaceId, input.kind, input.label, status, input.enabled ? 1 : 0, input.fromName, input.fromEmail, input.replyToEmail ?? null, input.configurationRef ?? null, JSON.stringify(input.safeConfig ?? {}))
       .run();
     await this.audit(workspaceId, "mail.provider.configure", { providerId, kind: input.kind, secretStoredAsRef: Boolean(input.configurationRef) }, actorId);
+    return this.mailSummary(workspaceId);
+  }
+
+  async saveMailProvider(workspaceId: string, input: MailProviderConfigure, actorId?: string) {
+    await this.ensureWorkspace(workspaceId);
+    const activeProvider = await this.activeMailProviderRow(workspaceId);
+    if (!activeProvider) return this.configureMailProvider(workspaceId, input, actorId);
+    const status = input.kind === "mock-development-only" ? "configured" : input.configurationRef ? "configured" : "draft";
+    await this.db.prepare(`UPDATE workspace_mail_providers
+      SET kind = ?, label = ?, status = ?, enabled = ?, from_name = ?, from_email = ?, reply_to_email = ?, configuration_ref = ?, safe_config_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE workspace_id = ? AND id = ?`)
+      .bind(input.kind, input.label, status, input.enabled ? 1 : 0, input.fromName, input.fromEmail, input.replyToEmail ?? null, input.configurationRef ?? null, JSON.stringify(input.safeConfig ?? {}), workspaceId, activeProvider.id)
+      .run();
+    await this.audit(workspaceId, "mail.provider.save", { providerId: activeProvider.id, kind: input.kind, secretStoredAsRef: Boolean(input.configurationRef) }, actorId);
     return this.mailSummary(workspaceId);
   }
 

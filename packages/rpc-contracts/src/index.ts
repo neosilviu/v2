@@ -73,10 +73,46 @@ export const workspacePublicationUpdateRequestSchema = z.object({
 export const workspaceMemberSchema = z.object({
   user: z.object({ id: z.string(), email: z.string().email().optional(), name: z.string().nullable().optional() }),
   status: z.enum(["active", "invited", "disabled"]),
-  roles: z.array(z.object({ name: z.string(), system_key: z.string().nullable() })),
+  roles: z.array(z.object({ id: z.string(), name: z.string(), systemKey: z.string().nullable() })),
   permissions: z.array(z.string()),
+  overrides: z.array(z.object({ permission: z.string(), effect: z.enum(["allow", "deny"]) })).default([]),
 });
 export const workspaceMemberListSchema = z.object({ members: z.array(workspaceMemberSchema) });
+export const workspaceRoleSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  systemKey: z.string().nullable(),
+  description: z.string().nullable(),
+  permissions: z.array(z.string()),
+});
+export const workspaceRoleListSchema = z.object({ roles: z.array(workspaceRoleSchema) });
+export const workspaceMemberOverrideSchema = z.object({
+  workspaceId: z.string(),
+  userId: z.string(),
+  permission: z.string(),
+  effect: z.enum(["allow", "deny"]),
+});
+export const workspaceMemberOverrideListSchema = z.object({ overrides: z.array(workspaceMemberOverrideSchema) });
+export const workspacePlanSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.enum(["active", "draft", "disabled"]),
+  limits: z.record(z.string(), z.unknown()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export const workspacePlanListSchema = z.object({ plans: z.array(workspacePlanSchema) });
+export const userPlanAssignmentSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  planId: z.string(),
+  status: z.enum(["active", "scheduled", "expired", "disabled"]),
+  startsAt: z.string().nullable(),
+  endsAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export const userPlanAssignmentListSchema = z.object({ assignments: z.array(userPlanAssignmentSchema) });
 export const auditEventSchema = z.object({
   id: z.string().min(1),
   workspaceId: workspaceIdSchema.nullable(),
@@ -134,6 +170,14 @@ export type WorkspacePublicationCreateRequest = z.output<typeof workspacePublica
 export type WorkspacePublicationUpdateRequest = z.output<typeof workspacePublicationUpdateRequestSchema>;
 export type WorkspaceMember = z.output<typeof workspaceMemberSchema>;
 export type WorkspaceMemberList = z.output<typeof workspaceMemberListSchema>;
+export type WorkspaceRole = z.output<typeof workspaceRoleSchema>;
+export type WorkspaceRoleList = z.output<typeof workspaceRoleListSchema>;
+export type WorkspaceMemberOverride = z.output<typeof workspaceMemberOverrideSchema>;
+export type WorkspaceMemberOverrideList = z.output<typeof workspaceMemberOverrideListSchema>;
+export type WorkspacePlan = z.output<typeof workspacePlanSchema>;
+export type WorkspacePlanList = z.output<typeof workspacePlanListSchema>;
+export type UserPlanAssignment = z.output<typeof userPlanAssignmentSchema>;
+export type UserPlanAssignmentList = z.output<typeof userPlanAssignmentListSchema>;
 export type AuditEvent = z.output<typeof auditEventSchema>;
 export type AuditEventList = z.output<typeof auditEventListSchema>;
 export type ToolExecutionResult = z.output<typeof toolExecutionResultSchema>;

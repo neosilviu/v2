@@ -103,7 +103,7 @@ export const shellBootstrapSchema = z.object({
   active: z.array(z.string()),
   tools: z.array(toolSchema),
   surfaces: z.array(surfaceSchema),
-  settingsNavigation: z.object({ pluginTabs: z.array(runtimeSettingsTabSchema) }),
+  settingsNavigation: z.object({ pluginTabs: z.array(runtimeSettingsTabSchema), tabs: z.array(runtimeSettingsTabResolutionSchema).default([]) }),
   featureAvailability: z.object({
     canReadMarketplace: z.boolean(),
     canInstallPlugins: z.boolean(),

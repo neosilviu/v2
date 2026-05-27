@@ -31,16 +31,6 @@ export const dataSourceDefinitionSchema = z.object({
   access: accessModeSchema.default("private"),
 });
 
-export const actionDefinitionSchema = z.object({
-  id: operationIdSchema,
-  title: z.string().min(1),
-  commandId: operationIdSchema,
-  intent: z.enum(["navigate", "submit", "execute", "approve", "deny"]).default("execute"),
-  variant: z.enum(["default", "primary", "danger"]).default("default"),
-  access: accessModeSchema.default("private"),
-  risk: z.enum(["safe", "reversible", "sensitive", "dangerous"]).default("safe"),
-});
-
 export const fieldDefinitionSchema = z.object({
   id: operationIdSchema,
   label: z.string().min(1),
@@ -49,6 +39,30 @@ export const fieldDefinitionSchema = z.object({
   readOnly: z.boolean().default(false),
   autocomplete: z.string().optional(),
   options: z.array(z.object({ value: z.string(), label: z.string() })).default([]),
+});
+
+export const actionDefinitionSchema = z.object({
+  id: operationIdSchema,
+  title: z.string().min(1),
+  commandId: operationIdSchema,
+  intent: z.enum(["navigate", "submit", "execute", "approve", "deny"]).default("execute"),
+  variant: z.enum(["default", "primary", "danger"]).default("default"),
+  access: accessModeSchema.default("private"),
+  risk: z.enum(["safe", "reversible", "sensitive", "dangerous"]).default("safe"),
+  placement: z.enum(["header", "row", "bulk", "form"]).default("header"),
+  requiredPermission: operationIdSchema.optional(),
+  confirmation: z.object({
+    title: z.string().min(1),
+    message: z.string().min(1).optional(),
+    reasonRequired: z.boolean().default(false),
+    fields: z.array(fieldDefinitionSchema).default([]),
+  }).optional(),
+  effects: z.array(z.discriminatedUnion("type", [
+    z.object({ type: z.literal("refresh") }),
+    z.object({ type: z.literal("toast"), title: z.string().min(1).optional(), message: z.string().min(1).optional() }),
+    z.object({ type: z.literal("navigate"), to: z.string().min(1) }),
+    z.object({ type: z.literal("closeDialog") }),
+  ])).default([]),
 });
 
 export const columnDefinitionSchema = z.object({
@@ -68,6 +82,22 @@ export const crudDefinitionSchema = z.object({
   createActionId: operationIdSchema,
   updateActionId: operationIdSchema,
   deleteActionId: operationIdSchema,
+  rowActions: z.array(actionDefinitionSchema).default([]),
+  bulkActions: z.array(actionDefinitionSchema).default([]),
+});
+
+export const settingsSectionSchema = z.object({
+  id: operationIdSchema,
+  title: z.string().min(1),
+  description: z.string().min(1).optional(),
+  kind: z.enum(["summary", "form", "table", "crud", "actions"]).default("form"),
+  dataSourceId: operationIdSchema.optional(),
+  fields: z.array(fieldDefinitionSchema).default([]),
+  columns: z.array(columnDefinitionSchema).default([]),
+  actions: z.array(actionDefinitionSchema).default([]),
+  rowActions: z.array(actionDefinitionSchema).default([]),
+  bulkActions: z.array(actionDefinitionSchema).default([]),
+  crud: crudDefinitionSchema.optional(),
 });
 
 export const safeRichTextBlockSchema = z.discriminatedUnion("type", [
@@ -126,15 +156,19 @@ export const settingsPanelContributionSchema = z.object({
   schema: declarativePageContributionSchema,
   dataSources: z.array(dataSourceDefinitionSchema).default([]),
   actions: z.array(actionDefinitionSchema).default([]),
+  sections: z.array(settingsSectionSchema).default([]),
   requiredPermission: operationIdSchema.optional(),
 });
 
 export const platformSettingsTabIds = [
   "platform.settings.general",
+  "platform.settings.audit",
   "platform.settings.security",
+  "platform.settings.plans",
   "platform.settings.domains",
-  "platform.settings.marketplace",
+  "platform.settings.plugins",
   "platform.settings.interface",
+  "platform.settings.mail",
 ] as const;
 export const platformSettingsTabIdSchema = z.enum(platformSettingsTabIds);
 export const runtimeDataRequestSchema = z.object({
@@ -172,6 +206,7 @@ export type PublicRouteContribution = z.output<typeof publicRouteContributionSch
 export type PublicRoutePattern = z.output<typeof publicRoutePatternSchema>;
 export type SettingsTabContribution = z.output<typeof settingsTabContributionSchema>;
 export type SettingsPanelContribution = z.output<typeof settingsPanelContributionSchema>;
+export type SettingsSection = z.output<typeof settingsSectionSchema>;
 export type PlatformSettingsTabId = z.output<typeof platformSettingsTabIdSchema>;
 export type RuntimeDataRequest = z.output<typeof runtimeDataRequestSchema>;
 export type RuntimeActionRequest = z.output<typeof runtimeActionRequestSchema>;

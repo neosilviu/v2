@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { deleteCookie, setSignedCookie } from "hono/cookie";
 import { errorResponse, failure } from "@v2/feedback-runtime";
 import { authSignInEmailRequestSchema, authUpdateUserRequestSchema, ownerSetupSignupRequestSchema } from "@v2/auth-contracts";
 import type { AppErrorCode } from "@v2/rpc-contracts";
@@ -157,6 +158,51 @@ authApiRoutes = authApiRoutes.get("/admin/auth/security-bootstrap", async (c) =>
     repo.sessionsSummary(),
   ]);
   return c.json({ summary: security, sessions });
+});
+authApiRoutes = authApiRoutes.get("/admin/auth/impersonation-sessions", async (c) => {
+  const admin = await requireAdmin(c);
+  if (!admin.ok) return admin.response;
+  return c.json({ sessions: await new AuthRuntimeRepository(admin.config.db).listImpersonationSessions(c.req.query("workspaceId") ?? null) });
+});
+authApiRoutes = authApiRoutes.post("/internal/auth/impersonation/start", async (c) => {
+  if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal impersonation start requires a service binding.")), 403);
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const body = await c.req.json().catch(() => null) as { actorUserId?: unknown; actorSessionId?: unknown; subjectUserId?: unknown; workspaceId?: unknown; reason?: unknown; durationSeconds?: unknown } | null;
+  if (typeof body?.actorUserId !== "string" || typeof body?.actorSessionId !== "string" || typeof body?.subjectUserId !== "string" || typeof body?.workspaceId !== "string" || typeof body?.reason !== "string" || !body.reason.trim()) {
+    return c.json(errorResponse(failure("validation_failed", "actorUserId, actorSessionId, subjectUserId, workspaceId and reason are required.")), 400);
+  }
+  const auth = createAuth(parsed.config);
+  const context = await auth.$context;
+  const repo = new AuthRuntimeRepository(parsed.config.db);
+  const session = await context.internalAdapter.createSession(body.subjectUserId, true, { impersonatedBy: body.actorUserId, expiresAt: new Date(Date.now() + (typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) ? body.durationSeconds : 3600) * 1000) }, true);
+  if (!session) return c.json(errorResponse(failure("internal_error", "Impersonation session could not be created.")), 500);
+  const token = String(session.token);
+  const expiresAt = typeof session.expiresAt === "string" ? session.expiresAt : new Date(session.expiresAt as Date).toISOString();
+  const impersonation = await repo.startImpersonation({
+    actorUserId: body.actorUserId,
+    actorSessionId: body.actorSessionId,
+    subjectUserId: body.subjectUserId,
+    workspaceId: body.workspaceId,
+    reason: body.reason.trim(),
+    sessionId: session.id,
+    expiresAt,
+  });
+  await setSignedCookie(c, context.authCookies.sessionToken.name, token, context.secret, context.authCookies.sessionToken.attributes);
+  return c.json({ impersonation: { ...impersonation, token } }, 201);
+});
+authApiRoutes = authApiRoutes.post("/internal/auth/impersonation/stop", async (c) => {
+  if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal impersonation stop requires a service binding.")), 403);
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const body = await c.req.json().catch(() => null) as { sessionId?: unknown } | null;
+  if (typeof body?.sessionId !== "string" || !body.sessionId) return c.json(errorResponse(failure("validation_failed", "sessionId is required.")), 400);
+  const repo = new AuthRuntimeRepository(parsed.config.db);
+  const ended = await repo.stopImpersonation(body.sessionId);
+  const auth = createAuth(parsed.config);
+  const context = await auth.$context;
+  deleteCookie(c, context.authCookies.sessionToken.name, context.authCookies.sessionToken.attributes);
+  return c.json({ sessions: ended });
 });
 authApiRoutes = authApiRoutes.post("/api/auth/sign-up/email", async (c) => {
   const parsed = await resolveAuthConfig(c.env);

@@ -112,6 +112,7 @@ export function createAuth(config: AuthConfig) {
     baseURL: config.baseURL,
     trustedOrigins: config.trustedOrigins,
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
+    session: { additionalFields: { impersonatedBy: { type: "string", required: false } } },
     emailAndPassword: { enabled: true, sendResetPassword: async ({ user, url }) => { await sendCoreMail({ purpose: "reset_password", templateKey: "reset_password", to: user.email, url }); } },
     emailVerification: { sendVerificationEmail: async ({ user, url }) => { await sendCoreMail({ purpose: "verify_email", templateKey: "verify_email", to: user.email, url }); } },
     plugins: [passkey({ rpID: config.passkey.rpID, rpName: config.passkey.rpName, origin: config.passkey.origin, registration: { requireSession: true } })],

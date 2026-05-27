@@ -37,6 +37,14 @@ export const workspaceMemberRoles = sqliteTable("workspace_member_roles", {
   roleId: text("role_id").notNull().references(() => workspaceRoles.id, { onDelete: "cascade" }),
   createdAt: text("created_at").notNull().default(now),
 }, (table) => [primaryKey({ columns: [table.workspaceId, table.userId, table.roleId] }), index("workspace_member_roles_user_idx").on(table.workspaceId, table.userId)]);
+export const workspaceMemberPermissionOverrides = sqliteTable("workspace_member_permission_overrides", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  permission: text("permission").notNull(),
+  effect: text("effect", { enum: ["allow", "deny"] }).notNull(),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => [primaryKey({ columns: [table.workspaceId, table.userId, table.permission] }), index("workspace_member_permission_overrides_lookup_idx").on(table.workspaceId, table.userId), index("workspace_member_permission_overrides_permission_idx").on(table.workspaceId, table.permission, table.effect)]);
 export const workspaceInvitations = sqliteTable("workspace_invitations", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
@@ -197,6 +205,24 @@ export const approvalRequests = sqliteTable("approval_requests", {
 }, (table) => [index("approval_requests_workspace_status_idx").on(table.workspaceId, table.status, table.requestedAt), index("approval_requests_kind_subject_idx").on(table.kind, table.subjectId), index("approval_requests_plugin_idx").on(table.pluginId, table.status)]);
 export const workspaceSettings = sqliteTable("workspace_settings", { workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), scope: text("scope").notNull(), key: text("key").notNull(), valueJson: text("value_json").notNull(), updatedAt: text("updated_at").notNull().default(now) }, (table) => [primaryKey({ columns: [table.workspaceId, table.scope, table.key] })]);
 export const workspaceLayouts = sqliteTable("workspace_layouts", { workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }), layoutJson: text("layout_json").notNull(), updatedAt: text("updated_at").notNull().default(now) });
+export const plans = sqliteTable("plans", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  status: text("status", { enum: ["active", "draft", "disabled"] }).notNull().default("draft"),
+  limitsJson: text("limits_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+});
+export const userPlanAssignments = sqliteTable("user_plan_assignments", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  planId: text("plan_id").notNull().references(() => plans.id, { onDelete: "cascade" }),
+  status: text("status", { enum: ["active", "scheduled", "expired", "disabled"] }).notNull().default("active"),
+  startsAt: text("starts_at"),
+  endsAt: text("ends_at"),
+  createdAt: text("created_at").notNull().default(now),
+  updatedAt: text("updated_at").notNull().default(now),
+}, (table) => [index("user_plan_assignments_user_idx").on(table.userId, table.status), index("user_plan_assignments_plan_idx").on(table.planId, table.status)]);
 export const publicAccessPolicies = sqliteTable("public_access_policies", { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), name: text("name").notNull(), access: text("access", { enum: ["anonymous", "authenticated"] }).notNull().default("anonymous"), authenticationMode: text("authentication_mode", { enum: ["anonymous", "customer", "verified"] }).notNull().default("anonymous"), rulesJson: text("rules_json"), allowedOperationsJson: text("allowed_operations_json").notNull().default("[]"), rateLimitPolicy: text("rate_limit_policy"), cachePolicy: text("cache_policy"), enabled: integer("enabled", { mode: "boolean" }).notNull().default(true), createdAt: text("created_at").notNull().default(now), updatedAt: text("updated_at").notNull().default(now) }, (table) => [index("public_access_policies_workspace_idx").on(table.workspaceId), index("public_access_policies_enabled_idx").on(table.workspaceId, table.enabled)]);
 export const workspacePublications = sqliteTable("workspace_publications", { id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), pluginId: text("plugin_id").notNull().references(() => installedPlugins.id, { onDelete: "cascade" }), contributionKind: text("contribution_kind", { enum: ["route", "surface", "tool"] }).notNull().default("route"), publicationType: text("publication_type", { enum: ["route", "surface", "tool", "content"] }).notNull().default("route"), contributionId: text("contribution_id").notNull(), publicPath: text("public_path").notNull(), routePattern: text("route_pattern").notNull().default("/"), routePriority: integer("route_priority").notNull().default(0), routeKind: text("route_kind", { enum: ["exact", "parameterized"] }).notNull().default("exact"), parameterNamesJson: text("parameter_names_json"), title: text("title").notNull().default("Published page"), templateId: text("template_id").notNull().default("public.contentPage"), schemaJson: text("schema_json").notNull().default("{}"), status: text("status", { enum: ["draft", "published", "unpublished", "disabled"] }).notNull().default("draft"), policyId: text("policy_id").references(() => publicAccessPolicies.id, { onDelete: "set null" }), createdAt: text("created_at").notNull().default(now), publishedAt: text("published_at"), updatedAt: text("updated_at").notNull().default(now) }, (table) => [uniqueIndex("workspace_publications_path_idx").on(table.workspaceId, table.publicPath), index("workspace_publications_plugin_idx").on(table.workspaceId, table.pluginId), index("workspace_publications_status_idx").on(table.workspaceId, table.status), index("workspace_publications_route_idx").on(table.workspaceId, table.routeKind, table.status)]);
 export const workspaceThemeTokens = sqliteTable("workspace_theme_tokens", { workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }), tokenKey: text("token_key").notNull(), tokenValue: text("token_value").notNull(), scope: text("scope", { enum: ["admin", "public", "both"] }).notNull().default("both"), updatedAt: text("updated_at").notNull().default(now) }, (table) => [primaryKey({ columns: [table.workspaceId, table.tokenKey, table.scope] })]);

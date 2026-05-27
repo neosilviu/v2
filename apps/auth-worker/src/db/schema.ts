@@ -23,6 +23,7 @@ export const session = sqliteTable("session", {
   expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
+  impersonatedBy: text("impersonated_by"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 }, (table) => ({
@@ -122,6 +123,25 @@ export const authPolicies = sqliteTable("auth_policies", {
   updatedAt: text("updated_at").notNull().default(now),
 }, (table) => ({
   workspaceIdx: uniqueIndex("auth_policies_workspace_idx").on(table.workspaceId),
+}));
+
+export const impersonationSessions = sqliteTable("impersonation_sessions", {
+  id: text("id").primaryKey(),
+  actorUserId: text("actor_user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  actorSessionId: text("actor_session_id").notNull().references(() => session.id, { onDelete: "cascade" }),
+  subjectUserId: text("subject_user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status", { enum: ["pending", "active", "revoked", "expired", "ended"] }).notNull().default("pending"),
+  createdAt: text("created_at").notNull().default(now),
+  expiresAt: text("expires_at"),
+  revokedAt: text("revoked_at"),
+  endedAt: text("ended_at"),
+  rootSessionId: text("root_session_id"),
+}, (table) => ({
+  actorIdx: index("impersonation_sessions_actor_idx").on(table.actorUserId, table.status, table.createdAt),
+  subjectIdx: index("impersonation_sessions_subject_idx").on(table.subjectUserId, table.status, table.createdAt),
+  workspaceIdx: index("impersonation_sessions_workspace_idx").on(table.workspaceId, table.status, table.createdAt),
 }));
 
 export const userRelations = relations(user, ({ many }) => ({

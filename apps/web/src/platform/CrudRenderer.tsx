@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import type { ColumnDefinition, CrudDefinition, FieldDefinition } from "@v2/ui-schema";
+import type { ActionDefinition, ColumnDefinition, CrudDefinition, FieldDefinition } from "@v2/ui-schema";
 import { Button, SurfaceCard } from "@v2/ui-kit";
 
 type CrudRow = Record<string, unknown>;
@@ -16,6 +16,7 @@ type CrudRendererProps = {
   onCreate: (values: Record<string, unknown>) => Promise<void>;
   onUpdate: (row: CrudRow, values: Record<string, unknown>) => Promise<void>;
   onDelete: (row: CrudRow) => Promise<void>;
+  onRowAction?: (action: ActionDefinition, row: CrudRow) => Promise<void>;
 };
 
 type DialogState =
@@ -60,7 +61,7 @@ function fieldDefaultValue(row: CrudRow | null, field: FieldDefinition) {
   return String(value);
 }
 
-export function CrudRenderer({ title, status, busy, rows, columns, fields, crud, onRefresh, onCreate, onUpdate, onDelete }: CrudRendererProps) {
+export function CrudRenderer({ title, status, busy, rows, columns, fields, crud, onRefresh, onCreate, onUpdate, onDelete, onRowAction }: CrudRendererProps) {
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -123,6 +124,7 @@ export function CrudRenderer({ title, status, busy, rows, columns, fields, crud,
               <div className="plugin-actions">
                 <Button disabled={busy || submitting} onClick={() => setDialog({ mode: "edit", row })}>Edit</Button>
                 <Button disabled={busy || submitting} onClick={() => setDialog({ mode: "delete", row })}>Delete</Button>
+                {onRowAction ? crud.rowActions.map((action) => <Button key={action.id} className={action.variant === "danger" ? "danger" : action.variant === "primary" ? "primary" : ""} disabled={busy || submitting} onClick={() => void onRowAction(action, row)}>{action.title}</Button>) : null}
               </div>
             </td>
           </tr>) : <tr><td colSpan={columns.length + 1}>{crud.listEmptyMessage ?? `No ${crud.entityLabelPlural.toLowerCase()} available.`}</td></tr>}
