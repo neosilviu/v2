@@ -5,7 +5,10 @@ import {
   settingsPanelContributionSchema,
   settingsTabContributionSchema,
 } from "@v2/ui-schema";
+import { pluginApiContractSchema } from "./operation-contracts";
 
+export { pluginApiContractSchema, pluginOperationRequestSchema, pluginOperationSchema, pluginValueContractSchema, validatePluginValue } from "./operation-contracts";
+export type { PluginApiContract, PluginOperation, PluginValueContract } from "./operation-contracts";
 export const riskSchema = z.enum(["safe", "reversible", "sensitive", "dangerous"]);
 export const exposureSchema = z.enum(["agent-ai", "mcp", "command"]);
 export const resourceSchema = z.enum(["d1", "kv", "do", "r2", "vectorize", "queues"]);
@@ -53,7 +56,7 @@ export { settingsPanelContributionSchema, settingsTabContributionSchema };
 const emptyContributions = { tools: [], providers: [], channels: [], surfaces: [], zones: [], layouts: [], settings: [], settingsTabs: [], settingsPanels: [], publicRoutes: [], publicSurfaces: [], publicTools: [] };
 
 export const pluginManifestSchema = z.object({
-  id: z.string().min(1), name: z.string().min(1), version: z.string().min(1), builtIn: z.boolean().default(false), data: storageModeSchema.default({ mode: "none" }), capabilities: z.array(capabilitySchema).default([]),
+  id: z.string().min(1), name: z.string().min(1), version: z.string().min(1), builtIn: z.boolean().default(false), data: storageModeSchema.default({ mode: "none" }), capabilities: z.array(capabilitySchema).default([]), api: pluginApiContractSchema.default({ version: 1, operations: [] }),
   contributes: z.object({ tools: z.array(toolSchema).default([]), providers: z.array(providerSchema).default([]), channels: z.array(channelSchema).default([]), surfaces: z.array(surfaceSchema).default([]), zones: z.array(zoneSchema).default([]), layouts: z.array(layoutSchema).default([]), settings: z.array(settingSchema).default([]), settingsTabs: z.array(settingsTabContributionSchema).default([]), settingsPanels: z.array(settingsPanelContributionSchema).default([]), publicRoutes: z.array(publicRouteContributionSchema).default([]), publicSurfaces: z.array(publicSurfaceContributionSchema).default([]), publicTools: z.array(publicToolContributionSchema).default([]) }).default(emptyContributions),
 });
 export const pluginPackageDescriptorSchema = z.object({
