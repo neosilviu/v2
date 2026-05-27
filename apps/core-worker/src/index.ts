@@ -665,7 +665,7 @@ async function dispatchPluginOperation(c: CoreContext, request: { workspaceId: s
 coreApiRoutes = coreApiRoutes.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
 coreApiRoutes = coreApiRoutes.get("/session", (c) => {
   const user = c.get("user");
-  return c.json({ authenticated: Boolean(user), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
+  return c.json({ authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
 });
 coreApiRoutes = coreApiRoutes.get("/session/impersonation", async (c) => {
   const denied = requireRead(c);
@@ -724,7 +724,7 @@ async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string)
   const visibleSettingsTabs = settingsTabs.filter((tab) => tab.status === "active" && (!tab.requiredPermission || permissions.has(tab.requiredPermission) || permissions.has("workspace.admin")));
   const visibleSettingsTabResolutions = (await Promise.all(visibleSettingsTabs.map(async (tab) => repo.settingsTab(workspaceId, tab.id)))).filter((tab): tab is NonNullable<typeof tab> => Boolean(tab));
   return c.json({
-    session: { authenticated: true, isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null },
+    session: { authenticated: true, impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null },
     workspaces,
     currentWorkspace,
     membership: { user: currentWorkspace ? { id: user!.id, email: user!.email, name: user!.name ?? null } : null, roles: currentWorkspace.roles, permissions: currentWorkspace.permissions, recoveryAdmin: false },

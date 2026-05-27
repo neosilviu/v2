@@ -262,7 +262,11 @@ export function App() {
       setActivePluginIds(active);
       setTools(runtimeTools);
       setShell(layout ? { ...composed, zones: layout.zones, placements: layout.placements } : composed);
-      void loadCurrentImpersonation().then(setImpersonation).catch(() => setImpersonation(null));
+      if (bootstrap.session.impersonated) {
+        void loadCurrentImpersonation().then(setImpersonation).catch(() => setImpersonation(null));
+      } else {
+        setImpersonation(null);
+      }
     }).catch((error) => {
       if (isCoreAuthRequiredError(error)) {
         setSession(null);

@@ -355,8 +355,25 @@ function matchRoutePattern(pattern: string, path: string): Record<string, string
   return params;
 }
 
+const WORKSPACE_RBAC_SEED_VERSION = "workspace-rbac:v1";
+const PLATFORM_SETTINGS_SEED_VERSION = "platform-settings:v1";
+
 export class CoreRepository {
   constructor(private readonly db: D1Database, private readonly env?: Pick<CoreEnv, "ENVIRONMENT" | "MAIL_PROVIDER_CONFIGS_JSON">) {}
+
+  private async internalSeedCurrent(workspaceId: string, key: string, version: string) {
+    const row = await this.db.prepare("SELECT value_json FROM workspace_settings WHERE workspace_id = ? AND scope = '__internal' AND key = ? LIMIT 1")
+      .bind(workspaceId, key)
+      .first<{ value_json: string }>();
+    return row?.value_json === JSON.stringify(version);
+  }
+
+  private internalSeedStatement(workspaceId: string, key: string, version: string) {
+    return this.db.prepare(`INSERT INTO workspace_settings (workspace_id, scope, key, value_json, updated_at)
+      VALUES (?, '__internal', ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(workspace_id, scope, key) DO UPDATE SET value_json = excluded.value_json, updated_at = CURRENT_TIMESTAMP`)
+      .bind(workspaceId, key, JSON.stringify(version));
+  }
 
   async ensureWorkspace(workspaceId: string, name = "Default Workspace", status: "unprovisioned" | "provisioning" | "active" | "suspended" = "unprovisioned") {
     await this.db.prepare("INSERT OR IGNORE INTO workspaces (id, name, status) VALUES (?, ?, ?)").bind(workspaceId, name, status).run();
@@ -370,6 +387,7 @@ export class CoreRepository {
   }
 
   async ensureWorkspaceRbac(workspaceId: string) {
+    if (await this.internalSeedCurrent(workspaceId, "rbac.seed", WORKSPACE_RBAC_SEED_VERSION)) return;
     await this.ensureWorkspace(workspaceId);
     const roles = [
       ["owner", "Owner", "Full workspace owner permissions"],
@@ -387,6 +405,7 @@ export class CoreRepository {
         ...this.rolePermissions(key).map((permission) => this.db.prepare("INSERT OR IGNORE INTO workspace_role_permissions (workspace_id, role_id, permission) VALUES (?, ?, ?)").bind(workspaceId, roleId, permission)),
       ];
     });
+    statements.push(this.internalSeedStatement(workspaceId, "rbac.seed", WORKSPACE_RBAC_SEED_VERSION));
     await this.db.batch(statements);
   }
 
@@ -1201,6 +1220,7 @@ export class CoreRepository {
   }
 
   async ensurePlatformSettingsContributions(workspaceId: string) {
+    if (await this.internalSeedCurrent(workspaceId, "settings.seed", PLATFORM_SETTINGS_SEED_VERSION)) return;
     await this.ensureWorkspace(workspaceId);
     const manifest = pluginManifestSchema.parse({ id: "platform", name: "Platform", version: "0.0.0", builtIn: true, contributes: {} });
     await this.db.prepare(`INSERT INTO installed_plugins (id, name, version, manifest_json, worker_isolation, ui_mode, updated_at)
@@ -1232,6 +1252,7 @@ export class CoreRepository {
         VALUES (?, 'platform', ?, 1, ?, ?, NULL)`)
         .bind(workspaceId, item.panel.id, `settings.panel.${item.tab.id}`, item.tab.displayOrder));
     }
+    statements.push(this.internalSeedStatement(workspaceId, "settings.seed", PLATFORM_SETTINGS_SEED_VERSION));
     await this.db.batch(statements);
   }
 

@@ -4,6 +4,7 @@ export type CoreSessionUser = {
   id: string;
   email: string;
   name?: string;
+  impersonatedBy?: string | null;
 };
 
 type SessionEntry = { user: CoreSessionUser | null; expiresAt: number };
@@ -46,8 +47,10 @@ export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreS
     if (authorization) sessionHeaders.set("authorization", authorization);
     const response = await env.AUTH.fetch("https://auth.internal/api/auth/get-session", { headers: sessionHeaders });
     if (!response.ok) return null;
-    const result = await response.json() as { user?: CoreSessionUser | null } | null;
-    const user = result?.user?.id && result.user.email ? result.user : null;
+    const result = await response.json() as { session?: { impersonatedBy?: string | null } | null; user?: CoreSessionUser | null } | null;
+    const user = result?.user?.id && result.user.email
+      ? { ...result.user, impersonatedBy: result.session?.impersonatedBy ?? null }
+      : null;
     if (key) {
       if (sessionAssertionCache.size > 256) sessionAssertionCache.clear();
       sessionAssertionCache.set(key, { user, expiresAt: now + SESSION_ASSERTION_TTL_MS });
