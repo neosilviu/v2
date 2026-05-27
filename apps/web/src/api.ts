@@ -1,7 +1,7 @@
 import { hc } from "hono/client";
 import { z } from "zod";
-import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
-import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
+import { approvalRequestSchema, errorResponseSchema, workspaceMemberListSchema } from "@v2/rpc-contracts";
+import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayout, WorkspaceMember } from "@v2/rpc-contracts";
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
 import type { MailProviderConfigure, MailProviderPublicSummary, MailProviderTestResult, MailTemplate } from "@v2/mail-contracts";
@@ -32,7 +32,7 @@ type CoreApiClient = {
     current: { bootstrap: HonoRoute };
     ":workspaceId": {
       bootstrap: HonoRoute;
-      rbac: { me: HonoRoute };
+      rbac: { me: HonoRoute; members: HonoRoute };
       settings: {
         tabs: { order: { $post(args?: HonoRequestArgs): Promise<Response> }; ":tabId": HonoRoute };
         general: HonoRoute;
@@ -206,6 +206,10 @@ export async function consumeOwnerSetup(token: string): Promise<{ status: "consu
 
 export async function loadCurrentRbac(): Promise<RbacMe> {
   return coreResponse(coreApi.workspaces[":workspaceId"].rbac.me.$get({ param: { workspaceId: currentWorkspaceId() } }), rbacMeSchema);
+}
+
+export async function loadWorkspaceMembers(workspaceId = currentWorkspaceId()): Promise<WorkspaceMember[]> {
+  return coreResponse(coreApi.workspaces[":workspaceId"].rbac.members.$get({ param: { workspaceId } }), workspaceMemberListSchema).then((result) => result.members);
 }
 
 export function runtimeSurfaceUrl(surfaceId: string): string {

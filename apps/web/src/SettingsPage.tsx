@@ -3,10 +3,10 @@ import { z } from "zod";
 import type { AuthMethod, AuthPolicy } from "@v2/auth-contracts";
 import { notification } from "@v2/feedback-runtime";
 import type { PluginManifest } from "@v2/plugin-contracts";
-import type { ApprovalRequest, Notification } from "@v2/rpc-contracts";
+import type { ApprovalRequest, Notification, WorkspaceMember } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { activateDomain, activateMailProvider, configureMailProvider, createDomain, createWorkspacePublication, deleteWorkspacePublication, decideApprovalRequest, disableDomain, disableMailProvider, loadActivePlugins, loadAuditEvents, loadDomains, loadGeneralSettings, loadInstalledPlugins, loadMailSummary, loadMarketplacePlugins, loadPendingApprovalRequests, loadSecurityBootstrap, loadSettingsTab, loadSettingsTabs, loadWorkspacePublications, loadWorkspaceUiSurfaces, saveGeneralSettings, testMailProvider, updateWorkspacePublication, verifyDomain, type MailSummary, type MarketplacePlugin, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type WorkspaceDomain, type WorkspaceSummary, CoreRequestError } from "./api";
+import { activateDomain, activateMailProvider, configureMailProvider, createDomain, createWorkspacePublication, deleteWorkspacePublication, decideApprovalRequest, disableDomain, disableMailProvider, loadActivePlugins, loadAuditEvents, loadDomains, loadGeneralSettings, loadInstalledPlugins, loadMailSummary, loadMarketplacePlugins, loadPendingApprovalRequests, loadSecurityBootstrap, loadSettingsTab, loadSettingsTabs, loadWorkspaceMembers, loadWorkspacePublications, loadWorkspaceUiSurfaces, saveGeneralSettings, testMailProvider, updateWorkspacePublication, verifyDomain, type MailSummary, type MarketplacePlugin, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type WorkspaceDomain, type WorkspaceSummary, CoreRequestError } from "./api";
 import { saveAuthMethod, saveAuthPolicy, type AuthSecuritySummary } from "./api";
 import { CrudRenderer } from "./platform/CrudRenderer";
 import { PluginManagerPanel } from "./platform/PluginManagerPanel";
@@ -46,6 +46,10 @@ function selectedTabFromUrl(tabs: Array<NativeTab | RuntimeSettingsTab>) {
 
 function roleLabels(rbac: RbacMe | null) {
   return rbac?.roles.map((role) => typeof role === "string" ? role : role.name).join(", ") || "none";
+}
+
+function memberRoleLabels(member: WorkspaceMember) {
+  return member.roles.map((role) => role.name).join(", ") || "none";
 }
 
 function backendMessage(error: unknown, fallback: string) {
@@ -209,21 +213,8 @@ function SecurityAdministrationCrud({ emit }: { emit: (item: Notification) => vo
   };
 
   const pluginOptions = installedPlugins.filter((plugin) => plugin.id).map((plugin) => ({ id: plugin.id, name: plugin.name }));
-  const summaryTiles = [
-    { label: "Publications", value: publications.length, detail: "Published workspace delivery entries" },
-    { label: "Pending approvals", value: approvals.length, detail: "One-shot approval requests in the queue" },
-    { label: "Audit events", value: auditEvents.length, detail: "Recent platform changes and policy actions" },
-    { label: "Installed plugins", value: installedPlugins.length, detail: "Available plugin manifests for publications" },
-  ];
 
   return <section className="settings-subpanel">
-    <div className="settings-summary-grid">
-      {summaryTiles.map((tile) => <div className="summary-tile" key={tile.label}>
-        <small>{tile.label}</small>
-        <strong>{tile.value}</strong>
-        <p>{tile.detail}</p>
-      </div>)}
-    </div>
     <CrudRenderer
       title="Publications"
       status={status}
@@ -314,6 +305,7 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
   const [summary, setSummary] = useState<AuthSecuritySummary | null>(null);
   const [sessions, setSessions] = useState<{ sessions: number; passkeys: number } | null>(null);
   const [rbac, setRbac] = useState<RbacMe | null>(null);
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [mailAvailable, setMailAvailable] = useState(false);
   const [status, setStatus] = useState("Loading security controls...");
   const [busy, setBusy] = useState(false);
@@ -321,10 +313,11 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
   const refresh = async () => {
     setBusy(true);
     try {
-      const loaded = await loadSecurityBootstrap();
+      const [loaded, memberList] = await Promise.all([loadSecurityBootstrap(), loadWorkspaceMembers()]);
       setSummary(loaded.summary);
       setSessions(loaded.sessions);
       setRbac(loaded.rbac);
+      setMembers(memberList);
       setMailAvailable(loaded.mail.activeTransactionalProvider);
       setStatus("Security controls loaded");
     } finally {
@@ -377,6 +370,42 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
     </div>
     {summary ? <div className="settings-grid">
       <section className="settings-subpanel">
+        <h3>Workspace access</h3>
+        <div className="settings-access-grid">
+          <div className="settings-access-card">
+            <small>Current user</small>
+            <strong>{rbac?.user?.email ?? "unknown"}</strong>
+            <p>Roles: {roleLabels(rbac)}</p>
+            <p>Permissions: {rbac?.permissions.length ?? 0}</p>
+          </div>
+          <div className="settings-access-card">
+            <small>Memberships</small>
+            <strong>{members.length}</strong>
+            <p>Active and invited workspace members visible in Core.</p>
+          </div>
+          <div className="settings-access-card">
+            <small>Active sessions</small>
+            <strong>{sessions?.sessions ?? 0}</strong>
+            <p>Passkeys: {sessions?.passkeys ?? 0}. Published login slots: {summary.publishedLoginContributions}.</p>
+          </div>
+        </div>
+        <div className="template-table-wrap domain-table settings-member-table">
+          <table>
+            <thead>
+              <tr><th>User</th><th>Status</th><th>Roles</th><th>Permissions</th></tr>
+            </thead>
+            <tbody>
+              {members.map((member) => <tr key={member.user.id}>
+                <td><strong>{member.user.email ?? member.user.id}</strong><small>{member.user.id}</small></td>
+                <td><span className={`status-pill ${member.status}`}>{member.status}</span></td>
+                <td>{memberRoleLabels(member)}</td>
+                <td>{member.permissions.length}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="settings-subpanel">
         <h3>Registration policy</h3>
         <label className="field">Registration mode
           <select value={summary.policy.registrationMode} disabled={busy} onChange={(event) => void updatePolicy({ registrationMode: event.currentTarget.value as AuthPolicy["registrationMode"] })}>
@@ -406,11 +435,6 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
       <section className="settings-subpanel">
         <h3>Runtime support</h3>
         <p>Available server-side: password {summary.serverSideAvailability.password ? "yes" : "no"}, passkey {summary.serverSideAvailability.passkey ? "yes" : "no"}, GitHub {summary.serverSideAvailability.github ? "configured" : "not configured"}.</p>
-        <p>Sessions: {sessions?.sessions ?? 0}. Passkeys: {sessions?.passkeys ?? 0}. Published login slots: {summary.publishedLoginContributions}.</p>
-      </section>
-      <section className="settings-subpanel">
-        <h3>Current admin</h3>
-        <p>Current user: {rbac?.user?.email ?? "unknown"}. Roles: {roleLabels(rbac)}. Permissions: {rbac?.permissions.length ?? 0}.</p>
         {rbac?.recoveryAdmin ? <p className="message">Bootstrap/recovery admin is active for this user until RBAC ownership is fully assigned.</p> : null}
       </section>
     </div> : null}

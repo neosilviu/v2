@@ -536,6 +536,12 @@ coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/rbac/me", async (c) 
   if (denied) return denied;
   return c.json(await new CoreRepository(c.env.CORE_DB).memberSummary(c.req.param("workspaceId"), c.get("user")));
 });
+coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/rbac/members", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requireAnyPermission(c, workspaceId, ["workspace.members.manage", "auth.read"]);
+  if (denied) return denied;
+  return c.json({ members: await new CoreRepository(c.env.CORE_DB).workspaceMembers(workspaceId) });
+});
 coreApiRoutes = coreApiRoutes.post("/workspaces/:workspaceId/rbac/roles/:roleId/permissions", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "workspace.members.manage");

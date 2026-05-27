@@ -70,6 +70,13 @@ export const workspacePublicationUpdateRequestSchema = z.object({
   access: z.enum(["anonymous", "authenticated"]).optional(),
   authenticationMode: z.enum(["anonymous", "customer", "verified"]).optional(),
 });
+export const workspaceMemberSchema = z.object({
+  user: z.object({ id: z.string(), email: z.string().email().optional(), name: z.string().nullable().optional() }),
+  status: z.enum(["active", "invited", "disabled"]),
+  roles: z.array(z.object({ name: z.string(), system_key: z.string().nullable() })),
+  permissions: z.array(z.string()),
+});
+export const workspaceMemberListSchema = z.object({ members: z.array(workspaceMemberSchema) });
 export const auditEventSchema = z.object({
   id: z.string().min(1),
   workspaceId: workspaceIdSchema.nullable(),
@@ -125,6 +132,8 @@ export type WorkspacePublication = z.output<typeof workspacePublicationSchema>;
 export type WorkspacePublicationList = z.output<typeof workspacePublicationListSchema>;
 export type WorkspacePublicationCreateRequest = z.output<typeof workspacePublicationCreateRequestSchema>;
 export type WorkspacePublicationUpdateRequest = z.output<typeof workspacePublicationUpdateRequestSchema>;
+export type WorkspaceMember = z.output<typeof workspaceMemberSchema>;
+export type WorkspaceMemberList = z.output<typeof workspaceMemberListSchema>;
 export type AuditEvent = z.output<typeof auditEventSchema>;
 export type AuditEventList = z.output<typeof auditEventListSchema>;
 export type ToolExecutionResult = z.output<typeof toolExecutionResultSchema>;

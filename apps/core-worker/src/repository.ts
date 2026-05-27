@@ -463,6 +463,27 @@ export class CoreRepository {
     return { user: { id: user.id, email: user.email }, roles: rows.results, permissions: await this.permissionsForUser(workspaceId, user.id), bootstrap: false };
   }
 
+  async workspaceMembers(workspaceId: string) {
+    const rows = await this.db.prepare(`SELECT members.user_id, members.email, members.status, roles.name, roles.system_key
+      FROM workspace_members members
+      LEFT JOIN workspace_member_roles member_roles ON member_roles.workspace_id = members.workspace_id AND member_roles.user_id = members.user_id
+      LEFT JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
+      WHERE members.workspace_id = ?
+      ORDER BY members.updated_at DESC, members.email, roles.name`)
+      .bind(workspaceId)
+      .all<{ user_id: string; email: string | null; status: "active" | "invited" | "disabled"; name: string | null; system_key: string | null }>();
+    const members = new Map<string, { user: { id: string; email: string | null; name: string | null }; status: "active" | "invited" | "disabled"; roles: Array<{ name: string; system_key: string | null }>; permissions: WorkspacePermission[] }>();
+    for (const row of rows.results) {
+      const current = members.get(row.user_id) ?? { user: { id: row.user_id, email: row.email, name: null }, status: row.status, roles: [], permissions: [] };
+      if (row.name) current.roles.push({ name: row.name, system_key: row.system_key });
+      members.set(row.user_id, current);
+    }
+    for (const member of members.values()) {
+      member.permissions = await this.permissionsForUser(workspaceId, member.user.id);
+    }
+    return Array.from(members.values());
+  }
+
   async accessibleWorkspaces(user: { id: string; email: string } | null): Promise<AccessibleWorkspace[]> {
     if (!user) return [];
     const rows = await this.db.prepare(`SELECT DISTINCT workspaces.id, workspaces.name, workspaces.status
