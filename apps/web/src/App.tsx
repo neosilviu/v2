@@ -432,7 +432,7 @@ export function App() {
         {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} workspace={workspace} permissions={permissions} onOpenPlugins={() => setActivePage("plugins")} onOpenSettings={() => openPage("settings", "/settings")} /> : null}
         {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} permissions={permissions} onChanged={() => void refreshPlugins()} /></div> : null}
         {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
-        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} workspace={workspace} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
+        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
         {activePage === "profile" ? <ProfilePage session={session} workspaces={workspaces} currentWorkspace={workspace} onSessionChanged={setSession} onOpenSecurity={openSecuritySettings} emit={emit} /> : null}
         {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
       </main>

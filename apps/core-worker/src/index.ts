@@ -383,11 +383,7 @@ async function platformSettingsData(c: CoreContext, repo: CoreRepository, worksp
     case "platform.settings.mail.events":
       return c.json({ status: "ok", data: { rows: (await repo.mailSummary(workspaceId)).events }, error: null, approvalId: null, auditEventId: null });
     case "platform.settings.security.bootstrap": {
-      const [security, members, roles] = await Promise.all([
-        authAdminJson<{ summary: { policy: { registrationMode: string; requireEmailVerification: boolean; allowPasskeyRegistration: boolean; allowPasskeySignin: boolean }; methods: unknown[]; publishedLoginContributions: number; serverSideAvailability: Record<string, boolean>; emailDelivery: Record<string, unknown>; bootstrapAdmin: boolean }; sessions: { sessions: number; passkeys: number } }>(c, `/admin/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`),
-        repo.workspaceMemberRecords(workspaceId),
-        repo.workspaceRoles(workspaceId),
-      ]);
+      const security = await authAdminJson<{ summary: { policy: { registrationMode: string; requireEmailVerification: boolean; allowPasskeyRegistration: boolean; allowPasskeySignin: boolean } } }>(c, `/admin/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`);
       return c.json({
         status: "ok",
         data: {
@@ -395,11 +391,6 @@ async function platformSettingsData(c: CoreContext, repo: CoreRepository, worksp
           requireEmailVerification: security.summary.policy.requireEmailVerification,
           allowPasskeyRegistration: security.summary.policy.allowPasskeyRegistration,
           allowPasskeySignin: security.summary.policy.allowPasskeySignin,
-          methods: security.summary.methods,
-          sessions: security.sessions,
-          roles,
-          members,
-          overrides: members.flatMap((member) => member.overrides.map((override) => ({ workspaceId, userId: member.user.id, ...override }))),
         },
         error: null,
         approvalId: null,
@@ -425,8 +416,6 @@ async function platformSettingsData(c: CoreContext, repo: CoreRepository, worksp
         approvalId: null,
         auditEventId: null,
       });
-    case "platform.settings.rbac.overrides":
-      return c.json({ status: "ok", data: { rows: (await repo.workspaceMemberRecords(workspaceId)).flatMap((member) => member.overrides.map((override) => ({ workspaceId, userId: member.user.id, ...override }))) }, error: null, approvalId: null, auditEventId: null });
     case "platform.settings.audit.events":
       return c.json({ status: "ok", data: { rows: (await repo.auditEvents(workspaceId)).map((event) => ({ ...event, payload: event.payload ? JSON.stringify(event.payload) : "" })) }, error: null, approvalId: null, auditEventId: null });
     case "platform.settings.plans.list":
@@ -535,7 +524,7 @@ async function platformSettingsAction(c: CoreContext, repo: CoreRepository, work
       const actor = c.get("user");
       const membership = (await repo.workspaceMemberRecords(workspaceId)).find((member) => member.user.id === targetUserId);
       if (!actor) return c.json({ status: "denied", data: null, error: "Authentication is required.", approvalId: null, auditEventId: null }, 401);
-      if (!membership) return c.json({ status: "denied", data: null, error: "Target user is not a workspace member.", approvalId: null, auditEventId: null }, 404);
+      if (!membership || membership.status !== "active") return c.json({ status: "denied", data: null, error: "Target user is not an active workspace member.", approvalId: null, auditEventId: null }, 404);
       if (!reason) return c.json(errorResponse(failure("validation_failed", "A reason is required for impersonation.")), 400);
       if (!await repo.hasPermission(workspaceId, actor, "workspace.impersonate")) return c.json({ status: "denied", data: null, error: "workspace.impersonate permission is required.", approvalId: null, auditEventId: null }, 403);
       const headers = new Headers({ "content-type": "application/json" });

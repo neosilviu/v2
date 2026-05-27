@@ -477,32 +477,51 @@ export class CoreRepository {
     return rows.results;
   }
 
-  async effectivePermissionsForUser(workspaceId: string, userId: string): Promise<WorkspacePermission[]> {
-    const permissions = new Set(await this.permissionsForUser(workspaceId, userId));
-    const overrides = await this.memberPermissionOverrides(workspaceId, userId);
-    for (const override of overrides) {
-      if (override.effect === "deny") permissions.delete(override.permission);
-      else permissions.add(override.permission);
+  private async permissionEvaluationForUser(workspaceId: string, userId: string) {
+    const [basePermissions, overrides] = await Promise.all([
+      this.permissionsForUser(workspaceId, userId),
+      this.db.prepare(`SELECT overrides.permission, overrides.effect
+        FROM workspace_member_permission_overrides overrides
+        INNER JOIN workspace_members members
+          ON members.workspace_id = overrides.workspace_id
+          AND members.user_id = overrides.user_id
+          AND members.status = 'active'
+        WHERE overrides.workspace_id = ? AND overrides.user_id = ?
+        ORDER BY overrides.permission`)
+        .bind(workspaceId, userId)
+        .all<{ permission: WorkspacePermission; effect: "allow" | "deny" }>(),
+    ]);
+    const permissions = new Set(basePermissions);
+    const denied = new Set<WorkspacePermission>();
+    for (const override of overrides.results) {
+      if (override.effect === "deny") {
+        permissions.delete(override.permission);
+        denied.add(override.permission);
+      } else {
+        permissions.add(override.permission);
+      }
     }
-    return [...permissions].sort();
+    return { permissions: [...permissions].sort(), denied };
+  }
+
+  async effectivePermissionsForUser(workspaceId: string, userId: string): Promise<WorkspacePermission[]> {
+    return (await this.permissionEvaluationForUser(workspaceId, userId)).permissions;
   }
 
   async hasPermission(workspaceId: string, user: { id: string; email: string } | null, permission: WorkspacePermission): Promise<boolean> {
     if (!user) return false;
-    const overrides = await this.memberPermissionOverrides(workspaceId, user.id);
-    if (overrides.some((override) => override.permission === permission && override.effect === "deny")) return false;
-    const permissions = await this.effectivePermissionsForUser(workspaceId, user.id);
-    return permissions.includes(permission) || permissions.includes("workspace.admin");
+    const evaluation = await this.permissionEvaluationForUser(workspaceId, user.id);
+    if (evaluation.denied.has(permission)) return false;
+    return evaluation.permissions.includes(permission) || evaluation.permissions.includes("workspace.admin");
   }
 
   async hasAllPermissions(workspaceId: string, user: { id: string; email: string } | null, permissions: WorkspacePermission[]): Promise<boolean> {
     if (!permissions.length) return await this.hasPermission(workspaceId, user, "workspace.read");
     if (!user) return false;
-    const overrides = await this.memberPermissionOverrides(workspaceId, user.id);
-    if (permissions.some((permission) => overrides.some((override) => override.permission === permission && override.effect === "deny"))) return false;
-    const granted = new Set(await this.effectivePermissionsForUser(workspaceId, user.id));
-    if (granted.has("workspace.admin")) return true;
-    return permissions.every((permission) => granted.has(permission));
+    const evaluation = await this.permissionEvaluationForUser(workspaceId, user.id);
+    if (permissions.some((permission) => evaluation.denied.has(permission))) return false;
+    if (evaluation.permissions.includes("workspace.admin")) return true;
+    return permissions.every((permission) => evaluation.permissions.includes(permission));
   }
 
   async memberSummary(workspaceId: string, user: { id: string; email: string } | null) {
@@ -517,61 +536,83 @@ export class CoreRepository {
     return { user: { id: user.id, email: user.email }, roles: rows.results, permissions: await this.effectivePermissionsForUser(workspaceId, user.id), bootstrap: false };
   }
 
-  async workspaceMembers(workspaceId: string) {
-    const rows = await this.db.prepare(`SELECT members.user_id, members.email, members.status, roles.name, roles.system_key
-      FROM workspace_members members
-      LEFT JOIN workspace_member_roles member_roles ON member_roles.workspace_id = members.workspace_id AND member_roles.user_id = members.user_id
-      LEFT JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
-      WHERE members.workspace_id = ?
-      ORDER BY members.updated_at DESC, members.email, roles.name`)
-      .bind(workspaceId)
-      .all<{ user_id: string; email: string | null; status: "active" | "invited" | "disabled"; name: string | null; system_key: string | null }>();
-    const members = new Map<string, { user: { id: string; email: string | null; name: string | null }; status: "active" | "invited" | "disabled"; roles: Array<{ name: string; system_key: string | null }>; permissions: WorkspacePermission[] }>();
-    for (const row of rows.results) {
-      const current = members.get(row.user_id) ?? { user: { id: row.user_id, email: row.email, name: null }, status: row.status, roles: [], permissions: [] };
-      if (row.name) current.roles.push({ name: row.name, system_key: row.system_key });
-      members.set(row.user_id, current);
-    }
-    for (const member of members.values()) {
-      member.permissions = await this.permissionsForUser(workspaceId, member.user.id);
-    }
-    return Array.from(members.values());
-  }
-
   async workspaceMemberRecords(workspaceId: string): Promise<WorkspaceMemberRecord[]> {
-    const rows = await this.db.prepare(`SELECT members.user_id, members.email, members.status, roles.id AS role_id, roles.name, roles.system_key
-      FROM workspace_members members
-      LEFT JOIN workspace_member_roles member_roles ON member_roles.workspace_id = members.workspace_id AND member_roles.user_id = members.user_id
-      LEFT JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
-      WHERE members.workspace_id = ?
-      ORDER BY members.updated_at DESC, members.email, roles.name`)
-      .bind(workspaceId)
-      .all<{ user_id: string; email: string | null; status: "active" | "invited" | "disabled"; role_id: string | null; name: string | null; system_key: string | null }>();
+    const [memberRows, permissionRows, overrideRows] = await Promise.all([
+      this.db.prepare(`SELECT members.user_id, members.email, members.status, roles.id AS role_id, roles.name, roles.system_key
+        FROM workspace_members members
+        LEFT JOIN workspace_member_roles member_roles ON member_roles.workspace_id = members.workspace_id AND member_roles.user_id = members.user_id
+        LEFT JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
+        WHERE members.workspace_id = ?
+        ORDER BY members.updated_at DESC, members.email, roles.name`)
+        .bind(workspaceId)
+        .all<{ user_id: string; email: string | null; status: "active" | "invited" | "disabled"; role_id: string | null; name: string | null; system_key: string | null }>(),
+      this.db.prepare(`SELECT DISTINCT member_roles.user_id, permissions.permission
+        FROM workspace_member_roles member_roles
+        INNER JOIN workspace_members members
+          ON members.workspace_id = member_roles.workspace_id
+          AND members.user_id = member_roles.user_id
+          AND members.status = 'active'
+        INNER JOIN workspace_role_permissions permissions
+          ON permissions.workspace_id = member_roles.workspace_id
+          AND permissions.role_id = member_roles.role_id
+        WHERE member_roles.workspace_id = ?
+        ORDER BY member_roles.user_id, permissions.permission`)
+        .bind(workspaceId)
+        .all<{ user_id: string; permission: WorkspacePermission }>(),
+      this.db.prepare("SELECT user_id, permission, effect FROM workspace_member_permission_overrides WHERE workspace_id = ? ORDER BY user_id, permission")
+        .bind(workspaceId)
+        .all<{ user_id: string; permission: WorkspacePermission; effect: "allow" | "deny" }>(),
+    ]);
     const members = new Map<string, WorkspaceMemberRecord>();
-    for (const row of rows.results) {
+    for (const row of memberRows.results) {
       const current = members.get(row.user_id) ?? { user: { id: row.user_id, email: row.email }, status: row.status, roles: [], permissions: [], overrides: [] };
       if (row.role_id && row.name) current.roles.push({ id: row.role_id, name: row.name, systemKey: row.system_key });
       members.set(row.user_id, current);
     }
+    for (const row of permissionRows.results) {
+      const member = members.get(row.user_id);
+      if (member && !member.permissions.includes(row.permission)) member.permissions.push(row.permission);
+    }
+    for (const override of overrideRows.results) {
+      const member = members.get(override.user_id);
+      if (!member) continue;
+      member.overrides.push({ permission: override.permission, effect: override.effect });
+      if (member.status !== "active") continue;
+      if (override.effect === "deny") member.permissions = member.permissions.filter((permission) => permission !== override.permission);
+      else if (!member.permissions.includes(override.permission)) member.permissions.push(override.permission);
+    }
     for (const member of members.values()) {
-      member.permissions = await this.effectivePermissionsForUser(workspaceId, member.user.id);
-      member.overrides = await this.memberPermissionOverrides(workspaceId, member.user.id);
+      member.permissions.sort();
+      member.overrides.sort((left, right) => left.permission.localeCompare(right.permission));
     }
     return Array.from(members.values());
   }
 
   async workspaceRoles(workspaceId: string): Promise<WorkspaceRoleRecord[]> {
-    const rows = await this.db.prepare(`SELECT roles.id, roles.name, roles.system_key, roles.description
-      FROM workspace_roles roles
-      WHERE roles.workspace_id = ?
-      ORDER BY roles.system_key IS NULL, roles.name`)
-      .bind(workspaceId)
-      .all<{ id: string; name: string; system_key: string | null; description: string | null }>();
-    const result: WorkspaceRoleRecord[] = [];
-    for (const role of rows.results) {
-      result.push({ id: role.id, name: role.name, systemKey: role.system_key, description: role.description, permissions: await this.rolePermissionsFor(workspaceId, role.id) });
+    const [roles, permissionRows] = await Promise.all([
+      this.db.prepare(`SELECT id, name, system_key, description
+        FROM workspace_roles
+        WHERE workspace_id = ?
+        ORDER BY system_key IS NULL, name`)
+        .bind(workspaceId)
+        .all<{ id: string; name: string; system_key: string | null; description: string | null }>(),
+      this.db.prepare("SELECT role_id, permission FROM workspace_role_permissions WHERE workspace_id = ? ORDER BY role_id, permission")
+        .bind(workspaceId)
+        .all<{ role_id: string; permission: string }>(),
+    ]);
+    const permissionsByRole = new Map<string, string[]>();
+    for (const row of permissionRows.results) {
+      const permissions = permissionsByRole.get(row.role_id) ?? [];
+      permissions.push(row.permission);
+      permissionsByRole.set(row.role_id, permissions);
     }
-    return result;
+    return roles.results.map((role) => ({
+      id: role.id,
+      name: role.name,
+      systemKey: role.system_key,
+      description: role.description,
+      permissions: permissionsByRole.get(role.id) ?? [],
+    }));
   }
 
   async createWorkspaceRole(workspaceId: string, input: { name: string; description?: string | null }, actorId?: string) {

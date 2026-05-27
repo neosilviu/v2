@@ -1,0 +1,648 @@
+--- a/apps/web/src/api.ts
++++ b/apps/web/src/api.ts
+@@ -1,16 +1,12 @@
+ import { hc } from "hono/client";
+ import { z } from "zod";
+-import { approvalRequestSchema, errorResponseSchema, workspaceMemberListSchema } from "@v2/rpc-contracts";
+-import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayout, WorkspaceMember } from "@v2/rpc-contracts";
++import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
++import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc-contracts";
+ import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
+ import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
+-import type { MailProviderConfigure, MailProviderPublicSummary, MailProviderTestResult, MailTemplate } from "@v2/mail-contracts";
+-import { authMethodSchema, authPolicySchema, authUiContributionSchema } from "@v2/auth-contracts";
+-import { approvalRequestListSchema, auditEventListSchema, authSecurityBootstrapSchema, coreSessionSchema, mailSummarySchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, workspaceDomainSchema, workspacePublicationEnvelopeSchema, workspacePublicationListSchema, type AuditEvent, type AuditEventList, type AuthSecurityBootstrap, type CoreSession, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceDomain, type WorkspacePublication, type WorkspacePublicationList, type WorkspaceSummary } from "./platform-contracts";
++import { approvalRequestListSchema, coreSessionSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, type CoreSession, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary } from "./platform-contracts";
+ import type { ShellState } from "@v2/ui-runtime";
+-import { authUrl } from "./auth-client";
+-export type { AuthSecurityBootstrap, CoreSession, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceDomain, WorkspaceSummary } from "./platform-contracts";
+-export type { AuditEvent, AuditEventList, WorkspacePublication, WorkspacePublicationList } from "./platform-contracts";
++export type { CoreSession, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary } from "./platform-contracts";
+ 
+ export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
+ type HonoRequestArgs = {
+@@ -35,39 +31,26 @@
+     current: { bootstrap: HonoRoute };
+     ":workspaceId": {
+       bootstrap: HonoRoute;
+-      rbac: { me: HonoRoute; members: HonoRoute };
+-      settings: {
+-        tabs: { order: { $post(args?: HonoRequestArgs): Promise<Response> }; ":tabId": HonoRoute };
+-        general: HonoRoute;
+-        ":scope": HonoRoute;
+-        runtime: { data: HonoRoute; actions: HonoRoute };
+-      };
+-      publications: HonoRoute;
+-      "audit-events": HonoRoute;
++      rbac: { me: HonoRoute };
++      settings: { runtime: { data: HonoRoute; actions: HonoRoute } };
+       "approval-requests": HonoRoute;
+       "tool-approvals": HonoRoute;
+       plugins: { ":pluginId": { operations: { ":operationId": HonoRoute } } };
+-      domains: { $get(args?: HonoRequestArgs): Promise<Response>; $post(args?: HonoRequestArgs): Promise<Response>; ":domainId": { verify: { $post(args?: HonoRequestArgs): Promise<Response> }; activate: { $post(args?: HonoRequestArgs): Promise<Response> }; disable: { $post(args?: HonoRequestArgs): Promise<Response> } } };
+-      mail: { $get(args?: HonoRequestArgs): Promise<Response>; providers: { $post(args?: HonoRequestArgs): Promise<Response>; ":providerId": { activate: { $post(args?: HonoRequestArgs): Promise<Response> }; disable: { $post(args?: HonoRequestArgs): Promise<Response> }; test: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
+-      auth: { "security-bootstrap": HonoRoute; "security-summary": HonoRoute; sessions: { summary: HonoRoute }; methods: { ":methodId": HonoRoute }; policy: HonoRoute; "ui-contributions": HonoRoute };
+     };
+   };
+   setup: { owner: { $get(args?: HonoRequestArgs): Promise<Response>; consume: { $post(args?: HonoRequestArgs): Promise<Response> } } };
+   layouts: { $put(args?: HonoRequestArgs): Promise<Response> };
+   public: { ":workspaceId": { runtime: { data: HonoRoute; actions: HonoRoute } } };
+-  plugins: { activate: { $post(args?: HonoRequestArgs): Promise<Response> }; deactivate: { $post(args?: HonoRequestArgs): Promise<Response> }; upload: { $post(args?: HonoRequestArgs): Promise<Response> }; install: { $post(args?: HonoRequestArgs): Promise<Response> }; grants: { $post(args?: HonoRequestArgs): Promise<Response> } };
+-  settings: { $put(args?: HonoRequestArgs): Promise<Response> };
++  plugins: { deactivate: { $post(args?: HonoRequestArgs): Promise<Response> }; upload: { $post(args?: HonoRequestArgs): Promise<Response> }; install: { $post(args?: HonoRequestArgs): Promise<Response> } };
+   "tool-approvals": { decision: { $post(args?: HonoRequestArgs): Promise<Response> } };
+   "approval-requests": { ":approvalId": { decision: { $post(args?: HonoRequestArgs): Promise<Response> } } };
+-  marketplace: { plugins: { $get(args?: HonoRequestArgs): Promise<Response>; ":pluginId": { releases: { $post(args?: HonoRequestArgs): Promise<Response> }; install: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
+-  publications: { $post(args?: HonoRequestArgs): Promise<Response>; ":publicationId": { $put(args?: HonoRequestArgs): Promise<Response>; $delete(args?: HonoRequestArgs): Promise<Response> } };
++  marketplace: { plugins: { $get(args?: HonoRequestArgs): Promise<Response>; ":pluginId": { install: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
+   tools: { execute: { $post(args?: HonoRequestArgs): Promise<Response> } };
+ };
+ export const coreApi = hc(coreUrl, { init: { credentials: "include" } }) as unknown as CoreApiClient;
+ 
+ let activeWorkspaceId: string | null = null;
+ let shellBootstrap: Promise<ShellBootstrap> | null = null;
+-let securityBootstrap: { workspaceId: string; promise: Promise<AuthSecurityBootstrap> } | null = null;
+ 
+ function workspaceFromLocation() {
+   const params = new URLSearchParams(window.location.search);
+@@ -107,7 +90,6 @@
+ 
+ export function invalidateApiCaches() {
+   shellBootstrap = null;
+-  securityBootstrap = null;
+ }
+ 
+ async function parseCoreError(response: Response) {
+@@ -161,25 +143,6 @@
+   );
+ }
+ 
+-export type CoreSessionValue = CoreSession;
+-export type WorkspaceSummaryValue = WorkspaceSummary;
+-export type RuntimeSettingsTabValue = RuntimeSettingsTab;
+-
+-export type MarketplacePluginValue = MarketplacePlugin;
+-export type PluginInstallResultValue = PluginInstallResult;
+-export type AuthSecurityBootstrapValue = AuthSecurityBootstrap;
+-export type AuthSecuritySummary = AuthSecurityBootstrap["summary"];
+-export type WorkspaceDomainValue = WorkspaceDomain;
+-
+-export type MailSummary = {
+-  providers: MailProviderPublicSummary[];
+-  templates: MailTemplate[];
+-  events: { id: string; provider_id: string | null; template_key: string | null; status: string; purpose: string; error_safe: string | null; created_at: string; completed_at: string | null }[];
+-  activeProvider: MailProviderPublicSummary | null;
+-};
+-
+-export type ShellBootstrapValue = ShellBootstrap;
+-
+ export function loadShellBootstrap(workspaceId = workspaceFromLocation()): Promise<ShellBootstrap> {
+   if (!shellBootstrap) {
+     const request = workspaceId
+@@ -259,16 +222,8 @@
+   return coreResponse(coreApi.workspaces[":workspaceId"].rbac.me.$get({ param: { workspaceId: currentWorkspaceId() } }), rbacMeSchema);
+ }
+ 
+-export async function loadWorkspaceMembers(workspaceId = currentWorkspaceId()): Promise<WorkspaceMember[]> {
+-  return coreResponse(coreApi.workspaces[":workspaceId"].rbac.members.$get({ param: { workspaceId } }), workspaceMemberListSchema).then((result) => result.members);
+-}
+-
+ export function runtimeSurfaceUrl(surfaceId: string): string {
+   return `${coreUrl}/runtime/ui/surfaces/${encodeURIComponent(surfaceId)}?workspaceId=${encodeURIComponent(currentWorkspaceId())}`;
+-}
+-
+-export async function loadLayout(): Promise<WorkspaceLayout | null> {
+-  return (await loadShellBootstrap()).layout;
+ }
+ 
+ export async function saveLayout(state: ShellState): Promise<void> {
+@@ -287,11 +242,6 @@
+ export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> {
+   const bootstrap = await loadShellBootstrap();
+   return bootstrap.settingsNavigation.tabs.map((item) => item.tab);
+-}
+-
+-export async function reorderSettingsTabs(tabIds: string[]): Promise<void> {
+-  await coreResponse(coreApi.workspaces[":workspaceId"].settings.tabs.order.$post({ param: { workspaceId: currentWorkspaceId() }, json: { tabIds } }), { parse: () => undefined });
+-  resetShellBootstrap();
+ }
+ 
+ export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTabResolution> {
+@@ -299,61 +249,6 @@
+   const resolution = bootstrap.settingsNavigation.tabs.find((item) => item.tab.id === tabId);
+   if (!resolution) throw new CoreRequestError(404, "not_found", `Settings tab ${tabId} is not available.`);
+   return runtimeSettingsTabResolutionSchema.parse(resolution);
+-}
+-
+-export async function loadWorkspacePublications(): Promise<WorkspacePublicationList> {
+-  return coreResponse(coreApi.workspaces[":workspaceId"].publications.$get({ param: { workspaceId: currentWorkspaceId() } }), workspacePublicationListSchema);
+-}
+-
+-export async function loadAuthSecuritySummary(workspaceId = currentWorkspaceId()): Promise<AuthSecuritySummary> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].auth["security-bootstrap"].$get({ param: { workspaceId } }), authSecurityBootstrapSchema)).summary;
+-}
+-
+-export async function loadAuthSessionsSummary(workspaceId = currentWorkspaceId()): Promise<AuthSecurityBootstrap["sessions"]> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].auth["security-bootstrap"].$get({ param: { workspaceId } }), authSecurityBootstrapSchema)).sessions;
+-}
+-
+-export async function saveAuthPolicy(policy: AuthSecuritySummary["policy"], workspaceId = currentWorkspaceId()): Promise<AuthSecuritySummary["policy"]> {
+-  const result = await coreResponse(
+-    coreApi.workspaces[":workspaceId"].auth.policy.$put({
+-      param: { workspaceId },
+-      json: { workspaceId, registrationMode: policy.registrationMode, requireEmailVerification: policy.requireEmailVerification, allowPasskeyRegistration: policy.allowPasskeyRegistration, allowPasskeySignin: policy.allowPasskeySignin },
+-    }),
+-    { parse: (value) => z.object({ policy: authPolicySchema }).parse(value) },
+-  );
+-  return result.policy;
+-}
+-
+-export async function saveAuthMethod(method: AuthSecuritySummary["methods"][number], workspaceId = currentWorkspaceId()): Promise<AuthSecuritySummary["methods"][number]> {
+-  const result = await coreResponse(
+-    coreApi.workspaces[":workspaceId"].auth.methods[":methodId"].$put({
+-      param: { workspaceId, methodId: method.id },
+-      json: { workspaceId, type: method.type, providerId: method.providerId, title: method.title, status: method.status, publicVisible: method.publicVisible, displayOrder: method.displayOrder },
+-    }),
+-    { parse: (value) => z.object({ method: authMethodSchema }).parse(value) },
+-  );
+-  return result.method;
+-}
+-
+-export async function loadAuthUiContributions(workspaceId = currentWorkspaceId()): Promise<import("@v2/auth-contracts").AuthUiContribution[]> {
+-  const result = await coreResponse(coreApi.workspaces[":workspaceId"].auth["ui-contributions"].$get({ param: { workspaceId } }), { parse: (value) => z.object({ contributions: z.array(authUiContributionSchema) }).parse(value) });
+-  return result.contributions;
+-}
+-
+-export async function createWorkspacePublication(input: { pluginId: string; contributionKind: "route" | "surface" | "tool"; contributionId: string; publicPath?: string; title?: string; access?: "anonymous" | "authenticated" }): Promise<WorkspacePublication> {
+-  return (await coreResponse(coreApi.publications.$post({ json: { workspaceId: currentWorkspaceId(), ...input } }), workspacePublicationEnvelopeSchema)).publication;
+-}
+-
+-export async function updateWorkspacePublication(publicationId: string, input: { title?: string; publicPath?: string; status?: "draft" | "published" | "unpublished" | "disabled"; access?: "anonymous" | "authenticated"; authenticationMode?: "anonymous" | "customer" | "verified" }): Promise<WorkspacePublication> {
+-  return (await coreResponse(coreApi.publications[":publicationId"].$put({ param: { publicationId }, json: { workspaceId: currentWorkspaceId(), ...input } }), workspacePublicationEnvelopeSchema)).publication;
+-}
+-
+-export async function deleteWorkspacePublication(publicationId: string): Promise<void> {
+-  await coreResponse(coreApi.publications[":publicationId"].$delete({ param: { publicationId }, query: { workspaceId: currentWorkspaceId() } }), { parse: () => undefined });
+-}
+-
+-export async function loadAuditEvents(): Promise<AuditEventList> {
+-  return coreResponse(coreApi.workspaces[":workspaceId"]["audit-events"].$get({ param: { workspaceId: currentWorkspaceId() } }), auditEventListSchema);
+ }
+ 
+ export async function loadPublicPage(pathname: string): Promise<{ page: DeclarativePageContribution; routeParams: Record<string, string>; plugin: { id: string; name: string; version: string } | null }> {
+@@ -404,86 +299,11 @@
+   );
+ }
+ 
+-export async function activatePlugin(pluginId: string): Promise<void> {
+-  await coreResponse(coreApi.plugins.activate.$post({ json: { workspaceId: currentWorkspaceId(), pluginId } }), { parse: () => undefined });
+-  resetShellBootstrap();
+-}
+-
+ export async function deactivatePlugin(pluginId: string): Promise<void> {
+   await coreResponse(coreApi.plugins.deactivate.$post({ json: { workspaceId: currentWorkspaceId(), pluginId } }), { parse: () => undefined });
+   resetShellBootstrap();
+ }
+ 
+-export async function loadSettings(scope: "platform" | `plugin:${string}`): Promise<Record<string, unknown>> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].settings[":scope"].$get({ param: { workspaceId: currentWorkspaceId(), scope } }), { parse: (value) => value as { settings: Record<string, unknown> } })).settings;
+-}
+-
+-export async function saveSetting(scope: "platform" | `plugin:${string}`, key: string, value: unknown): Promise<void> {
+-  await coreResponse(coreApi.settings.$put({ json: { workspaceId: currentWorkspaceId(), scope, key, value } }), { parse: () => undefined });
+-}
+-
+-export async function loadGeneralSettings(): Promise<Record<string, unknown>> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].settings.general.$get({ param: { workspaceId: currentWorkspaceId() } }), { parse: (value) => value as { settings: Record<string, unknown> } })).settings;
+-}
+-
+-export async function saveGeneralSettings(input: Record<string, unknown>): Promise<Record<string, unknown>> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].settings.general.$put({ param: { workspaceId: currentWorkspaceId() }, json: input }), { parse: (value) => value as { settings: Record<string, unknown> } })).settings;
+-}
+-
+-export async function loadSecurityBootstrap(): Promise<AuthSecurityBootstrap> {
+-  const workspaceId = currentWorkspaceId();
+-  if (!securityBootstrap || securityBootstrap.workspaceId !== workspaceId) {
+-    securityBootstrap = {
+-      workspaceId,
+-      promise: coreResponse(coreApi.workspaces[":workspaceId"].auth["security-bootstrap"].$get({ param: { workspaceId } }), authSecurityBootstrapSchema).catch((error) => {
+-        securityBootstrap = null;
+-        throw error;
+-      }),
+-    };
+-  }
+-  return securityBootstrap.promise;
+-}
+-
+-export async function loadDomains(): Promise<WorkspaceDomain[]> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].domains.$get({ param: { workspaceId: currentWorkspaceId() } }), { parse: (value) => value as { domains: WorkspaceDomain[] } })).domains;
+-}
+-
+-export async function createDomain(input: { hostname: string; kind: WorkspaceDomain["kind"]; verificationMethod: WorkspaceDomain["verificationMethod"]; isPrimary?: boolean }): Promise<WorkspaceDomain[]> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].domains.$post({ param: { workspaceId: currentWorkspaceId() }, json: input }), { parse: (value) => value as { domains: WorkspaceDomain[] } })).domains;
+-}
+-
+-export async function verifyDomain(domainId: string): Promise<WorkspaceDomain[]> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].domains[":domainId"].verify.$post({ param: { workspaceId: currentWorkspaceId(), domainId } }), { parse: (value) => value as { domains: WorkspaceDomain[] } })).domains;
+-}
+-
+-export async function activateDomain(domainId: string): Promise<WorkspaceDomain[]> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].domains[":domainId"].activate.$post({ param: { workspaceId: currentWorkspaceId(), domainId } }), { parse: (value) => value as { domains: WorkspaceDomain[] } })).domains;
+-}
+-
+-export async function disableDomain(domainId: string): Promise<WorkspaceDomain[]> {
+-  return (await coreResponse(coreApi.workspaces[":workspaceId"].domains[":domainId"].disable.$post({ param: { workspaceId: currentWorkspaceId(), domainId } }), { parse: (value) => value as { domains: WorkspaceDomain[] } })).domains;
+-}
+-
+-export async function loadMailSummary(): Promise<MailSummary> {
+-  return coreResponse(coreApi.workspaces[":workspaceId"].mail.$get({ param: { workspaceId: currentWorkspaceId() } }), mailSummarySchema);
+-}
+-
+-export async function configureMailProvider(input: MailProviderConfigure): Promise<MailSummary> {
+-  return coreResponse(coreApi.workspaces[":workspaceId"].mail.providers.$post({ param: { workspaceId: currentWorkspaceId() }, json: input }), mailSummarySchema);
+-}
+-
+-export async function activateMailProvider(providerId: string): Promise<MailSummary> {
+-  return coreResponse(coreApi.workspaces[":workspaceId"].mail.providers[":providerId"].activate.$post({ param: { workspaceId: currentWorkspaceId(), providerId } }), mailSummarySchema);
+-}
+-
+-export async function disableMailProvider(providerId: string): Promise<MailSummary> {
+-  return coreResponse(coreApi.workspaces[":workspaceId"].mail.providers[":providerId"].disable.$post({ param: { workspaceId: currentWorkspaceId(), providerId } }), mailSummarySchema);
+-}
+-
+-export async function testMailProvider(providerId: string, to: string): Promise<MailProviderTestResult> {
+-  return coreResponse(coreApi.workspaces[":workspaceId"].mail.providers[":providerId"].test.$post({ param: { workspaceId: currentWorkspaceId(), providerId }, json: { to } }), { parse: (value) => value as MailProviderTestResult });
+-}
+-
+ export async function executeTool(toolId: string, approvalId?: string): Promise<ToolExecutionResult> {
+   return coreResponse(coreApi.tools.execute.$post({ json: { workspaceId: currentWorkspaceId(), toolId, ...(approvalId ? { approvalId } : {}) } }), { parse: (value) => value as ToolExecutionResult });
+ }
+@@ -524,16 +344,6 @@
+   const result = await coreResponse(coreApi.marketplace.plugins[":pluginId"].install.$post({ param: { pluginId }, query: { workspaceId: currentWorkspaceId() }, json: approvalId ? { approvalId } : {} }), pluginInstallResultSchema);
+   resetShellBootstrap();
+   return result;
+-}
+-
+-export async function publishMarketplaceRelease(pluginId: string, file: File, fields?: { category?: string; source?: string; status?: "draft" | "published" | "deprecated"; demoAvailable?: boolean }): Promise<{ status: string; bundle: PluginManifest; sensitiveCapabilities: string[] }> {
+-  const body = new FormData();
+-  body.append("file", file);
+-  if (fields?.category) body.append("category", fields.category);
+-  if (fields?.source) body.append("source", fields.source);
+-  if (fields?.status) body.append("status", fields.status);
+-  if (fields?.demoAvailable !== undefined) body.append("demoAvailable", String(fields.demoAvailable));
+-  return coreResponse(coreApi.marketplace.plugins[":pluginId"].releases.$post({ param: { pluginId }, body }), { parse: (value) => value as { status: string; bundle: PluginManifest; sensitiveCapabilities: string[] } });
+ }
+ 
+ export async function loadRuntimeTools(): Promise<ToolContribution[]> {
+@@ -553,7 +363,3 @@
+   resetShellBootstrap();
+   return manifest;
+ }
+-
+-export async function grantCapabilities(pluginId: string, capabilities: string[]): Promise<void> {
+-  await coreResponse(coreApi.plugins.grants.$post({ json: { workspaceId: currentWorkspaceId(), pluginId, capabilities } }), { parse: () => undefined });
+-}
+--- a/apps/web/src/SettingsPage.tsx
++++ b/apps/web/src/SettingsPage.tsx
+@@ -1,10 +1,9 @@
+-import { useEffect, useMemo, useState } from "react";
++import { useEffect, useState } from "react";
+ import type { PluginManifest } from "@v2/plugin-contracts";
+ import type { Notification } from "@v2/rpc-contracts";
+ import type { ShellState } from "@v2/ui-runtime";
+-import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
++import { Button, SurfaceCard } from "@v2/ui-kit";
+ import { loadActivePlugins, loadInstalledPlugins, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, type RuntimeSettingsTab, type RuntimeSettingsTabResolution } from "./api";
+-import type { WorkspaceSummary } from "./platform-contracts";
+ import { SettingsRenderer } from "./platform/SettingsRenderer";
+ import { composeShellFromSurfaces } from "./shell";
+ 
+@@ -12,7 +11,6 @@
+   shell: ShellState;
+   onShellChange: (state: ShellState) => void;
+   emit: (item: Notification) => void;
+-  workspace: WorkspaceSummary | null;
+   onRuntimeChanged: (plugins: PluginManifest[], activePluginIds: Set<string>, shell: ShellState) => void;
+ };
+ 
+@@ -22,14 +20,13 @@
+   return tabs.find((tab) => tab.id === desired)?.id ?? tabs[0]?.id ?? "";
+ }
+ 
+-export function SettingsPage({ shell, onShellChange, emit, workspace, onRuntimeChanged }: SettingsPageProps) {
++export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: SettingsPageProps) {
+   const [tabs, setTabs] = useState<RuntimeSettingsTab[]>([]);
+   const [selectedTabId, setSelectedTabId] = useState("");
+   const [resolution, setResolution] = useState<RuntimeSettingsTabResolution | null>(null);
+   const [status, setStatus] = useState("Settings ready");
+ 
+-  const allTabs = useMemo(() => tabs, [tabs]);
+-  const selectedTab = useMemo(() => allTabs.find((tab) => tab.id === selectedTabId) ?? null, [selectedTabId, allTabs]);
++  const selectedTab = tabs.find((tab) => tab.id === selectedTabId) ?? null;
+ 
+   useEffect(() => {
+     let alive = true;
+@@ -50,19 +47,6 @@
+     if (!selectedTabId) return;
+     const nextUrl = `/settings?tab=${encodeURIComponent(selectedTabId)}`;
+     if (window.location.pathname !== "/settings" || window.location.search !== `?tab=${encodeURIComponent(selectedTabId)}`) window.history.replaceState(null, "", nextUrl);
+-    if (!selectedTabId.startsWith("platform.settings.")) {
+-      let alive = true;
+-      setResolution(null);
+-      void loadSettingsTab(selectedTabId).then((loaded) => {
+-        if (!alive) return;
+-        setResolution(loaded);
+-        setStatus(`${loaded.tab.label} loaded`);
+-      }).catch((error) => {
+-        if (!alive) return;
+-        setStatus(error instanceof Error ? error.message : "Settings tab unavailable");
+-      });
+-      return () => { alive = false; };
+-    }
+     let alive = true;
+     void loadSettingsTab(selectedTabId).then((loaded) => {
+       if (!alive) return;
+@@ -70,7 +54,7 @@
+       setStatus(`${loaded.tab.label} loaded`);
+     }).catch((error) => {
+       if (!alive) return;
+-      setStatus(error instanceof Error ? error.message : "Platform settings unavailable");
++      setStatus(error instanceof Error ? error.message : "Settings tab unavailable");
+     });
+     return () => { alive = false; };
+   }, [selectedTabId]);
+@@ -84,20 +68,18 @@
+   return <div className="settings-hub">
+     <header className="settings-header">
+       <div className="settings-header-copy">
+-        <small>{workspace?.id ?? "no-workspace"}</small>
+         <h2>Settings</h2>
+         {selectedTabId === "platform.settings.security" ? <strong>Security administration</strong> : null}
+         <p>{status}</p>
+         <span className="settings-meta">{selectedTab ? selectedTab.label : "No tab selected"}</span>
+       </div>
+       <div className="settings-header-actions">
+-        <Badge>{allTabs.length} tabs</Badge>
+-        <Button onClick={() => void refreshRuntime()}>Refresh runtime</Button>
++        <Button onClick={() => void refreshRuntime()}>Reload</Button>
+       </div>
+     </header>
+     <div className="settings-layout">
+       <nav className="settings-tabs" aria-label="Settings tabs">
+-        {allTabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "settings-tab active" : "settings-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
++        {tabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "settings-tab active" : "settings-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
+           <span>{tab.label}</span>
+           <small>{"ownerName" in tab ? tab.ownerName : "Platform"}</small>
+         </button>)}
+--- a/apps/web/src/App.tsx
++++ b/apps/web/src/App.tsx
+@@ -432,7 +432,7 @@
+         {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} workspace={workspace} permissions={permissions} onOpenPlugins={() => setActivePage("plugins")} onOpenSettings={() => openPage("settings", "/settings")} /> : null}
+         {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} permissions={permissions} onChanged={() => void refreshPlugins()} /></div> : null}
+         {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
+-        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} workspace={workspace} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
++        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
+         {activePage === "profile" ? <ProfilePage session={session} workspaces={workspaces} currentWorkspace={workspace} onSessionChanged={setSession} onOpenSecurity={openSecuritySettings} emit={emit} /> : null}
+         {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
+       </main>
+--- a/apps/core-worker/src/index.ts
++++ b/apps/core-worker/src/index.ts
+@@ -383,11 +383,7 @@
+     case "platform.settings.mail.events":
+       return c.json({ status: "ok", data: { rows: (await repo.mailSummary(workspaceId)).events }, error: null, approvalId: null, auditEventId: null });
+     case "platform.settings.security.bootstrap": {
+-      const [security, members, roles] = await Promise.all([
+-        authAdminJson<{ summary: { policy: { registrationMode: string; requireEmailVerification: boolean; allowPasskeyRegistration: boolean; allowPasskeySignin: boolean }; methods: unknown[]; publishedLoginContributions: number; serverSideAvailability: Record<string, boolean>; emailDelivery: Record<string, unknown>; bootstrapAdmin: boolean }; sessions: { sessions: number; passkeys: number } }>(c, `/admin/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`),
+-        repo.workspaceMemberRecords(workspaceId),
+-        repo.workspaceRoles(workspaceId),
+-      ]);
++      const security = await authAdminJson<{ summary: { policy: { registrationMode: string; requireEmailVerification: boolean; allowPasskeyRegistration: boolean; allowPasskeySignin: boolean } } }>(c, `/admin/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`);
+       return c.json({
+         status: "ok",
+         data: {
+@@ -395,11 +391,6 @@
+           requireEmailVerification: security.summary.policy.requireEmailVerification,
+           allowPasskeyRegistration: security.summary.policy.allowPasskeyRegistration,
+           allowPasskeySignin: security.summary.policy.allowPasskeySignin,
+-          methods: security.summary.methods,
+-          sessions: security.sessions,
+-          roles,
+-          members,
+-          overrides: members.flatMap((member) => member.overrides.map((override) => ({ workspaceId, userId: member.user.id, ...override }))),
+         },
+         error: null,
+         approvalId: null,
+@@ -425,8 +416,6 @@
+         approvalId: null,
+         auditEventId: null,
+       });
+-    case "platform.settings.rbac.overrides":
+-      return c.json({ status: "ok", data: { rows: (await repo.workspaceMemberRecords(workspaceId)).flatMap((member) => member.overrides.map((override) => ({ workspaceId, userId: member.user.id, ...override }))) }, error: null, approvalId: null, auditEventId: null });
+     case "platform.settings.audit.events":
+       return c.json({ status: "ok", data: { rows: (await repo.auditEvents(workspaceId)).map((event) => ({ ...event, payload: event.payload ? JSON.stringify(event.payload) : "" })) }, error: null, approvalId: null, auditEventId: null });
+     case "platform.settings.plans.list":
+@@ -535,7 +524,7 @@
+       const actor = c.get("user");
+       const membership = (await repo.workspaceMemberRecords(workspaceId)).find((member) => member.user.id === targetUserId);
+       if (!actor) return c.json({ status: "denied", data: null, error: "Authentication is required.", approvalId: null, auditEventId: null }, 401);
+-      if (!membership) return c.json({ status: "denied", data: null, error: "Target user is not a workspace member.", approvalId: null, auditEventId: null }, 404);
++      if (!membership || membership.status !== "active") return c.json({ status: "denied", data: null, error: "Target user is not an active workspace member.", approvalId: null, auditEventId: null }, 404);
+       if (!reason) return c.json(errorResponse(failure("validation_failed", "A reason is required for impersonation.")), 400);
+       if (!await repo.hasPermission(workspaceId, actor, "workspace.impersonate")) return c.json({ status: "denied", data: null, error: "workspace.impersonate permission is required.", approvalId: null, auditEventId: null }, 403);
+       const headers = new Headers({ "content-type": "application/json" });
+--- a/apps/core-worker/src/repository.ts
++++ b/apps/core-worker/src/repository.ts
+@@ -477,32 +477,51 @@
+     return rows.results;
+   }
+ 
++  private async permissionEvaluationForUser(workspaceId: string, userId: string) {
++    const [basePermissions, overrides] = await Promise.all([
++      this.permissionsForUser(workspaceId, userId),
++      this.db.prepare(`SELECT overrides.permission, overrides.effect
++        FROM workspace_member_permission_overrides overrides
++        INNER JOIN workspace_members members
++          ON members.workspace_id = overrides.workspace_id
++          AND members.user_id = overrides.user_id
++          AND members.status = 'active'
++        WHERE overrides.workspace_id = ? AND overrides.user_id = ?
++        ORDER BY overrides.permission`)
++        .bind(workspaceId, userId)
++        .all<{ permission: WorkspacePermission; effect: "allow" | "deny" }>(),
++    ]);
++    const permissions = new Set(basePermissions);
++    const denied = new Set<WorkspacePermission>();
++    for (const override of overrides.results) {
++      if (override.effect === "deny") {
++        permissions.delete(override.permission);
++        denied.add(override.permission);
++      } else {
++        permissions.add(override.permission);
++      }
++    }
++    return { permissions: [...permissions].sort(), denied };
++  }
++
+   async effectivePermissionsForUser(workspaceId: string, userId: string): Promise<WorkspacePermission[]> {
+-    const permissions = new Set(await this.permissionsForUser(workspaceId, userId));
+-    const overrides = await this.memberPermissionOverrides(workspaceId, userId);
+-    for (const override of overrides) {
+-      if (override.effect === "deny") permissions.delete(override.permission);
+-      else permissions.add(override.permission);
+-    }
+-    return [...permissions].sort();
++    return (await this.permissionEvaluationForUser(workspaceId, userId)).permissions;
+   }
+ 
+   async hasPermission(workspaceId: string, user: { id: string; email: string } | null, permission: WorkspacePermission): Promise<boolean> {
+     if (!user) return false;
+-    const overrides = await this.memberPermissionOverrides(workspaceId, user.id);
+-    if (overrides.some((override) => override.permission === permission && override.effect === "deny")) return false;
+-    const permissions = await this.effectivePermissionsForUser(workspaceId, user.id);
+-    return permissions.includes(permission) || permissions.includes("workspace.admin");
++    const evaluation = await this.permissionEvaluationForUser(workspaceId, user.id);
++    if (evaluation.denied.has(permission)) return false;
++    return evaluation.permissions.includes(permission) || evaluation.permissions.includes("workspace.admin");
+   }
+ 
+   async hasAllPermissions(workspaceId: string, user: { id: string; email: string } | null, permissions: WorkspacePermission[]): Promise<boolean> {
+     if (!permissions.length) return await this.hasPermission(workspaceId, user, "workspace.read");
+     if (!user) return false;
+-    const overrides = await this.memberPermissionOverrides(workspaceId, user.id);
+-    if (permissions.some((permission) => overrides.some((override) => override.permission === permission && override.effect === "deny"))) return false;
+-    const granted = new Set(await this.effectivePermissionsForUser(workspaceId, user.id));
+-    if (granted.has("workspace.admin")) return true;
+-    return permissions.every((permission) => granted.has(permission));
++    const evaluation = await this.permissionEvaluationForUser(workspaceId, user.id);
++    if (permissions.some((permission) => evaluation.denied.has(permission))) return false;
++    if (evaluation.permissions.includes("workspace.admin")) return true;
++    return permissions.every((permission) => evaluation.permissions.includes(permission));
+   }
+ 
+   async memberSummary(workspaceId: string, user: { id: string; email: string } | null) {
+@@ -517,61 +536,83 @@
+     return { user: { id: user.id, email: user.email }, roles: rows.results, permissions: await this.effectivePermissionsForUser(workspaceId, user.id), bootstrap: false };
+   }
+ 
+-  async workspaceMembers(workspaceId: string) {
+-    const rows = await this.db.prepare(`SELECT members.user_id, members.email, members.status, roles.name, roles.system_key
+-      FROM workspace_members members
+-      LEFT JOIN workspace_member_roles member_roles ON member_roles.workspace_id = members.workspace_id AND member_roles.user_id = members.user_id
+-      LEFT JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
+-      WHERE members.workspace_id = ?
+-      ORDER BY members.updated_at DESC, members.email, roles.name`)
+-      .bind(workspaceId)
+-      .all<{ user_id: string; email: string | null; status: "active" | "invited" | "disabled"; name: string | null; system_key: string | null }>();
+-    const members = new Map<string, { user: { id: string; email: string | null; name: string | null }; status: "active" | "invited" | "disabled"; roles: Array<{ name: string; system_key: string | null }>; permissions: WorkspacePermission[] }>();
+-    for (const row of rows.results) {
+-      const current = members.get(row.user_id) ?? { user: { id: row.user_id, email: row.email, name: null }, status: row.status, roles: [], permissions: [] };
+-      if (row.name) current.roles.push({ name: row.name, system_key: row.system_key });
+-      members.set(row.user_id, current);
+-    }
+-    for (const member of members.values()) {
+-      member.permissions = await this.permissionsForUser(workspaceId, member.user.id);
+-    }
+-    return Array.from(members.values());
+-  }
+-
+   async workspaceMemberRecords(workspaceId: string): Promise<WorkspaceMemberRecord[]> {
+-    const rows = await this.db.prepare(`SELECT members.user_id, members.email, members.status, roles.id AS role_id, roles.name, roles.system_key
+-      FROM workspace_members members
+-      LEFT JOIN workspace_member_roles member_roles ON member_roles.workspace_id = members.workspace_id AND member_roles.user_id = members.user_id
+-      LEFT JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
+-      WHERE members.workspace_id = ?
+-      ORDER BY members.updated_at DESC, members.email, roles.name`)
+-      .bind(workspaceId)
+-      .all<{ user_id: string; email: string | null; status: "active" | "invited" | "disabled"; role_id: string | null; name: string | null; system_key: string | null }>();
++    const [memberRows, permissionRows, overrideRows] = await Promise.all([
++      this.db.prepare(`SELECT members.user_id, members.email, members.status, roles.id AS role_id, roles.name, roles.system_key
++        FROM workspace_members members
++        LEFT JOIN workspace_member_roles member_roles ON member_roles.workspace_id = members.workspace_id AND member_roles.user_id = members.user_id
++        LEFT JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
++        WHERE members.workspace_id = ?
++        ORDER BY members.updated_at DESC, members.email, roles.name`)
++        .bind(workspaceId)
++        .all<{ user_id: string; email: string | null; status: "active" | "invited" | "disabled"; role_id: string | null; name: string | null; system_key: string | null }>(),
++      this.db.prepare(`SELECT DISTINCT member_roles.user_id, permissions.permission
++        FROM workspace_member_roles member_roles
++        INNER JOIN workspace_members members
++          ON members.workspace_id = member_roles.workspace_id
++          AND members.user_id = member_roles.user_id
++          AND members.status = 'active'
++        INNER JOIN workspace_role_permissions permissions
++          ON permissions.workspace_id = member_roles.workspace_id
++          AND permissions.role_id = member_roles.role_id
++        WHERE member_roles.workspace_id = ?
++        ORDER BY member_roles.user_id, permissions.permission`)
++        .bind(workspaceId)
++        .all<{ user_id: string; permission: WorkspacePermission }>(),
++      this.db.prepare("SELECT user_id, permission, effect FROM workspace_member_permission_overrides WHERE workspace_id = ? ORDER BY user_id, permission")
++        .bind(workspaceId)
++        .all<{ user_id: string; permission: WorkspacePermission; effect: "allow" | "deny" }>(),
++    ]);
+     const members = new Map<string, WorkspaceMemberRecord>();
+-    for (const row of rows.results) {
++    for (const row of memberRows.results) {
+       const current = members.get(row.user_id) ?? { user: { id: row.user_id, email: row.email }, status: row.status, roles: [], permissions: [], overrides: [] };
+       if (row.role_id && row.name) current.roles.push({ id: row.role_id, name: row.name, systemKey: row.system_key });
+       members.set(row.user_id, current);
+     }
++    for (const row of permissionRows.results) {
++      const member = members.get(row.user_id);
++      if (member && !member.permissions.includes(row.permission)) member.permissions.push(row.permission);
++    }
++    for (const override of overrideRows.results) {
++      const member = members.get(override.user_id);
++      if (!member) continue;
++      member.overrides.push({ permission: override.permission, effect: override.effect });
++      if (member.status !== "active") continue;
++      if (override.effect === "deny") member.permissions = member.permissions.filter((permission) => permission !== override.permission);
++      else if (!member.permissions.includes(override.permission)) member.permissions.push(override.permission);
++    }
+     for (const member of members.values()) {
+-      member.permissions = await this.effectivePermissionsForUser(workspaceId, member.user.id);
+-      member.overrides = await this.memberPermissionOverrides(workspaceId, member.user.id);
++      member.permissions.sort();
++      member.overrides.sort((left, right) => left.permission.localeCompare(right.permission));
+     }
+     return Array.from(members.values());
+   }
+ 
+   async workspaceRoles(workspaceId: string): Promise<WorkspaceRoleRecord[]> {
+-    const rows = await this.db.prepare(`SELECT roles.id, roles.name, roles.system_key, roles.description
+-      FROM workspace_roles roles
+-      WHERE roles.workspace_id = ?
+-      ORDER BY roles.system_key IS NULL, roles.name`)
+-      .bind(workspaceId)
+-      .all<{ id: string; name: string; system_key: string | null; description: string | null }>();
+-    const result: WorkspaceRoleRecord[] = [];
+-    for (const role of rows.results) {
+-      result.push({ id: role.id, name: role.name, systemKey: role.system_key, description: role.description, permissions: await this.rolePermissionsFor(workspaceId, role.id) });
++    const [roles, permissionRows] = await Promise.all([
++      this.db.prepare(`SELECT id, name, system_key, description
++        FROM workspace_roles
++        WHERE workspace_id = ?
++        ORDER BY system_key IS NULL, name`)
++        .bind(workspaceId)
++        .all<{ id: string; name: string; system_key: string | null; description: string | null }>(),
++      this.db.prepare("SELECT role_id, permission FROM workspace_role_permissions WHERE workspace_id = ? ORDER BY role_id, permission")
++        .bind(workspaceId)
++        .all<{ role_id: string; permission: string }>(),
++    ]);
++    const permissionsByRole = new Map<string, string[]>();
++    for (const row of permissionRows.results) {
++      const permissions = permissionsByRole.get(row.role_id) ?? [];
++      permissions.push(row.permission);
++      permissionsByRole.set(row.role_id, permissions);
+     }
+-    return result;
++    return roles.results.map((role) => ({
++      id: role.id,
++      name: role.name,
++      systemKey: role.system_key,
++      description: role.description,
++      permissions: permissionsByRole.get(role.id) ?? [],
++    }));
+   }
+ 
+   async createWorkspaceRole(workspaceId: string, input: { name: string; description?: string | null }, actorId?: string) {

@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { PluginManifest } from "@v2/plugin-contracts";
 import type { Notification } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
+import { Button, SurfaceCard } from "@v2/ui-kit";
 import { loadActivePlugins, loadInstalledPlugins, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, type RuntimeSettingsTab, type RuntimeSettingsTabResolution } from "./api";
-import type { WorkspaceSummary } from "./platform-contracts";
 import { SettingsRenderer } from "./platform/SettingsRenderer";
 import { composeShellFromSurfaces } from "./shell";
 
@@ -12,7 +11,6 @@ type SettingsPageProps = {
   shell: ShellState;
   onShellChange: (state: ShellState) => void;
   emit: (item: Notification) => void;
-  workspace: WorkspaceSummary | null;
   onRuntimeChanged: (plugins: PluginManifest[], activePluginIds: Set<string>, shell: ShellState) => void;
 };
 
@@ -22,14 +20,13 @@ function selectedTabFromUrl(tabs: RuntimeSettingsTab[]) {
   return tabs.find((tab) => tab.id === desired)?.id ?? tabs[0]?.id ?? "";
 }
 
-export function SettingsPage({ shell, onShellChange, emit, workspace, onRuntimeChanged }: SettingsPageProps) {
+export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: SettingsPageProps) {
   const [tabs, setTabs] = useState<RuntimeSettingsTab[]>([]);
   const [selectedTabId, setSelectedTabId] = useState("");
   const [resolution, setResolution] = useState<RuntimeSettingsTabResolution | null>(null);
   const [status, setStatus] = useState("Settings ready");
 
-  const allTabs = useMemo(() => tabs, [tabs]);
-  const selectedTab = useMemo(() => allTabs.find((tab) => tab.id === selectedTabId) ?? null, [selectedTabId, allTabs]);
+  const selectedTab = tabs.find((tab) => tab.id === selectedTabId) ?? null;
 
   useEffect(() => {
     let alive = true;
@@ -50,19 +47,6 @@ export function SettingsPage({ shell, onShellChange, emit, workspace, onRuntimeC
     if (!selectedTabId) return;
     const nextUrl = `/settings?tab=${encodeURIComponent(selectedTabId)}`;
     if (window.location.pathname !== "/settings" || window.location.search !== `?tab=${encodeURIComponent(selectedTabId)}`) window.history.replaceState(null, "", nextUrl);
-    if (!selectedTabId.startsWith("platform.settings.")) {
-      let alive = true;
-      setResolution(null);
-      void loadSettingsTab(selectedTabId).then((loaded) => {
-        if (!alive) return;
-        setResolution(loaded);
-        setStatus(`${loaded.tab.label} loaded`);
-      }).catch((error) => {
-        if (!alive) return;
-        setStatus(error instanceof Error ? error.message : "Settings tab unavailable");
-      });
-      return () => { alive = false; };
-    }
     let alive = true;
     void loadSettingsTab(selectedTabId).then((loaded) => {
       if (!alive) return;
@@ -70,7 +54,7 @@ export function SettingsPage({ shell, onShellChange, emit, workspace, onRuntimeC
       setStatus(`${loaded.tab.label} loaded`);
     }).catch((error) => {
       if (!alive) return;
-      setStatus(error instanceof Error ? error.message : "Platform settings unavailable");
+      setStatus(error instanceof Error ? error.message : "Settings tab unavailable");
     });
     return () => { alive = false; };
   }, [selectedTabId]);
@@ -84,20 +68,18 @@ export function SettingsPage({ shell, onShellChange, emit, workspace, onRuntimeC
   return <div className="settings-hub">
     <header className="settings-header">
       <div className="settings-header-copy">
-        <small>{workspace?.id ?? "no-workspace"}</small>
         <h2>Settings</h2>
         {selectedTabId === "platform.settings.security" ? <strong>Security administration</strong> : null}
         <p>{status}</p>
         <span className="settings-meta">{selectedTab ? selectedTab.label : "No tab selected"}</span>
       </div>
       <div className="settings-header-actions">
-        <Badge>{allTabs.length} tabs</Badge>
-        <Button onClick={() => void refreshRuntime()}>Refresh runtime</Button>
+        <Button onClick={() => void refreshRuntime()}>Reload</Button>
       </div>
     </header>
     <div className="settings-layout">
       <nav className="settings-tabs" aria-label="Settings tabs">
-        {allTabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "settings-tab active" : "settings-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
+        {tabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "settings-tab active" : "settings-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
           <span>{tab.label}</span>
           <small>{"ownerName" in tab ? tab.ownerName : "Platform"}</small>
         </button>)}
