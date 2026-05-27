@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { z } from "zod";
 import type { AuthMethod, AuthPolicy } from "@v2/auth-contracts";
 import { notification } from "@v2/feedback-runtime";
 import type { PluginManifest } from "@v2/plugin-contracts";
-import type { Notification } from "@v2/rpc-contracts";
+import type { ApprovalRequest, Notification } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { activateDomain, activateMailProvider, configureMailProvider, createDomain, disableDomain, disableMailProvider, loadActivePlugins, loadDomains, loadGeneralSettings, loadInstalledPlugins, loadMailSummary, loadMarketplacePlugins, loadSecurityBootstrap, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, saveGeneralSettings, testMailProvider, verifyDomain, type MailSummary, type MarketplacePlugin, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type WorkspaceDomain, type WorkspaceSummary, CoreRequestError } from "./api";
+import { activateDomain, activateMailProvider, configureMailProvider, createDomain, createWorkspacePublication, deleteWorkspacePublication, decideApprovalRequest, disableDomain, disableMailProvider, loadActivePlugins, loadAuditEvents, loadDomains, loadGeneralSettings, loadInstalledPlugins, loadMailSummary, loadMarketplacePlugins, loadPendingApprovalRequests, loadSecurityBootstrap, loadSettingsTab, loadSettingsTabs, loadWorkspacePublications, loadWorkspaceUiSurfaces, saveGeneralSettings, testMailProvider, updateWorkspacePublication, verifyDomain, type MailSummary, type MarketplacePlugin, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type WorkspaceDomain, type WorkspaceSummary, CoreRequestError } from "./api";
 import { saveAuthMethod, saveAuthPolicy, type AuthSecuritySummary } from "./auth-api";
 import { PluginManagerPanel } from "./platform/PluginManagerPanel";
 import { RuntimeShellEditor } from "./platform/RuntimeShellEditor";
 import { TemplateRenderer } from "./platform/TemplateRenderer";
 import { composeShellFromSurfaces } from "./shell";
+import type { AuditEvent, WorkspacePublication } from "./platform-contracts";
 
 type SettingsPageProps = {
   shell: ShellState;
@@ -49,6 +51,59 @@ function backendMessage(error: unknown, fallback: string) {
   if (error instanceof CoreRequestError) return `${error.status}${error.code ? ` ${error.code}` : ""}: ${error.message}`;
   if (error instanceof Error) return error.message;
   return fallback;
+}
+
+type PublicationModalState =
+  | { mode: "create"; publication: null }
+  | { mode: "edit"; publication: WorkspacePublication }
+  | { mode: "delete"; publication: WorkspacePublication };
+
+type PublicationDraft = {
+  pluginId: string;
+  contributionKind: WorkspacePublication["contributionKind"];
+  contributionId: string;
+  publicPath: string;
+  title: string;
+  access: WorkspacePublication["access"];
+  status: WorkspacePublication["status"];
+  authenticationMode: NonNullable<WorkspacePublication["authenticationMode"]>;
+};
+
+const publicationDraftSchema = z.object({
+  pluginId: z.string().min(1),
+  contributionKind: z.enum(["route", "surface", "tool"]),
+  contributionId: z.string().min(1),
+  publicPath: z.string().min(1),
+  title: z.string().min(1),
+  access: z.enum(["anonymous", "authenticated"]),
+  status: z.enum(["draft", "published", "unpublished", "disabled"]),
+  authenticationMode: z.enum(["anonymous", "customer", "verified"]),
+});
+
+function emptyPublicationDraft(): PublicationDraft {
+  return {
+    pluginId: "",
+    contributionKind: "route",
+    contributionId: "",
+    publicPath: "/",
+    title: "",
+    access: "authenticated",
+    status: "draft",
+    authenticationMode: "anonymous",
+  };
+}
+
+function publicationDraftFrom(publication: WorkspacePublication): PublicationDraft {
+  return {
+    pluginId: publication.pluginId,
+    contributionKind: publication.contributionKind,
+    contributionId: publication.contributionId,
+    publicPath: publication.publicPath,
+    title: publication.title,
+    access: publication.access,
+    status: publication.status,
+    authenticationMode: publication.authenticationMode ?? "anonymous",
+  };
 }
 
 function GeneralPanel({ emit }: { emit: (item: Notification) => void }) {
@@ -93,6 +148,299 @@ function GeneralPanel({ emit }: { emit: (item: Notification) => void }) {
       <Button className="primary" type="submit" disabled={busy}>Save</Button>
     </form>
   </SurfaceCard>;
+}
+
+function SecurityAdministrationCrud({ emit }: { emit: (item: Notification) => void }) {
+  const [installedPlugins, setInstalledPlugins] = useState<PluginManifest[]>([]);
+  const [publications, setPublications] = useState<WorkspacePublication[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [modal, setModal] = useState<PublicationModalState | null>(null);
+  const [draft, setDraft] = useState<PublicationDraft>(emptyPublicationDraft());
+  const [status, setStatus] = useState("Loading security workspace data...");
+  const [busy, setBusy] = useState(false);
+  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
+  const [submitBusy, setSubmitBusy] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      const [pluginsResult, publicationsResult, approvalsResult, auditResult] = await Promise.allSettled([
+        loadInstalledPlugins(),
+        loadWorkspacePublications(),
+        loadPendingApprovalRequests(),
+        loadAuditEvents(),
+      ]);
+      if (pluginsResult.status === "fulfilled") setInstalledPlugins(pluginsResult.value);
+      if (publicationsResult.status === "fulfilled") setPublications(publicationsResult.value.publications);
+      if (approvalsResult.status === "fulfilled") setApprovals(approvalsResult.value);
+      if (auditResult.status === "fulfilled") setAuditEvents(auditResult.value.events);
+      setStatus("Security records loaded");
+    } catch (error) {
+      setStatus(backendMessage(error, "Security records unavailable"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  const openCreate = () => {
+    setDraft(emptyPublicationDraft());
+    setModal({ mode: "create", publication: null });
+    setModalError(null);
+  };
+
+  const openEdit = (publication: WorkspacePublication) => {
+    setDraft(publicationDraftFrom(publication));
+    setModal({ mode: "edit", publication });
+    setModalError(null);
+  };
+
+  const openDelete = (publication: WorkspacePublication) => {
+    setModal({ mode: "delete", publication });
+    setModalError(null);
+  };
+
+  const closeModal = () => {
+    setModal(null);
+    setModalError(null);
+  };
+
+  const savePublication = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!modal) return;
+    const parsed = publicationDraftSchema.safeParse(draft);
+    if (!parsed.success) {
+      setModalError(parsed.error.issues[0]?.message ?? "Publication data is invalid.");
+      return;
+    }
+    setSubmitBusy(true);
+    try {
+      if (modal.mode === "create") {
+        const publication = await createWorkspacePublication({
+          pluginId: parsed.data.pluginId,
+          contributionKind: parsed.data.contributionKind,
+          contributionId: parsed.data.contributionId,
+          publicPath: parsed.data.publicPath,
+          title: parsed.data.title,
+          access: parsed.data.access,
+        });
+        setPublications((current) => [publication, ...current.filter((item) => item.id !== publication.id)]);
+        emit(notification("success", "Publication created", `${publication.title} is now tracked by Core.`));
+      } else if (modal.mode === "edit") {
+        const publication = await updateWorkspacePublication(modal.publication.id, {
+          title: parsed.data.title,
+          publicPath: parsed.data.publicPath,
+          status: parsed.data.status,
+          access: parsed.data.access,
+          authenticationMode: parsed.data.authenticationMode,
+        });
+        setPublications((current) => current.map((item) => item.id === publication.id ? publication : item));
+        emit(notification("success", "Publication updated", `${publication.title} was saved.`));
+      }
+      setStatus("Publication saved");
+      closeModal();
+      await refresh();
+    } catch (error) {
+      const message = backendMessage(error, "Publication could not be saved");
+      setModalError(message);
+      setStatus(message);
+      emit(notification("error", "Publication failed", message));
+    } finally {
+      setSubmitBusy(false);
+    }
+  };
+
+  const deletePublication = async () => {
+    if (!modal || modal.mode !== "delete") return;
+    setSubmitBusy(true);
+    try {
+      await deleteWorkspacePublication(modal.publication.id);
+      setPublications((current) => current.filter((item) => item.id !== modal.publication.id));
+      setStatus("Publication deleted");
+      emit(notification("success", "Publication deleted", `${modal.publication.title} was removed.`));
+      closeModal();
+      await refresh();
+    } catch (error) {
+      const message = backendMessage(error, "Publication could not be deleted");
+      setModalError(message);
+      setStatus(message);
+      emit(notification("error", "Publication delete failed", message));
+    } finally {
+      setSubmitBusy(false);
+    }
+  };
+
+  const decideApproval = async (approvalId: string, decision: "approved" | "denied") => {
+    setApprovalBusyId(approvalId);
+    try {
+      await decideApprovalRequest(approvalId, decision);
+      await refresh();
+      setStatus(`Approval ${decision}`);
+      emit(notification("success", "Approval updated", `Request ${approvalId.slice(0, 8)} was ${decision}.`));
+    } catch (error) {
+      const message = backendMessage(error, "Approval decision failed");
+      setStatus(message);
+      emit(notification("error", "Approval failed", message));
+    } finally {
+      setApprovalBusyId(null);
+    }
+  };
+
+  const pluginOptions = installedPlugins.filter((plugin) => plugin.id).map((plugin) => ({ id: plugin.id, name: plugin.name }));
+
+  return <section className="settings-subpanel">
+    <div className="surface-header">
+      <div><small>Core workspace access</small><h3>Publications, approvals and audit</h3><p>{status}</p></div>
+      <Button onClick={() => void refresh()} disabled={busy}>Refresh</Button>
+    </div>
+    <div className="template-table-wrap domain-table">
+      <table>
+        <thead>
+          <tr><th>Publication</th><th>Path</th><th>Plugin</th><th>Access</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+          {publications.map((publication) => (
+            <tr key={publication.id}>
+              <td><strong>{publication.title}</strong><small>{publication.contributionKind} · {publication.contributionId}</small></td>
+              <td>{publication.publicPath}</td>
+              <td>{publication.pluginId}</td>
+              <td>{publication.access}{publication.authenticationMode ? <small>{publication.authenticationMode}</small> : null}</td>
+              <td><span className={`status-pill ${publication.status}`}>{publication.status}</span></td>
+              <td>
+                <div className="plugin-actions">
+                  <Button disabled={submitBusy} onClick={() => openEdit(publication)}>Edit</Button>
+                  <Button disabled={submitBusy} onClick={() => openDelete(publication)}>Delete</Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <div className="plugin-actions" style={{ marginTop: "0.75rem" }}>
+      <Button className="primary" disabled={busy || submitBusy} onClick={openCreate}>Add publication</Button>
+    </div>
+    <div className="settings-grid" style={{ marginTop: "1rem" }}>
+      <section className="settings-subpanel">
+        <h3>Pending approvals</h3>
+        <div className="template-table-wrap domain-table">
+          <table>
+            <thead>
+              <tr><th>Request</th><th>Plugin</th><th>Risk</th><th>Created</th><th></th></tr>
+            </thead>
+            <tbody>
+              {approvals.map((approval) => (
+                <tr key={approval.id}>
+                  <td><strong>{approval.kind}</strong><small>{approval.subjectId}</small></td>
+                  <td>{approval.pluginId ?? "platform"}</td>
+                  <td>{approval.risk}</td>
+                  <td>{new Date(approval.requestedAt).toLocaleString()}</td>
+                  <td>
+                    <div className="plugin-actions">
+                      <Button disabled={approvalBusyId === approval.id} onClick={() => void decideApproval(approval.id, "denied")}>Deny</Button>
+                      <Button disabled={approvalBusyId === approval.id} onClick={() => void decideApproval(approval.id, "approved")}>Approve</Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="settings-subpanel">
+        <h3>Audit events</h3>
+        <div className="template-table-wrap domain-table">
+          <table>
+            <thead>
+              <tr><th>Action</th><th>Actor</th><th>Time</th></tr>
+            </thead>
+            <tbody>
+              {auditEvents.map((event) => (
+                <tr key={event.id}>
+                  <td><strong>{event.action}</strong><small>{event.workspaceId ?? "platform"}</small></td>
+                  <td>{event.actorId ?? "system"}</td>
+                  <td>{new Date(event.createdAt).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+    {modal ? <div style={{ position: "fixed", inset: 0, background: "rgba(7, 11, 17, 0.72)", display: "grid", placeItems: "center", zIndex: 60, padding: "1rem" }}>
+      <SurfaceCard style={{ width: "min(920px, 100%)", maxHeight: "90vh", overflow: "auto" }}>
+        <div className="surface-header">
+          <div>
+            <small>{modal.mode === "delete" ? "Confirm removal" : modal.mode === "edit" ? "Edit publication" : "Create publication"}</small>
+            <h3>{modal.mode === "delete" ? modal.publication.title : "Workspace publication"}</h3>
+          </div>
+          <Button onClick={closeModal} disabled={submitBusy}>Close</Button>
+        </div>
+        {modalError ? <p className="message">{modalError}</p> : null}
+        {modal.mode === "delete" ? <div>
+          <p>Remove <strong>{modal.publication.title}</strong> from Core publications?</p>
+          <p>Path: {modal.publication.publicPath}. Plugin: {modal.publication.pluginId}.</p>
+          <div className="plugin-actions">
+            <Button onClick={closeModal} disabled={submitBusy}>Cancel</Button>
+            <Button className="primary" onClick={() => void deletePublication()} disabled={submitBusy}>Delete</Button>
+          </div>
+        </div> : <form className="mail-form" onSubmit={savePublication}>
+          <label>Plugin
+            <select value={draft.pluginId} disabled={submitBusy || modal.mode === "edit"} onChange={(event) => setDraft((current) => ({ ...current, pluginId: event.currentTarget.value }))} required>
+              <option value="" disabled>Select plugin</option>
+              {pluginOptions.map((plugin) => <option key={plugin.id} value={plugin.id}>{plugin.name} ({plugin.id})</option>)}
+            </select>
+          </label>
+          <label>Contribution kind
+            <select value={draft.contributionKind} disabled={submitBusy || modal.mode === "edit"} onChange={(event) => setDraft((current) => ({ ...current, contributionKind: event.currentTarget.value as PublicationDraft["contributionKind"] }))}>
+              <option value="route">Route</option>
+              <option value="surface">Surface</option>
+              <option value="tool">Tool</option>
+            </select>
+          </label>
+          <label>Contribution ID
+            <input value={draft.contributionId} disabled={submitBusy || modal.mode === "edit"} onChange={(event) => setDraft((current) => ({ ...current, contributionId: event.currentTarget.value }))} required />
+          </label>
+          <label>Public path
+            <input value={draft.publicPath} disabled={submitBusy} onChange={(event) => setDraft((current) => ({ ...current, publicPath: event.currentTarget.value }))} required />
+          </label>
+          <label>Title
+            <input value={draft.title} disabled={submitBusy} onChange={(event) => setDraft((current) => ({ ...current, title: event.currentTarget.value }))} required />
+          </label>
+          <label>Access
+            <select value={draft.access} disabled={submitBusy} onChange={(event) => setDraft((current) => ({ ...current, access: event.currentTarget.value as PublicationDraft["access"] }))}>
+              <option value="anonymous">Anonymous</option>
+              <option value="authenticated">Authenticated</option>
+            </select>
+          </label>
+          {modal.mode === "edit" ? <label>Status
+            <select value={draft.status} disabled={submitBusy} onChange={(event) => setDraft((current) => ({ ...current, status: event.currentTarget.value as PublicationDraft["status"] }))}>
+              <option value="draft">Draft</option>
+              <option value="published">Published</option>
+              <option value="unpublished">Unpublished</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </label> : null}
+          {modal.mode === "edit" ? <label>Authentication mode
+            <select value={draft.authenticationMode} disabled={submitBusy} onChange={(event) => setDraft((current) => ({ ...current, authenticationMode: event.currentTarget.value as PublicationDraft["authenticationMode"] }))}>
+              <option value="anonymous">Anonymous</option>
+              <option value="customer">Customer</option>
+              <option value="verified">Verified</option>
+            </select>
+          </label> : null}
+          <div className="plugin-actions">
+            <Button onClick={closeModal} disabled={submitBusy} type="button">Cancel</Button>
+            <Button className="primary" type="submit" disabled={submitBusy}>{modal.mode === "edit" ? "Save changes" : "Create publication"}</Button>
+          </div>
+        </form>}
+      </SurfaceCard>
+    </div> : null}
+  </section>;
 }
 
 function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
@@ -199,6 +547,7 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
         {rbac?.recoveryAdmin ? <p className="message">Bootstrap/recovery admin is active for this user until RBAC ownership is fully assigned.</p> : null}
       </section>
     </div> : null}
+    <SecurityAdministrationCrud emit={emit} />
   </SurfaceCard>;
 }
 

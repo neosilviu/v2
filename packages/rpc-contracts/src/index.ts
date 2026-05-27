@@ -30,6 +30,55 @@ export const approvalRequestSchema = z.object({
   reason: z.string().nullable(),
 });
 export const approvalRequestDecisionRequestSchema = z.object({ workspaceId: workspaceIdSchema, decision: approvalRequestDecisionSchema, reason: z.string().max(1000).optional() });
+export const workspacePublicationSchema = z.object({
+  id: z.string().min(1),
+  workspaceId: workspaceIdSchema,
+  pluginId: z.string().min(1),
+  contributionKind: z.enum(["route", "surface", "tool"]),
+  publicationType: z.enum(["route", "surface", "tool", "content"]).optional(),
+  contributionId: z.string().min(1),
+  publicPath: z.string().min(1),
+  routePattern: z.string().min(1).optional(),
+  routeKind: z.enum(["exact", "parameterized"]).optional(),
+  routePriority: z.number().int().optional(),
+  parameterNames: z.array(z.string()).optional(),
+  title: z.string().min(1),
+  templateId: z.string().min(1).optional(),
+  status: z.enum(["draft", "published", "unpublished", "disabled"]),
+  policyId: z.string().nullable(),
+  access: z.enum(["anonymous", "authenticated"]),
+  authenticationMode: z.enum(["anonymous", "customer", "verified"]).optional(),
+  createdAt: z.string().optional(),
+  publishedAt: z.string().nullable().optional(),
+  updatedAt: z.string().optional(),
+});
+export const workspacePublicationListSchema = z.object({ publications: z.array(workspacePublicationSchema) });
+export const workspacePublicationCreateRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  pluginId: z.string().min(1),
+  contributionKind: z.enum(["route", "surface", "tool"]),
+  contributionId: z.string().min(1),
+  publicPath: z.string().min(1).optional(),
+  title: z.string().min(1).optional(),
+  access: z.enum(["anonymous", "authenticated"]).optional(),
+});
+export const workspacePublicationUpdateRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  title: z.string().min(1).optional(),
+  publicPath: z.string().min(1).optional(),
+  status: z.enum(["draft", "published", "unpublished", "disabled"]).optional(),
+  access: z.enum(["anonymous", "authenticated"]).optional(),
+  authenticationMode: z.enum(["anonymous", "customer", "verified"]).optional(),
+});
+export const auditEventSchema = z.object({
+  id: z.string().min(1),
+  workspaceId: workspaceIdSchema.nullable(),
+  actorId: z.string().nullable(),
+  action: z.string().min(1),
+  payload: z.record(z.string(), z.unknown()).nullable(),
+  createdAt: z.string(),
+});
+export const auditEventListSchema = z.object({ events: z.array(auditEventSchema) });
 export const toolExecutionResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("executed"), toolId: z.string(), approvalId: z.string().optional(), result: z.unknown().optional() }),
   z.object({ status: z.literal("approval-required"), toolId: z.string(), risk: z.string(), approvalId: z.string() }),
@@ -72,6 +121,12 @@ export type ToolApproval = z.output<typeof toolApprovalSchema>;
 export type ApprovalRequest = z.output<typeof approvalRequestSchema>;
 export type ApprovalRequestKind = z.output<typeof approvalRequestKindSchema>;
 export type ApprovalRequestDecisionRequest = z.output<typeof approvalRequestDecisionRequestSchema>;
+export type WorkspacePublication = z.output<typeof workspacePublicationSchema>;
+export type WorkspacePublicationList = z.output<typeof workspacePublicationListSchema>;
+export type WorkspacePublicationCreateRequest = z.output<typeof workspacePublicationCreateRequestSchema>;
+export type WorkspacePublicationUpdateRequest = z.output<typeof workspacePublicationUpdateRequestSchema>;
+export type AuditEvent = z.output<typeof auditEventSchema>;
+export type AuditEventList = z.output<typeof auditEventListSchema>;
 export type ToolExecutionResult = z.output<typeof toolExecutionResultSchema>;
 export type SettingScope = z.output<typeof settingScopeSchema>;
 export type WorkspaceLayout = z.output<typeof workspaceLayoutSchema>;

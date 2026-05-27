@@ -94,6 +94,11 @@ export type WorkspacePublication = {
   access: PublicContributionAccess;
   authenticationMode?: "anonymous" | "customer" | "verified";
 };
+export type WorkspacePublicationRecord = WorkspacePublication & {
+  createdAt: string;
+  publishedAt: string | null;
+  updatedAt: string;
+};
 export type PublicDelivery = {
   publication: WorkspacePublication;
   manifest?: PluginManifest | undefined;
@@ -247,6 +252,47 @@ type PublicDeliveryRow = {
   authentication_mode: "anonymous" | "customer" | "verified";
   policy_enabled: number;
   manifest_json: string;
+};
+type WorkspacePublicationRow = {
+  id: string;
+  workspace_id: string;
+  plugin_id: string;
+  contribution_kind: PublicationKind;
+  publication_type: "route" | "surface" | "tool" | "content";
+  contribution_id: string;
+  public_path: string;
+  route_pattern: string;
+  route_kind: "exact" | "parameterized";
+  route_priority: number;
+  parameter_names_json: string | null;
+  title: string;
+  template_id: string;
+  schema_json: string;
+  status: PublicationStatus;
+  policy_id: string | null;
+  access: PublicContributionAccess;
+  authentication_mode: "anonymous" | "customer" | "verified";
+  created_at: string;
+  published_at: string | null;
+  updated_at: string;
+};
+type PublicAccessPolicyRow = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  access: PublicContributionAccess;
+  authentication_mode: "anonymous" | "customer" | "verified";
+  rules_json: string | null;
+  allowed_operations_json: string;
+  enabled: number;
+};
+type AuditEventRow = {
+  id: string;
+  workspace_id: string | null;
+  actor_id: string | null;
+  action: string;
+  payload_json: string | null;
+  created_at: string;
 };
 
 function routeMetadata(pattern: string) {
@@ -828,7 +874,7 @@ export class CoreRepository {
     return manifest.contributes.publicTools.find((item) => item.id === contributionId);
   }
 
-  async publishWorkspaceContribution(input: { workspaceId: string; pluginId: string; contributionKind: PublicationKind; contributionId: string; publicPath?: string; title?: string; access?: PublicContributionAccess }): Promise<WorkspacePublication | undefined> {
+  async publishWorkspaceContribution(input: { workspaceId: string; pluginId: string; contributionKind: PublicationKind; contributionId: string; publicPath?: string | undefined; title?: string | undefined; access?: PublicContributionAccess | undefined }): Promise<WorkspacePublication | undefined> {
     const manifest = await this.installedById(input.pluginId);
     if (!manifest) return undefined;
     const active = await this.activePlugins(input.workspaceId);
@@ -875,6 +921,91 @@ export class CoreRepository {
     return { id: publicationId, workspaceId: input.workspaceId, pluginId: input.pluginId, contributionKind: input.contributionKind, publicationType: input.contributionKind, contributionId: input.contributionId, publicPath, routePattern: route.pattern, routeKind: route.kind, routePriority: 0, parameterNames: route.parameterNames, title, templateId, schema: JSON.parse(schemaJson) as DeclarativePageContribution, status: "published", policyId, access };
   }
 
+  private publicationRow(row: WorkspacePublicationRow): WorkspacePublicationRecord {
+    return {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      pluginId: row.plugin_id,
+      contributionKind: row.contribution_kind,
+      publicationType: row.publication_type,
+      contributionId: row.contribution_id,
+      publicPath: row.public_path,
+      routePattern: row.route_pattern,
+      routeKind: row.route_kind,
+      routePriority: row.route_priority,
+      parameterNames: row.parameter_names_json ? JSON.parse(row.parameter_names_json) as string[] : [],
+      title: row.title,
+      templateId: row.template_id,
+      status: row.status,
+      policyId: row.policy_id,
+      access: row.access,
+      authenticationMode: row.authentication_mode,
+      createdAt: row.created_at,
+      publishedAt: row.published_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async listPublications(workspaceId: string): Promise<WorkspacePublicationRecord[]> {
+    const rows = await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.publication_type, p.contribution_id, p.public_path, p.route_pattern, p.route_kind, p.route_priority, p.parameter_names_json, p.title, p.template_id, p.schema_json, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, COALESCE(policy.authentication_mode, 'anonymous') AS authentication_mode, p.created_at, p.published_at, p.updated_at
+      FROM workspace_publications p
+      LEFT JOIN public_access_policies policy ON policy.id = p.policy_id
+      WHERE p.workspace_id = ?
+      ORDER BY p.updated_at DESC, p.created_at DESC`)
+      .bind(workspaceId)
+      .all<WorkspacePublicationRow>();
+    return rows.results.map((row) => this.publicationRow(row));
+  }
+
+  async updatePublication(workspaceId: string, publicationId: string, input: { title?: string | undefined; publicPath?: string | undefined; status?: PublicationStatus | undefined; access?: PublicContributionAccess | undefined; authenticationMode?: "anonymous" | "customer" | "verified" | undefined }) {
+    const current = await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.publication_type, p.contribution_id, p.public_path, p.route_pattern, p.route_kind, p.route_priority, p.parameter_names_json, p.title, p.template_id, p.schema_json, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, COALESCE(policy.authentication_mode, 'anonymous') AS authentication_mode, p.created_at, p.published_at, p.updated_at
+      FROM workspace_publications p
+      LEFT JOIN public_access_policies policy ON policy.id = p.policy_id
+      WHERE p.workspace_id = ? AND p.id = ?
+      LIMIT 1`)
+      .bind(workspaceId, publicationId)
+      .first<WorkspacePublicationRow>();
+    if (!current) return undefined;
+    const nextPath = input.publicPath ?? current.public_path;
+    const route = routeMetadata(nextPath);
+    const nextTitle = input.title ?? current.title;
+    const nextStatus = input.status ?? current.status;
+    const nextAccess = input.access ?? current.access;
+    const nextAuthenticationMode = input.authenticationMode ?? current.authentication_mode;
+    const policyId = current.policy_id ?? `${current.id}:policy`;
+    const existingPolicy = current.policy_id ? await this.db.prepare("SELECT id, workspace_id, name, access, authentication_mode, rules_json, allowed_operations_json, enabled FROM public_access_policies WHERE id = ? LIMIT 1").bind(policyId).first<PublicAccessPolicyRow>() : null;
+    const rulesJson = existingPolicy?.rules_json ?? JSON.stringify({ contributionId: current.contribution_id, contributionKind: current.contribution_kind });
+    const allowedOperationsJson = existingPolicy?.allowed_operations_json ?? JSON.stringify([]);
+    await this.db.batch([
+      this.db.prepare(`INSERT INTO public_access_policies (id, workspace_id, name, access, authentication_mode, rules_json, allowed_operations_json, enabled, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET name = excluded.name, access = excluded.access, authentication_mode = excluded.authentication_mode, rules_json = excluded.rules_json, allowed_operations_json = excluded.allowed_operations_json, enabled = 1, updated_at = CURRENT_TIMESTAMP`)
+        .bind(policyId, workspaceId, `${nextTitle} public access`, nextAccess, nextAuthenticationMode, rulesJson, allowedOperationsJson),
+      this.db.prepare(`UPDATE workspace_publications
+        SET public_path = ?, route_pattern = ?, route_kind = ?, parameter_names_json = ?, title = ?, status = ?, policy_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE workspace_id = ? AND id = ?`)
+        .bind(nextPath, route.pattern, route.kind, JSON.stringify(route.parameterNames), nextTitle, nextStatus, policyId, workspaceId, publicationId),
+    ]);
+    await this.audit(workspaceId, "public.publication.update", { publicationId, publicPath: nextPath, title: nextTitle, status: nextStatus, access: nextAccess }, undefined);
+    const updated = await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.publication_type, p.contribution_id, p.public_path, p.route_pattern, p.route_kind, p.route_priority, p.parameter_names_json, p.title, p.template_id, p.schema_json, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, COALESCE(policy.authentication_mode, 'anonymous') AS authentication_mode, p.created_at, p.published_at, p.updated_at
+      FROM workspace_publications p
+      LEFT JOIN public_access_policies policy ON policy.id = p.policy_id
+      WHERE p.workspace_id = ? AND p.id = ?
+      LIMIT 1`)
+      .bind(workspaceId, publicationId)
+      .first<WorkspacePublicationRow>();
+    return updated ? this.publicationRow(updated) : undefined;
+  }
+
+  async deletePublication(workspaceId: string, publicationId: string) {
+    const row = await this.db.prepare("SELECT policy_id FROM workspace_publications WHERE workspace_id = ? AND id = ?").bind(workspaceId, publicationId).first<{ policy_id: string | null }>();
+    if (!row) return false;
+    await this.db.prepare("DELETE FROM workspace_publications WHERE workspace_id = ? AND id = ?").bind(workspaceId, publicationId).run();
+    if (row.policy_id) await this.db.prepare("DELETE FROM public_access_policies WHERE id = ?").bind(row.policy_id).run();
+    await this.audit(workspaceId, "public.publication.delete", { publicationId });
+    return true;
+  }
+
   async publicDelivery(workspaceId: string, publicPath: string): Promise<PublicDelivery | undefined> {
     const exact = await this.db.prepare(`SELECT p.id, p.workspace_id, p.plugin_id, p.contribution_kind, p.publication_type, p.contribution_id, p.public_path, p.route_pattern, p.route_kind, p.route_priority, p.parameter_names_json, p.title, p.template_id, p.schema_json, p.status, p.policy_id, COALESCE(policy.access, 'anonymous') AS access, COALESCE(policy.authentication_mode, 'anonymous') AS authentication_mode, COALESCE(policy.enabled, 1) AS policy_enabled, installed.manifest_json
       FROM workspace_publications p
@@ -910,6 +1041,24 @@ export class CoreRepository {
       page,
       routeParams: matched.params,
     };
+  }
+
+  async auditEvents(workspaceId: string): Promise<Array<{ id: string; workspaceId: string | null; actorId: string | null; action: string; payload: Record<string, unknown> | null; createdAt: string }>> {
+    const rows = await this.db.prepare(`SELECT id, workspace_id, actor_id, action, payload_json, created_at
+      FROM audit_events
+      WHERE workspace_id = ?
+      ORDER BY created_at DESC
+      LIMIT 50`)
+      .bind(workspaceId)
+      .all<AuditEventRow>();
+    return rows.results.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      actorId: row.actor_id,
+      action: row.action,
+      payload: row.payload_json ? JSON.parse(row.payload_json) as Record<string, unknown> : null,
+      createdAt: row.created_at,
+    }));
   }
 
   async resolveSandboxSurface(workspaceId: string, surfaceId: string): Promise<SandboxSurfaceAsset | undefined> {

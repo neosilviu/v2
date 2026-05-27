@@ -2,7 +2,7 @@ import { z } from "zod";
 import { authMethodSchema, authPolicySchema, authPublicLoginConfigSchema, authUiContributionSchema } from "@v2/auth-contracts";
 import { mailProviderConfigureSchema, mailProviderPublicSummarySchema, mailProviderTestResultSchema, mailTemplateSchema } from "@v2/mail-contracts";
 import { pluginBundleSchema, pluginManifestSchema, pluginOperationSchema, publicRouteContributionSchema, publicSurfaceContributionSchema, publicToolContributionSchema, surfaceSchema, toolSchema } from "@v2/plugin-contracts";
-import { approvalRequestSchema, toolApprovalSchema, toolExecutionResultSchema, workspaceLayoutSchema } from "@v2/rpc-contracts";
+import { approvalRequestSchema, auditEventSchema, toolApprovalSchema, toolExecutionResultSchema, workspaceLayoutSchema, workspacePublicationSchema } from "@v2/rpc-contracts";
 import { declarativePageContributionSchema, runtimeResultEnvelopeSchema as uiRuntimeResultEnvelopeSchema, settingsPanelContributionSchema, settingsTabContributionSchema } from "@v2/ui-schema";
 
 export const coreSessionSchema = z.object({
@@ -113,6 +113,10 @@ export const shellBootstrapSchema = z.object({
 });
 
 export const runtimeResultEnvelopeSchema = uiRuntimeResultEnvelopeSchema;
+export const workspacePublicationListSchema = z.object({ publications: z.array(workspacePublicationSchema) });
+export const workspacePublicationEnvelopeSchema = z.object({ publication: workspacePublicationSchema });
+export const auditEventListSchema = z.object({ events: z.array(auditEventSchema) });
+export const approvalRequestListSchema = z.object({ approvals: z.array(approvalRequestSchema) });
 
 export type CoreSession = z.output<typeof coreSessionSchema>;
 export type WorkspaceSummary = z.output<typeof workspaceSummarySchema>;
@@ -127,3 +131,9 @@ export type WorkspaceDomain = z.output<typeof workspaceDomainSchema>;
 export type AuthSecuritySummary = z.output<typeof authSecuritySummarySchema>;
 export type AuthSecurityBootstrap = z.output<typeof authSecurityBootstrapSchema>;
 export type ShellBootstrap = z.output<typeof shellBootstrapSchema>;
+export type WorkspacePublication = z.output<typeof workspacePublicationSchema>;
+export type WorkspacePublicationList = z.output<typeof workspacePublicationListSchema>;
+export type WorkspacePublicationEnvelope = z.output<typeof workspacePublicationEnvelopeSchema>;
+export type AuditEvent = z.output<typeof auditEventSchema>;
+export type AuditEventList = z.output<typeof auditEventListSchema>;
+export type ApprovalRequestList = z.output<typeof approvalRequestListSchema>;

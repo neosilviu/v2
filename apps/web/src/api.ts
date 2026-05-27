@@ -1,15 +1,16 @@
 import { hc } from "hono/client";
 import { z } from "zod";
-import { errorResponseSchema } from "@v2/rpc-contracts";
+import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
 import type { MailProviderConfigure, MailProviderPublicSummary, MailProviderTestResult, MailTemplate } from "@v2/mail-contracts";
 import { authPublicLoginConfigSchema, type AuthPublicLoginConfig } from "@v2/auth-contracts";
-import { authSecurityBootstrapSchema, coreSessionSchema, mailSummarySchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, workspaceDomainSchema, type AuthSecurityBootstrap, type CoreSession, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceDomain, type WorkspaceSummary } from "./platform-contracts";
+import { approvalRequestListSchema, auditEventListSchema, authSecurityBootstrapSchema, coreSessionSchema, mailSummarySchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, workspaceDomainSchema, workspacePublicationEnvelopeSchema, workspacePublicationListSchema, type AuditEvent, type AuditEventList, type AuthSecurityBootstrap, type CoreSession, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceDomain, type WorkspacePublication, type WorkspacePublicationList, type WorkspaceSummary } from "./platform-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 import { authUrl } from "./auth-client";
 export type { AuthSecurityBootstrap, CoreSession, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceDomain, WorkspaceSummary } from "./platform-contracts";
+export type { AuditEvent, AuditEventList, WorkspacePublication, WorkspacePublicationList } from "./platform-contracts";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 export const coreApi: any = hc(coreUrl, { init: { credentials: "include" } });
@@ -184,8 +185,33 @@ export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> {
   return (await loadShellBootstrap()).settingsNavigation.pluginTabs;
 }
 
+export async function reorderSettingsTabs(tabIds: string[]): Promise<void> {
+  await coreResponse(coreApi.workspaces[":workspaceId"].settings.tabs.order.$post({ param: { workspaceId: currentWorkspaceId() }, json: { tabIds } }), { parse: () => undefined });
+  resetShellBootstrap();
+}
+
 export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTabResolution> {
   return coreResponse(coreApi.workspaces[":workspaceId"].settings.tabs[":tabId"].$get({ param: { workspaceId: currentWorkspaceId(), tabId } }), runtimeSettingsTabResolutionSchema);
+}
+
+export async function loadWorkspacePublications(): Promise<WorkspacePublicationList> {
+  return coreResponse(coreApi.workspaces[":workspaceId"].publications.$get({ param: { workspaceId: currentWorkspaceId() } }), workspacePublicationListSchema);
+}
+
+export async function createWorkspacePublication(input: { pluginId: string; contributionKind: "route" | "surface" | "tool"; contributionId: string; publicPath?: string; title?: string; access?: "anonymous" | "authenticated" }): Promise<WorkspacePublication> {
+  return (await coreResponse(coreApi.publications.$post({ json: { workspaceId: currentWorkspaceId(), ...input } }), workspacePublicationEnvelopeSchema)).publication;
+}
+
+export async function updateWorkspacePublication(publicationId: string, input: { title?: string; publicPath?: string; status?: "draft" | "published" | "unpublished" | "disabled"; access?: "anonymous" | "authenticated"; authenticationMode?: "anonymous" | "customer" | "verified" }): Promise<WorkspacePublication> {
+  return (await coreResponse(coreApi.publications[":publicationId"].$put({ param: { publicationId }, json: { workspaceId: currentWorkspaceId(), ...input } }), workspacePublicationEnvelopeSchema)).publication;
+}
+
+export async function deleteWorkspacePublication(publicationId: string): Promise<void> {
+  await coreResponse(coreApi.publications[":publicationId"].$delete({ param: { publicationId }, query: { workspaceId: currentWorkspaceId() } }), { parse: () => undefined });
+}
+
+export async function loadAuditEvents(): Promise<AuditEventList> {
+  return coreResponse(coreApi.workspaces[":workspaceId"]["audit-events"].$get({ param: { workspaceId: currentWorkspaceId() } }), auditEventListSchema);
 }
 
 export async function loadPublicPage(pathname: string): Promise<{ page: DeclarativePageContribution; routeParams: Record<string, string>; plugin: { id: string; name: string; version: string } | null }> {
@@ -333,11 +359,11 @@ export async function denyToolApproval(approvalId: string): Promise<ToolApproval
 }
 
 export async function loadPendingApprovalRequests(): Promise<ApprovalRequest[]> {
-  return (await coreResponse(coreApi.workspaces[":workspaceId"].approvalRequests.$get({ param: { workspaceId: currentWorkspaceId() } }), { parse: (value) => value as { approvals: ApprovalRequest[] } })).approvals;
+  return (await coreResponse(coreApi.workspaces[":workspaceId"].approvalRequests.$get({ param: { workspaceId: currentWorkspaceId() } }), approvalRequestListSchema)).approvals;
 }
 
 export async function decideApprovalRequest(approvalId: string, decision: "approved" | "denied"): Promise<ApprovalRequest> {
-  return (await coreResponse(coreApi.approvalRequests[":approvalId"].decision.$post({ param: { approvalId }, json: { workspaceId: currentWorkspaceId(), decision } }), { parse: (value) => value as { approval: ApprovalRequest } })).approval;
+  return (await coreResponse(coreApi.approvalRequests[":approvalId"].decision.$post({ param: { approvalId }, json: { workspaceId: currentWorkspaceId(), decision } }), z.object({ approval: approvalRequestSchema }))).approval;
 }
 
 export async function loadInstalledPlugins(): Promise<PluginManifest[]> {
