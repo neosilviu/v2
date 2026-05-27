@@ -33,7 +33,7 @@ async function assertNoBrowserFailures(page, failures: string[]) {
   page.on("response", (response) => {
     const status = response.status();
     const url = response.url();
-    if ((status === 400 || status === 403 || status === 409 || status === 500 || status === 503) && (url.startsWith(coreUrl) || url.startsWith(authUrl))) {
+    if ((status === 400 || status === 401 || status === 403 || status === 409 || status === 500 || status === 503) && (url.startsWith(coreUrl) || url.startsWith(authUrl))) {
       failures.push(`${status}: ${url}`);
     }
   });
@@ -47,6 +47,16 @@ test.describe("platform shell", () => {
   test("owner setup, workspace bootstrap and native settings stay quiet", async ({ page }) => {
     const failures: string[] = [];
     await assertNoBrowserFailures(page, failures);
+
+    const anonymousRequests: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().startsWith(coreUrl) || request.url().startsWith(authUrl)) anonymousRequests.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: /sign in/i })).toBeVisible();
+    expect(anonymousRequests.some((item) => item.includes("/workspaces/current/bootstrap"))).toBe(false);
+    expect(anonymousRequests.some((item) => item.includes("/bootstrap"))).toBe(false);
+    expect(failures).toEqual([]);
 
     await page.goto("/login");
     await expect(page.getByRole("heading", { name: /sign in|login/i })).toBeVisible();
