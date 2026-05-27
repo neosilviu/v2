@@ -38,6 +38,7 @@ function cookieHeader() {
 async function request(base, path, init = {}) {
   const headers = new Headers(init.headers ?? {});
   if (!headers.has("origin")) headers.set("origin", webUrl);
+  headers.set("x-v2-server-timing", "1");
   if (cookies.size) headers.set("cookie", cookieHeader());
   if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
   const started = performance.now();
@@ -45,7 +46,7 @@ async function request(base, path, init = {}) {
   const ms = performance.now() - started;
   mergeCookies(response.headers);
   await response.text();
-  return { response, ms };
+  return { response, ms, serverTiming: response.headers.get("server-timing") ?? "" };
 }
 
 function provisionWorkspace() {
@@ -75,12 +76,14 @@ function percentile(values, p) {
 async function measure(name, base, path, iterations = 40) {
   for (let index = 0; index < 5; index += 1) await request(base, path);
   const samples = [];
+  let lastServerTiming = "";
   for (let index = 0; index < iterations; index += 1) {
     const result = await request(base, path);
     if (!result.response.ok) throw new Error(`${name} failed during measurement: HTTP ${result.response.status}`);
     samples.push(result.ms);
+    lastServerTiming = result.serverTiming || lastServerTiming;
   }
-  return { name, min: Math.min(...samples), median: percentile(samples, 50), p95: percentile(samples, 95), max: Math.max(...samples) };
+  return { name, min: Math.min(...samples), median: percentile(samples, 50), p95: percentile(samples, 95), max: Math.max(...samples), serverTiming: lastServerTiming };
 }
 
 async function main() {
@@ -94,7 +97,10 @@ async function main() {
   const results = [];
   for (const endpoint of endpoints) results.push(await measure(...endpoint));
   console.log(`Local warm performance for ${workspaceId}; enforced p95 budget <= ${warmP95BudgetMs.toFixed(1)}ms`);
-  for (const item of results) console.log(`${item.name}: min=${item.min.toFixed(1)}ms median=${item.median.toFixed(1)}ms p95=${item.p95.toFixed(1)}ms max=${item.max.toFixed(1)}ms`);
+  for (const item of results) {
+    console.log(`${item.name}: min=${item.min.toFixed(1)}ms median=${item.median.toFixed(1)}ms p95=${item.p95.toFixed(1)}ms max=${item.max.toFixed(1)}ms`);
+    console.log(`${item.name} server-timing: ${item.serverTiming || "missing"}`);
+  }
   const slow = results.filter((item) => item.p95 > warmP95BudgetMs);
   if (slow.length) {
     console.error(`Warm p95 exceeded ${warmP95BudgetMs.toFixed(1)}ms for: ${slow.map((item) => item.name).join(", ")}`);

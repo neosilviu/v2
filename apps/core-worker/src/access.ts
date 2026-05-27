@@ -7,8 +7,8 @@ export type CoreSessionUser = {
 };
 
 type SessionEntry = { user: CoreSessionUser | null; expiresAt: number };
-const localSessionCache = new Map<string, SessionEntry>();
-const LOCAL_SESSION_TTL_MS = 1000;
+const sessionAssertionCache = new Map<string, SessionEntry>();
+const SESSION_ASSERTION_TTL_MS = 30_000;
 
 function csv(input?: string): string[] {
   return (input ?? "")
@@ -31,13 +31,12 @@ function credentialKey(headers: Headers) {
 }
 
 export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreSessionUser | null> {
-  const production = env.ENVIRONMENT === "production";
-  const key = production ? "" : credentialKey(headers);
+  const key = credentialKey(headers);
   const now = Date.now();
   if (key) {
-    const cached = localSessionCache.get(key);
+    const cached = sessionAssertionCache.get(key);
     if (cached && cached.expiresAt > now) return cached.user;
-    if (cached) localSessionCache.delete(key);
+    if (cached) sessionAssertionCache.delete(key);
   }
   try {
     const sessionHeaders = new Headers();
@@ -50,8 +49,8 @@ export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreS
     const result = await response.json() as { user?: CoreSessionUser | null } | null;
     const user = result?.user?.id && result.user.email ? result.user : null;
     if (key) {
-      if (localSessionCache.size > 256) localSessionCache.clear();
-      localSessionCache.set(key, { user, expiresAt: now + LOCAL_SESSION_TTL_MS });
+      if (sessionAssertionCache.size > 256) sessionAssertionCache.clear();
+      sessionAssertionCache.set(key, { user, expiresAt: now + SESSION_ASSERTION_TTL_MS });
     }
     return user;
   } catch {

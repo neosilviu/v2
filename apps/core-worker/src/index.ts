@@ -17,6 +17,29 @@ type CoreBindings = { Bindings: CoreEnv; Variables: CoreVariables };
 type CoreContext = Context<CoreBindings>;
 const app = new Hono<CoreBindings>();
 const defaultWorkspaceId = "default";
+const readResponseCache = new Map<string, { expiresAt: number; status: number; headers: [string, string][]; body: string }>();
+const READ_RESPONSE_CACHE_TTL_MS = 5_000;
+function isCacheableRead(path: string) {
+  return /\/workspaces\/[^/]+\/bootstrap$/.test(path)
+    || /\/workspaces\/current\/bootstrap$/.test(path)
+    || /\/workspaces\/[^/]+\/auth\/security-bootstrap$/.test(path)
+    || /\/workspaces\/[^/]+\/settings\/tabs$/.test(path)
+    || /\/workspaces\/[^/]+\/settings\/general$/.test(path);
+}
+function serverTiming(start: number) {
+  const total = Math.max(0, performance.now() - start);
+  return [
+    `total;dur=${total.toFixed(1)}`,
+    "cors;dur=0.0",
+    "session_validation;dur=0.0",
+    "auth_service_binding;dur=0.0",
+    "permission_lookup;dur=0.0",
+    "workspace_lookup;dur=0.0",
+    "d1_queries;dur=0.0",
+    "runtime_manifest_parse;dur=0.0",
+    "serialization;dur=0.0",
+  ].join(", ");
+}
 async function coreCorsOrigin(c: CoreContext, origin: string) {
   if (!origin) return "";
   if (c.env.ENVIRONMENT !== "production" && allowedOrigins(c.env).includes(origin)) return origin;
@@ -24,6 +47,14 @@ async function coreCorsOrigin(c: CoreContext, origin: string) {
   const domains = await new CoreRepository(c.env.CORE_DB).activeDomains(workspaceId, ["admin", "auth", "website", "storefront", "public-chat"]);
   return domains.some((domain) => `https://${domain.hostname}` === origin) ? origin : "";
 }
+app.use("*", async (c, next) => {
+  const timingStart = performance.now();
+  try {
+    await next();
+  } finally {
+    if (c.env.ENVIRONMENT !== "production" || c.req.header("x-v2-server-timing") === "1") c.header("Server-Timing", serverTiming(timingStart));
+  }
+});
 app.use("*", async (c, next) => {
   const origin = c.req.header("origin") ?? "";
   const allowed = await coreCorsOrigin(c, origin);
@@ -45,7 +76,32 @@ app.use("*", async (c, next) => {
   c.set("user", c.req.path === "/health" || systemInternal ? null : await readSession(c.env, c.req.raw.headers));
   await next();
 });
-app.onError((error, c) => { const validation = error instanceof Error && error.name === "ZodError"; return c.json(errorResponse(failure(validation ? "validation_failed" : "internal_error", validation ? "Request validation failed." : "An unexpected error occurred.")), validation ? 400 : 500); });
+app.use("*", async (c, next) => {
+  const user = c.get("user");
+  if (c.req.method !== "GET" || !user || !isCacheableRead(c.req.path)) {
+    await next();
+    return;
+  }
+  const key = `${user.id}:${new URL(c.req.url).pathname}?${new URL(c.req.url).searchParams.toString()}`;
+  const now = Date.now();
+  const cached = readResponseCache.get(key);
+  if (cached && cached.expiresAt > now) return new Response(cached.body, { status: cached.status, headers: cached.headers });
+  if (cached) readResponseCache.delete(key);
+  await next();
+  if (!c.res.ok) return;
+  const clone = c.res.clone();
+  const body = await clone.text();
+  if (readResponseCache.size > 512) readResponseCache.clear();
+  readResponseCache.set(key, { expiresAt: now + READ_RESPONSE_CACHE_TTL_MS, status: clone.status, headers: [...clone.headers.entries()], body });
+});
+app.use("*", async (c, next) => {
+  await next();
+  if (c.req.method !== "GET" && c.res.ok) readResponseCache.clear();
+});
+app.onError((error, c) => {
+  const validation = error instanceof Error && error.name === "ZodError";
+  return c.json(errorResponse(failure(validation ? "validation_failed" : "internal_error", validation ? "Request validation failed." : "An unexpected error occurred.")), validation ? 400 : 500);
+});
 function requireRead(c: CoreContext): Response | undefined { return c.get("user") ? undefined : c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401); }
 function requireAdmin(c: CoreContext): Response | undefined { return isPlatformAdmin(c.env, c.get("user")) ? undefined : c.json(errorResponse(failure("not_authorized", "Platform administrator permission is required.")), 403); }
 async function requirePermission(c: CoreContext, workspaceId: string, permission: WorkspacePermission): Promise<Response | undefined> {
@@ -313,8 +369,21 @@ app.post("/setup/owner/consume", async (c) => {
   if (token.length < 24) return c.json(errorResponse(failure("validation_failed", "A valid owner setup token is required.")), 400);
   const result = await new CoreRepository(c.env.CORE_DB).consumeOwnerProvisioningToken(await sha256Hex(token), c.get("user"));
   if (result.status === "consumed" && "workspaceId" in result) return c.json(result);
-  const code = result.status === "not_authenticated" ? "not_authenticated" : result.status === "email_mismatch" ? "not_authorized" : result.status === "not_found" ? "not_found" : "conflict";
-  return c.json(errorResponse(failure(code, "Owner setup link cannot be consumed.")), code === "not_authenticated" ? 401 : code === "not_authorized" ? 403 : code === "not_found" ? 404 : 409);
+  const code = result.status === "not_authenticated"
+    ? "not_authenticated"
+    : result.status === "email_mismatch"
+      ? "owner_setup_email_mismatch"
+      : result.status === "not_found"
+        ? "owner_setup_invalid_token"
+        : result.status === "expired"
+          ? "owner_setup_expired"
+          : result.status === "consumed"
+            ? "owner_setup_token_consumed"
+            : result.status === "revoked"
+              ? "owner_setup_token_revoked"
+              : "conflict";
+  const status = code === "not_authenticated" ? 401 : code === "owner_setup_email_mismatch" ? 403 : code === "owner_setup_invalid_token" ? 404 : 409;
+  return c.json(errorResponse(failure(code, "Owner setup link cannot be consumed.")), status);
 });
 app.post("/internal/setup/owner/consume", async (c) => {
   if (!c.get("internal")) return c.json(errorResponse(failure("not_authorized", "Internal owner setup consumption requires a service binding.")), 403);
@@ -325,8 +394,19 @@ app.post("/internal/setup/owner/consume", async (c) => {
   if (token.length < 24 || !user) return c.json(errorResponse(failure("validation_failed", "A valid owner setup token and user are required.")), 400);
   const result = await new CoreRepository(c.env.CORE_DB).consumeOwnerProvisioningToken(await sha256Hex(token), user);
   if (result.status === "consumed" && "workspaceId" in result) return c.json(result);
-  const code = result.status === "email_mismatch" ? "not_authorized" : result.status === "not_found" ? "not_found" : "conflict";
-  return c.json(errorResponse(failure(code, "Owner setup link cannot be consumed.")), code === "not_authorized" ? 403 : code === "not_found" ? 404 : 409);
+  const code = result.status === "email_mismatch"
+    ? "owner_setup_email_mismatch"
+    : result.status === "not_found"
+      ? "owner_setup_invalid_token"
+      : result.status === "expired"
+        ? "owner_setup_expired"
+        : result.status === "consumed"
+          ? "owner_setup_token_consumed"
+          : result.status === "revoked"
+            ? "owner_setup_token_revoked"
+            : "conflict";
+  const status = code === "owner_setup_email_mismatch" ? 403 : code === "owner_setup_invalid_token" ? 404 : 409;
+  return c.json(errorResponse(failure(code, "Owner setup link cannot be consumed.")), status);
 });
 app.post("/internal/provision/workspace", async (c) => {
   const provided = c.req.header("x-v2-provisioning-secret");
@@ -854,13 +934,12 @@ app.get("/workspaces/:workspaceId/auth/security-bootstrap", async (c) => {
   const denied = await requireAnyPermission(c, workspaceId, ["auth.read", "auth.session.read"]);
   if (denied) return denied;
   const repo = new CoreRepository(c.env.CORE_DB);
-  const [security, sessions, rbac, activeMailProvider] = await Promise.all([
-    authAdminJson<{ summary: unknown }>(c, `/admin/auth/security-summary?workspaceId=${encodeURIComponent(workspaceId)}`),
-    authAdminJson<{ summary: unknown }>(c, `/admin/auth/sessions/summary?workspaceId=${encodeURIComponent(workspaceId)}`),
+  const [security, rbac, activeMailProvider] = await Promise.all([
+    authAdminJson<{ summary: unknown; sessions: unknown }>(c, `/admin/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`),
     repo.memberSummary(workspaceId, c.get("user")),
     repo.activeMailProvider(workspaceId),
   ]);
-  return c.json({ summary: security.summary, sessions: sessions.summary, rbac, mail: { activeTransactionalProvider: Boolean(activeMailProvider) } });
+  return c.json({ summary: security.summary, sessions: security.sessions, rbac, mail: { activeTransactionalProvider: Boolean(activeMailProvider) } });
 });
 app.get("/workspaces/:workspaceId/auth/methods", async (c) => {
   const workspaceId = c.req.param("workspaceId");

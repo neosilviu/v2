@@ -1058,7 +1058,7 @@ export class CoreRepository {
       FROM workspace_ui_activations a
       INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
       INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
-      WHERE a.workspace_id = ? AND a.enabled = 1 AND c.access_mode != 'public-candidate'
+      WHERE a.workspace_id = ? AND a.enabled = 1 AND c.contribution_type = 'surface' AND c.access_mode != 'public-candidate'
       ORDER BY a.order_index, c.contribution_id`)
       .bind(workspaceId)
       .all<{ plugin_id: string; contribution_id: string; zone_id: string | null; template_id: string; schema_json: string; zone_override: string | null; order_index: number }>();
@@ -1081,7 +1081,7 @@ export class CoreRepository {
       FROM workspace_ui_activations a
       INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
       INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
-      WHERE a.workspace_id = ? AND a.contribution_id = ? AND a.enabled = 1 AND c.access_mode != 'public-candidate'
+      WHERE a.workspace_id = ? AND a.contribution_id = ? AND a.enabled = 1 AND c.contribution_type IN ('page', 'settings-panel') AND c.access_mode != 'public-candidate'
       ORDER BY a.order_index
       LIMIT 1`)
       .bind(workspaceId, contributionId)
