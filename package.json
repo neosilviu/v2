@@ -11,6 +11,8 @@
     "dev": "node scripts/dev.mjs",
     "dev:stop": "node scripts/stop-dev.mjs",
     "dev:setup": "node scripts/bootstrap-workspace-dev.mjs",
+    "api:generate": "node --experimental-strip-types scripts/generate-api.mjs",
+    "api:check": "node --experimental-strip-types scripts/generate-api.mjs --check && node scripts/check-api-client-usage.mjs",
     "typecheck": "turbo run typecheck",
     "build:analyze": "node scripts/analyze-build.mjs",
     "guard:architecture": "pnpm build:analyze -- --strict && pnpm test:generated -- --check-migrations",
@@ -30,6 +32,7 @@
     "fflate": "catalog:",
     "prettier": "^3.8.3",
     "turbo": "^2.9.14",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "zod": "catalog:"
   }
 }

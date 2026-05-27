@@ -1,0 +1,16 @@
+{
+  "name": "@v2/api-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@v2/api-contracts": "workspace:*",
+    "@v2/rpc-contracts": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": { "typescript": "catalog:" }
+}
