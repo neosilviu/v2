@@ -4,7 +4,7 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe, type WorkspaceSummary } from "./api";
+import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, setCurrentWorkspaceId, type CoreSession, type RbacMe, type WorkspaceSummary } from "./api";
 import { AuthRequestError, ownerSetupSignUp, signInEmail, signOutAuth, updateAuthProfile } from "./auth-api";
 import { composeShellFromSurfaces, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
@@ -71,6 +71,15 @@ function UserMenu({ session, workspace, onOpenProfile, onOpenSettings, onSignOut
   </div>;
 }
 
+function WorkspaceSwitcher({ workspaces, workspaceId, onChange }: { workspaces: WorkspaceSummary[]; workspaceId: string; onChange: (workspaceId: string) => void }) {
+  return <label className="workspace-switcher">
+    <small>Workspace</small>
+    {workspaces.length ? <select aria-label="Select workspace" value={workspaceId} onChange={(event) => onChange(event.currentTarget.value)}>
+      {workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name} · {workspace.status}</option>)}
+    </select> : <strong>No workspaces</strong>}
+  </label>;
+}
+
 function OverviewPage({ plugins, activePluginIds, tools, surfaces, workspace, permissions, onOpenPlugins, onOpenSettings }: { plugins: PluginManifest[]; activePluginIds: Set<string>; tools: ToolContribution[]; surfaces: SurfaceContribution[]; workspace: WorkspaceSummary | null; permissions: string[]; onOpenPlugins: () => void; onOpenSettings: () => void }) {
   return <>
     <div className="metric-grid">
@@ -121,7 +130,7 @@ function ownerSetupErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-function ProfilePage({ session, onSessionChanged, onOpenSecurity, emit }: { session: CoreSession | null; onSessionChanged: (session: CoreSession) => void; onOpenSecurity: () => void; emit: (item: Notification) => void }) {
+function ProfilePage({ session, workspaces, currentWorkspace, onSessionChanged, onOpenSecurity, emit }: { session: CoreSession | null; workspaces: WorkspaceSummary[]; currentWorkspace: WorkspaceSummary | null; onSessionChanged: (session: CoreSession) => void; onOpenSecurity: () => void; emit: (item: Notification) => void }) {
   const [name, setName] = useState(session?.user?.name ?? "");
   const [rbac, setRbac] = useState<RbacMe | null>(null);
   const [status, setStatus] = useState("Profile ready");
@@ -174,6 +183,7 @@ function ProfilePage({ session, onSessionChanged, onOpenSecurity, emit }: { sess
         <h3>Account</h3>
         <p>Email: {session?.user?.email ?? "unknown"}</p>
         <p>User ID: {session?.user?.id ?? "unknown"}</p>
+        <p>Name: {session?.user?.name ?? "unset"}</p>
       </section>
       <section className="settings-subpanel">
         <h3>Workspace access</h3>
@@ -182,6 +192,32 @@ function ProfilePage({ session, onSessionChanged, onOpenSecurity, emit }: { sess
         {rbac?.recoveryAdmin ? <p className="message">Recovery admin is active for this user.</p> : null}
       </section>
     </div>
+    <SurfaceCard>
+      <div className="surface-header">
+        <div><small>workspace directory</small><h2>Accessible workspaces</h2><p>{workspaces.length ? `${workspaces.length} workspace(s) available` : "No accessible workspaces"}</p></div>
+        <Badge>{currentWorkspace?.id ?? "none"}</Badge>
+      </div>
+      <div className="template-table-wrap domain-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Workspace</th>
+              <th>Status</th>
+              <th>Roles</th>
+              <th>Permissions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {workspaces.length ? workspaces.map((workspace) => <tr key={workspace.id}>
+              <td><strong>{workspace.name}</strong><small>{workspace.id}{workspace.id === currentWorkspace?.id ? " · current" : ""}</small></td>
+              <td><Badge>{workspace.status}</Badge></td>
+              <td>{workspace.roles.map((role) => role.name).join(", ") || "none"}</td>
+              <td>{workspace.permissions.length}</td>
+            </tr>) : <tr><td colSpan={4}>No accessible workspaces were returned by Core.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </SurfaceCard>
   </div>;
 }
 
@@ -199,6 +235,7 @@ export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
   const [session, setSession] = useState<CoreSession | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [notice, setNotice] = useState("runtime ready · no feature plugin required");
@@ -217,6 +254,7 @@ export function App() {
       const composed = composeShellFromSurfaces(runtimeSurfaces);
       setSession(bootstrap.session);
       setWorkspace(bootstrap.currentWorkspace);
+      setWorkspaces(bootstrap.workspaces);
       setPermissions(bootstrap.membership.permissions);
       setAuthStatus("authenticated");
       setPlugins(installed);
@@ -248,6 +286,7 @@ export function App() {
     { label: workspace?.id ?? "no-workspace", value: "workspace" },
     { label: `${activePluginIds.size}/${plugins.length}`, value: "plugins" },
     { label: `${tools.length}`, value: "tools" },
+    { label: `${workspaces.length}`, value: "workspaces" },
   ];
 
   const openPage = (page: Page, path = "/") => {
@@ -256,6 +295,13 @@ export function App() {
   };
 
   const openSecuritySettings = () => openPage("settings", "/settings?tab=platform.settings.security");
+
+  const switchWorkspace = (workspaceId: string) => {
+    setCurrentWorkspaceId(workspaceId);
+    const url = new URL(window.location.href);
+    url.searchParams.set("workspace", workspaceId);
+    window.location.assign(`${url.pathname}${url.search}${url.hash}`);
+  };
 
   const runTool = async (tool: ToolContribution, approvalId?: string) => {
     setPaletteOpen(false);
@@ -334,6 +380,7 @@ export function App() {
       <header className="topbar">
         <button className="brand" type="button" onClick={() => openPage("overview")}><strong>v2</strong><Badge>runtime</Badge></button>
         <button className="search" type="button" onClick={() => setPaletteOpen(true)}>Search commands or tools</button>
+        <WorkspaceSwitcher workspaces={workspaces} workspaceId={workspace?.id ?? currentWorkspaceId()} onChange={switchWorkspace} />
         <UserMenu session={session} workspace={workspace} onOpenProfile={() => openPage("profile", "/profile")} onOpenSettings={() => openPage("settings", "/settings")} onSignOut={() => void signOut()} />
       </header>
       <aside className="sidebar">
@@ -344,7 +391,7 @@ export function App() {
         <button className={activePage === "settings" ? "nav active" : "nav"} onClick={() => openPage("settings", "/settings")}>Settings</button>
         <div className="sidebar-label">APPS</div>
         {activePlugins.length ? activePlugins.map((plugin) => <button key={plugin.id} className={activePage === `plugin:${plugin.id}` ? "nav active" : "nav"} onClick={() => openPage(`plugin:${plugin.id}`, `/plugins/${encodeURIComponent(plugin.id)}`)}>{plugin.name}</button>) : <p className="message">No active plugins</p>}
-        <div className="sidebar-account"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>{workspace?.id ?? "no-workspace"}</small></div></div>
+        <div className="sidebar-account"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>{workspace?.name ?? workspace?.id ?? "no-workspace"}</small></div></div>
       </aside>
       <main className="workspace">
         <div className="workspace-header">
@@ -362,7 +409,7 @@ export function App() {
         {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} permissions={permissions} onChanged={() => void refreshPlugins()} /></div> : null}
         {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
         {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} workspace={workspace} permissions={permissions} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
-        {activePage === "profile" ? <ProfilePage session={session} onSessionChanged={setSession} onOpenSecurity={openSecuritySettings} emit={emit} /> : null}
+        {activePage === "profile" ? <ProfilePage session={session} workspaces={workspaces} currentWorkspace={workspace} onSessionChanged={setSession} onOpenSecurity={openSecuritySettings} emit={emit} /> : null}
         {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
       </main>
       <aside className="assistant">{assistant.length ? assistant.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <div className="message">No assistant plugin surface installed.</div>}</aside>
