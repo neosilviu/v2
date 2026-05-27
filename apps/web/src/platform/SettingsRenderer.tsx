@@ -100,15 +100,26 @@ export function SettingsRenderer({ panel, shell, onShellChange }: { panel: Setti
     try {
       const payload = { ...(row ?? {}), ...(values ?? {}) };
       const result = await executeRuntimeAction(panel.id, action.commandId, payload);
-      if (result.status === "ok") {
-        const effects = action.effects ?? [];
-        setMessage(effects.some((effect) => effect.type === "toast") ? effects.find((effect) => effect.type === "toast")?.message ?? "Action completed" : "Action completed");
-        refresh();
-      } else {
+      if (result.status !== "ok") {
         setMessage(result.error ?? result.status);
+        return false;
       }
+      const effects = action.effects ?? [];
+      if (!effects.length) {
+        setMessage("Action completed");
+        refresh();
+        return true;
+      }
+      for (const effect of effects) {
+        if (effect.type === "toast") setMessage(effect.message ?? "Action completed");
+        if (effect.type === "refresh") refresh();
+        if (effect.type === "closeDialog") setPendingAction(null);
+        if (effect.type === "navigate") window.location.assign(effect.to);
+      }
+      return true;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Action failed.");
+      return false;
     } finally {
       setSubmitting(false);
     }
@@ -122,15 +133,16 @@ export function SettingsRenderer({ panel, shell, onShellChange }: { panel: Setti
       setMessage("Reason is required.");
       return;
     }
-    await runAction(pendingAction.action, pendingAction.row, values);
-    setPendingAction(null);
+    const action = pendingAction.action;
+    const succeeded = await runAction(action, pendingAction.row, values);
+    if (succeeded && !(action.effects ?? []).some((effect) => effect.type === "closeDialog")) setPendingAction(null);
   };
 
   if (!panel.sections.length) return <TemplateRenderer page={fallbackPage} runtime={{ contributionId: panel.id }} />;
 
   return <SurfaceCard className="settings-renderer">
     <div className="surface-header">
-      <div><small>{panel.templateId}</small><h2>{heading}</h2><p>{message ?? status ?? ""}</p></div>
+      <div><h2>{heading}</h2><p>{message ?? status ?? ""}</p></div>
       <div className="plugin-actions">
         <Button onClick={() => refresh()} disabled={submitting}>Refresh</Button>
       </div>
@@ -159,10 +171,10 @@ export function SettingsRenderer({ panel, shell, onShellChange }: { panel: Setti
               fields={section.fields}
               crud={section.crud}
               onRefresh={refresh}
-              onCreate={(values) => runAction(section.crud!.createActionId ? { id: section.crud!.createActionId, title: "Create", commandId: section.crud!.createActionId } as ActionDefinition : section.actions[0]!, null, values)}
-              onUpdate={(row, values) => runAction(section.crud!.updateActionId ? { id: section.crud!.updateActionId, title: "Save", commandId: section.crud!.updateActionId } as ActionDefinition : section.actions[0]!, row, values)}
-              onDelete={(row) => runAction(section.crud!.deleteActionId ? { id: section.crud!.deleteActionId, title: "Delete", commandId: section.crud!.deleteActionId, variant: "danger" } as ActionDefinition : section.actions[0]!, row, {})}
-              onRowAction={(action, row) => runAction(action, row, {})}
+              onCreate={async (values) => { await runAction(section.crud!.createActionId ? { id: section.crud!.createActionId, title: "Create", commandId: section.crud!.createActionId } as ActionDefinition : section.actions[0]!, null, values); }}
+              onUpdate={async (row, values) => { await runAction(section.crud!.updateActionId ? { id: section.crud!.updateActionId, title: "Save", commandId: section.crud!.updateActionId } as ActionDefinition : section.actions[0]!, row, values); }}
+              onDelete={async (row) => { await runAction(section.crud!.deleteActionId ? { id: section.crud!.deleteActionId, title: "Delete", commandId: section.crud!.deleteActionId, variant: "danger" } as ActionDefinition : section.actions[0]!, row, {}); }}
+              onRowAction={async (action, row) => { await runAction(action, row, {}); }}
             />
           </section>;
         }
@@ -227,7 +239,7 @@ export function SettingsRenderer({ panel, shell, onShellChange }: { panel: Setti
         {pendingAction.action.confirmation?.message ? <p>{pendingAction.action.confirmation.message}</p> : null}
         <form className="mail-form" onSubmit={submitPendingAction}>
           {pendingAction.action.confirmation?.reasonRequired ? <label>Reason<textarea name="reason" required /></label> : null}
-          {pendingAction.action.confirmation?.fields.map((field) => field.type === "boolean" ? <label className="template-check" key={field.id}><input name={field.id} type="checkbox" defaultChecked={false} disabled={submitting} />{field.label}</label> : field.type === "select" ? <label key={field.id}>{field.label}<select name={field.id} defaultValue={field.options[0]?.value ?? ""} disabled={submitting} required={field.required}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label> : <label key={field.id}>{field.label}<input name={field.id} type={fieldType(field)} required={field.required} disabled={submitting} /></label>)}
+          {pendingAction.action.confirmation?.fields.filter((field) => !(pendingAction.action.confirmation?.reasonRequired && field.id === "reason")).map((field) => field.type === "boolean" ? <label className="template-check" key={field.id}><input name={field.id} type="checkbox" defaultChecked={false} disabled={submitting} />{field.label}</label> : field.type === "select" ? <label key={field.id}>{field.label}<select name={field.id} defaultValue={field.options[0]?.value ?? ""} disabled={submitting} required={field.required}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label> : field.type === "textarea" ? <label key={field.id}>{field.label}<textarea name={field.id} required={field.required} disabled={submitting} /></label> : <label key={field.id}>{field.label}<input name={field.id} type={fieldType(field)} required={field.required} disabled={submitting} /></label>)}
           <div className="plugin-actions">
             <Button onClick={() => setPendingAction(null)} disabled={submitting} type="button">Cancel</Button>
             <Button className="primary" type="submit" disabled={submitting}>Confirm</Button>

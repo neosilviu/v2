@@ -447,6 +447,37 @@ async function platformSettingsData(c: CoreContext, repo: CoreRepository, worksp
   }
 }
 async function platformSettingsAction(c: CoreContext, repo: CoreRepository, workspaceId: string, actionId: string, input: unknown) {
+  const actionPermissions: Partial<Record<string, WorkspacePermission>> = {
+    "platform.settings.general.save": "workspace.settings.write",
+    "platform.settings.mail.provider.save": "mail.configure",
+    "platform.settings.mail.provider.activate": "mail.configure",
+    "platform.settings.mail.provider.disable": "mail.configure",
+    "platform.settings.mail.provider.test": "mail.test",
+    "platform.settings.security.policy.save": "auth.admin",
+    "platform.settings.rbac.role.create": "workspace.members.manage",
+    "platform.settings.rbac.role.update": "workspace.members.manage",
+    "platform.settings.rbac.role.delete": "workspace.members.manage",
+    "platform.settings.rbac.member.impersonate": "workspace.impersonate",
+    "platform.settings.rbac.member.override.allow": "workspace.members.manage",
+    "platform.settings.rbac.member.override.deny": "workspace.members.manage",
+    "platform.settings.rbac.member.override.remove": "workspace.members.manage",
+    "platform.settings.plans.upsert": "plan.write",
+    "platform.settings.plans.delete": "plan.write",
+    "platform.settings.plans.assignment.upsert": "plan.write",
+    "platform.settings.plans.assignment.delete": "plan.write",
+    "platform.settings.domains.create": "domains.write",
+    "platform.settings.domains.verify": "domains.verify",
+    "platform.settings.domains.activate": "domains.write",
+    "platform.settings.domains.disable": "domains.write",
+    "platform.settings.plugins.activate": "plugin.activate",
+    "platform.settings.plugins.deactivate": "plugin.activate",
+    "platform.settings.interface.save": "layout.write",
+  };
+  const requiredPermission = actionPermissions[actionId];
+  if (requiredPermission) {
+    const denied = await requirePermission(c, workspaceId, requiredPermission);
+    if (denied) return denied;
+  }
   switch (actionId) {
     case "platform.settings.general.save":
       return c.json({ status: "ok", data: await repo.saveGeneralSettings(workspaceId, objectInput(input), c.get("user")?.id), error: null, approvalId: null, auditEventId: null });
@@ -507,18 +538,21 @@ async function platformSettingsAction(c: CoreContext, repo: CoreRepository, work
       if (!membership) return c.json({ status: "denied", data: null, error: "Target user is not a workspace member.", approvalId: null, auditEventId: null }, 404);
       if (!reason) return c.json(errorResponse(failure("validation_failed", "A reason is required for impersonation.")), 400);
       if (!await repo.hasPermission(workspaceId, actor, "workspace.impersonate")) return c.json({ status: "denied", data: null, error: "workspace.impersonate permission is required.", approvalId: null, auditEventId: null }, 403);
-      const actorSession = await readSession(c.env, c.req.raw.headers);
-      if (!actorSession) return c.json({ status: "denied", data: null, error: "Authentication session is required.", approvalId: null, auditEventId: null }, 401);
+      const headers = new Headers({ "content-type": "application/json" });
+      const cookie = c.req.header("cookie");
+      const authorization = c.req.header("authorization");
+      if (cookie) headers.set("cookie", cookie);
+      if (authorization) headers.set("authorization", authorization);
       const response = await c.env.AUTH.fetch("https://auth.internal/internal/auth/impersonation/start", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ actorUserId: actor.id, actorSessionId: actorSession.id, subjectUserId: targetUserId, workspaceId, reason, durationSeconds: 3600 }),
+        headers,
+        body: JSON.stringify({ expectedActorUserId: actor.id, subjectUserId: targetUserId, workspaceId, reason, durationSeconds: 3600 }),
       });
-      const body = await response.json().catch(() => null) as { impersonation?: { id?: string; expiresAt?: string; rootSessionId?: string; token?: string } } | null;
-      if (!response.ok || !body?.impersonation?.token) return c.json({ status: "denied", data: null, error: "Impersonation session could not be created.", approvalId: null, auditEventId: null }, 500);
+      const body = await response.json().catch(() => null) as { impersonation?: { id?: string; expiresAt?: string; actorUserId?: string; subjectUserId?: string; workspaceId?: string; reason?: string } } | null;
+      if (!response.ok || !body?.impersonation?.id) return c.json({ status: "denied", data: null, error: "Impersonation session could not be created.", approvalId: null, auditEventId: null }, response.status === 400 || response.status === 401 || response.status === 403 ? response.status : 500);
       const setCookie = response.headers.get("set-cookie");
       if (setCookie) c.header("Set-Cookie", setCookie);
-      await repo.audit(workspaceId, "rbac.member.impersonate.start", { actorUserId: actor.id, subjectUserId: targetUserId, reason, impersonationId: body.impersonation.id ?? null }, actor.id);
+      await repo.audit(workspaceId, "rbac.member.impersonate.start", { actorUserId: actor.id, subjectUserId: targetUserId, reason, impersonationId: body.impersonation.id }, actor.id);
       return c.json({ status: "ok", data: { ...body.impersonation, targetUserId, reason }, error: null, approvalId: null, auditEventId: null });
     }
     case "platform.settings.rbac.member.override.allow":
@@ -643,6 +677,35 @@ coreApiRoutes = coreApiRoutes.get("/health", (c) => c.json({ ok: true, service: 
 coreApiRoutes = coreApiRoutes.get("/session", (c) => {
   const user = c.get("user");
   return c.json({ authenticated: Boolean(user), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
+});
+coreApiRoutes = coreApiRoutes.get("/session/impersonation", async (c) => {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const headers = new Headers();
+  const cookie = c.req.header("cookie");
+  const authorization = c.req.header("authorization");
+  if (cookie) headers.set("cookie", cookie);
+  if (authorization) headers.set("authorization", authorization);
+  const response = await c.env.AUTH.fetch("https://auth.internal/internal/auth/impersonation/current", { headers });
+  if (!response.ok) return c.json({ impersonation: null });
+  return c.json(await response.json().catch(() => ({ impersonation: null })));
+});
+coreApiRoutes = coreApiRoutes.post("/session/impersonation/stop", async (c) => {
+  const denied = requireRead(c);
+  if (denied) return denied;
+  const headers = new Headers({ "content-type": "application/json" });
+  const cookie = c.req.header("cookie");
+  const authorization = c.req.header("authorization");
+  if (cookie) headers.set("cookie", cookie);
+  if (authorization) headers.set("authorization", authorization);
+  const response = await c.env.AUTH.fetch("https://auth.internal/internal/auth/impersonation/stop", { method: "POST", headers, body: "{}" });
+  const payload = await response.json().catch(() => null) as { impersonation?: { id?: string; actorUserId?: string; subjectUserId?: string; workspaceId?: string; reason?: string }; restored?: boolean; reauthenticationRequired?: boolean } | null;
+  if (!response.ok || !payload?.impersonation?.workspaceId) return c.json(errorResponse(failure("conflict", "Active impersonation session could not be stopped.")), response.status === 401 || response.status === 404 ? response.status : 409);
+  const setCookie = response.headers.get("set-cookie");
+  if (setCookie) c.header("Set-Cookie", setCookie);
+  await new CoreRepository(c.env.CORE_DB).audit(payload.impersonation.workspaceId, "rbac.member.impersonate.stop", { impersonationId: payload.impersonation.id ?? null, actorUserId: payload.impersonation.actorUserId ?? null, subjectUserId: payload.impersonation.subjectUserId ?? null, restored: payload.restored === true }, c.get("user")?.id);
+  readResponseCache.clear();
+  return c.json(payload);
 });
 async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string) {
   const denied = requireRead(c);
@@ -1297,10 +1360,18 @@ coreApiRoutes = coreApiRoutes.post("/workspaces/:workspaceId/settings/runtime/ac
   if (!resolved) return c.json({ status: "denied", data: null, error: "Contribution is not active in this workspace.", approvalId: null, auditEventId: null }, 403);
   const action = resolved.page.actions.find((item) => item.id === request.actionId);
   if (!action) return c.json({ status: "denied", data: null, error: "Action is not declared by this contribution.", approvalId: null, auditEventId: null }, 403);
+  if (action.requiredPermission) {
+    const actionPermissionDenied = await requirePermission(c, request.workspaceId, action.requiredPermission as WorkspacePermission);
+    if (actionPermissionDenied) return actionPermissionDenied;
+  }
   const runtime = await runtimeFor(repo);
   const toolOwner = runtime.plugins.all().find((plugin) => plugin.contributes.tools.some((tool) => tool.id === action.commandId));
   const tool = toolOwner?.contributes.tools.find((item) => item.id === action.commandId);
-  const permissionDenied = await requireAllPermissions(c, request.workspaceId, tool?.permissions.length ? tool.permissions : [resolved.requiredPermission ?? "workspace.settings.write"]);
+  const permissionDenied = tool?.permissions.length
+    ? await requireAllPermissions(c, request.workspaceId, tool.permissions as WorkspacePermission[])
+    : action.requiredPermission
+      ? undefined
+      : await requireAllPermissions(c, request.workspaceId, [resolved.requiredPermission ?? "workspace.settings.write"]);
   if (permissionDenied) return permissionDenied;
   if (resolved.pluginId === "platform") {
     const platformResponse = await platformSettingsAction(c, repo, request.workspaceId, action.id, request.input);

@@ -27,7 +27,10 @@ type HonoRoute = {
   $delete(args?: HonoRequestArgs): Promise<Response>;
 };
 type CoreApiClient = {
-  session: { $get(args?: HonoRequestArgs): Promise<Response> };
+  session: {
+    $get(args?: HonoRequestArgs): Promise<Response>;
+    impersonation: { $get(args?: HonoRequestArgs): Promise<Response>; stop: { $post(args?: HonoRequestArgs): Promise<Response> } };
+  };
   workspaces: {
     current: { bootstrap: HonoRoute };
     ":workspaceId": {
@@ -196,6 +199,50 @@ export function loadShellBootstrap(workspaceId = workspaceFromLocation()): Promi
 export async function loadCoreSession(): Promise<CoreSession> {
   return coreResponse(coreApi.session.$get(), coreSessionSchema);
 }
+
+export type ImpersonationContext = {
+  id: string;
+  actorUserId: string;
+  subjectUserId: string;
+  workspaceId: string;
+  reason: string;
+  expiresAt: string | null;
+};
+
+const impersonationResponseSchema = z.object({
+  impersonation: z.object({
+    id: z.string(),
+    actorUserId: z.string(),
+    subjectUserId: z.string(),
+    workspaceId: z.string(),
+    reason: z.string(),
+    expiresAt: z.string().nullable().optional().default(null),
+  }).nullable(),
+});
+
+const stopImpersonationResponseSchema = z.object({
+  impersonation: z.object({
+    id: z.string().optional(),
+    actorUserId: z.string().optional(),
+    subjectUserId: z.string().optional(),
+    workspaceId: z.string(),
+    reason: z.string().optional(),
+    expiresAt: z.string().nullable().optional(),
+  }),
+  restored: z.boolean(),
+  reauthenticationRequired: z.boolean(),
+});
+
+export async function loadCurrentImpersonation(): Promise<ImpersonationContext | null> {
+  return (await coreResponse(coreApi.session.impersonation.$get(), impersonationResponseSchema)).impersonation;
+}
+
+export async function stopCurrentImpersonation(): Promise<{ restored: boolean; reauthenticationRequired: boolean }> {
+  const response = await coreResponse(coreApi.session.impersonation.stop.$post({ json: {} }), stopImpersonationResponseSchema);
+  invalidateApiCaches();
+  return { restored: response.restored, reauthenticationRequired: response.reauthenticationRequired };
+}
+
 
 export async function loadOwnerSetup(token: string): Promise<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }> {
   return coreResponse(coreApi.setup.owner.$get({ query: { token } }), ownerSetupStatusSchema);

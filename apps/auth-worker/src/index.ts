@@ -164,24 +164,56 @@ authApiRoutes = authApiRoutes.get("/admin/auth/impersonation-sessions", async (c
   if (!admin.ok) return admin.response;
   return c.json({ sessions: await new AuthRuntimeRepository(admin.config.db).listImpersonationSessions(c.req.query("workspaceId") ?? null) });
 });
+type ResolvedAuthConfig = Extract<Awaited<ReturnType<typeof resolveAuthConfig>>, { ok: true }>["config"];
+async function currentAuthSession(c: AuthContext, config: ResolvedAuthConfig) {
+  const headers = new Headers();
+  const cookie = c.req.header("cookie");
+  const authorization = c.req.header("authorization");
+  if (cookie) headers.set("cookie", cookie);
+  if (authorization) headers.set("authorization", authorization);
+  const response = await createAuth(config).handler(new Request(new URL("/api/auth/get-session", config.baseURL).toString(), { headers }));
+  if (!response.ok) return null;
+  return response.json().catch(() => null) as Promise<{ session?: { id?: string; userId?: string; impersonatedBy?: string | null } | null; user?: { id?: string } | null } | null>;
+}
+
+authApiRoutes = authApiRoutes.get("/internal/auth/impersonation/current", async (c) => {
+  if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal impersonation lookup requires a service binding.")), 403);
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const current = await currentAuthSession(c, parsed.config);
+  const sessionId = typeof current?.session?.id === "string" ? current.session.id : "";
+  if (!sessionId) return c.json({ impersonation: null });
+  const impersonation = await new AuthRuntimeRepository(parsed.config.db).activeImpersonationForSession(sessionId);
+  return c.json({ impersonation });
+});
+
 authApiRoutes = authApiRoutes.post("/internal/auth/impersonation/start", async (c) => {
   if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal impersonation start requires a service binding.")), 403);
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
-  const body = await c.req.json().catch(() => null) as { actorUserId?: unknown; actorSessionId?: unknown; subjectUserId?: unknown; workspaceId?: unknown; reason?: unknown; durationSeconds?: unknown } | null;
-  if (typeof body?.actorUserId !== "string" || typeof body?.actorSessionId !== "string" || typeof body?.subjectUserId !== "string" || typeof body?.workspaceId !== "string" || typeof body?.reason !== "string" || !body.reason.trim()) {
-    return c.json(errorResponse(failure("validation_failed", "actorUserId, actorSessionId, subjectUserId, workspaceId and reason are required.")), 400);
+  const body = await c.req.json().catch(() => null) as { expectedActorUserId?: unknown; subjectUserId?: unknown; workspaceId?: unknown; reason?: unknown; durationSeconds?: unknown } | null;
+  if (typeof body?.expectedActorUserId !== "string" || typeof body?.subjectUserId !== "string" || typeof body?.workspaceId !== "string" || typeof body?.reason !== "string" || !body.reason.trim()) {
+    return c.json(errorResponse(failure("validation_failed", "expectedActorUserId, subjectUserId, workspaceId and reason are required.")), 400);
   }
   const auth = createAuth(parsed.config);
   const context = await auth.$context;
+  const current = await currentAuthSession(c, parsed.config);
+  const actorSessionId = typeof current?.session?.id === "string" ? current.session.id : "";
+  const actorUserId = typeof current?.user?.id === "string" ? current.user.id : "";
+  if (!actorSessionId || !actorUserId) return c.json(errorResponse(failure("not_authenticated", "An active actor session is required.")), 401);
+  if (actorUserId !== body.expectedActorUserId) return c.json(errorResponse(failure("not_authorized", "The authenticated actor does not match the authorized actor.")), 403);
+  if (actorUserId === body.subjectUserId) return c.json(errorResponse(failure("validation_failed", "A user cannot impersonate themselves.")), 400);
   const repo = new AuthRuntimeRepository(parsed.config.db);
-  const session = await context.internalAdapter.createSession(body.subjectUserId, true, { impersonatedBy: body.actorUserId, expiresAt: new Date(Date.now() + (typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) ? body.durationSeconds : 3600) * 1000) }, true);
+  if (current?.session?.impersonatedBy || await repo.activeImpersonationForSession(actorSessionId)) {
+    return c.json(errorResponse(failure("not_authorized", "Impersonation chaining is not allowed.")), 403);
+  }
+  const session = await context.internalAdapter.createSession(body.subjectUserId, true, { impersonatedBy: actorUserId, expiresAt: new Date(Date.now() + (typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) ? body.durationSeconds : 3600) * 1000) }, true);
   if (!session) return c.json(errorResponse(failure("internal_error", "Impersonation session could not be created.")), 500);
   const token = String(session.token);
   const expiresAt = typeof session.expiresAt === "string" ? session.expiresAt : new Date(session.expiresAt as Date).toISOString();
   const impersonation = await repo.startImpersonation({
-    actorUserId: body.actorUserId,
-    actorSessionId: body.actorSessionId,
+    actorUserId,
+    actorSessionId,
     subjectUserId: body.subjectUserId,
     workspaceId: body.workspaceId,
     reason: body.reason.trim(),
@@ -189,20 +221,26 @@ authApiRoutes = authApiRoutes.post("/internal/auth/impersonation/start", async (
     expiresAt,
   });
   await setSignedCookie(c, context.authCookies.sessionToken.name, token, context.secret, context.authCookies.sessionToken.attributes);
-  return c.json({ impersonation: { ...impersonation, token } }, 201);
+  return c.json({ impersonation }, 201);
 });
+
 authApiRoutes = authApiRoutes.post("/internal/auth/impersonation/stop", async (c) => {
   if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal impersonation stop requires a service binding.")), 403);
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
-  const body = await c.req.json().catch(() => null) as { sessionId?: unknown } | null;
-  if (typeof body?.sessionId !== "string" || !body.sessionId) return c.json(errorResponse(failure("validation_failed", "sessionId is required.")), 400);
-  const repo = new AuthRuntimeRepository(parsed.config.db);
-  const ended = await repo.stopImpersonation(body.sessionId);
   const auth = createAuth(parsed.config);
   const context = await auth.$context;
-  deleteCookie(c, context.authCookies.sessionToken.name, context.authCookies.sessionToken.attributes);
-  return c.json({ sessions: ended });
+  const current = await currentAuthSession(c, parsed.config);
+  const impersonatedSessionId = typeof current?.session?.id === "string" ? current.session.id : "";
+  if (!impersonatedSessionId) return c.json(errorResponse(failure("not_authenticated", "An active impersonated session is required.")), 401);
+  const ended = await new AuthRuntimeRepository(parsed.config.db).stopImpersonationForSession(impersonatedSessionId);
+  if (!ended) return c.json(errorResponse(failure("not_found", "Active impersonation session is not available.")), 404);
+  if (ended.actorToken) {
+    await setSignedCookie(c, context.authCookies.sessionToken.name, ended.actorToken, context.secret, context.authCookies.sessionToken.attributes);
+  } else {
+    deleteCookie(c, context.authCookies.sessionToken.name, context.authCookies.sessionToken.attributes);
+  }
+  return c.json({ impersonation: ended.impersonation, restored: Boolean(ended.actorToken), reauthenticationRequired: !ended.actorToken });
 });
 authApiRoutes = authApiRoutes.post("/api/auth/sign-up/email", async (c) => {
   const parsed = await resolveAuthConfig(c.env);

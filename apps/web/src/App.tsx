@@ -4,7 +4,7 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, setCurrentWorkspaceId, type CoreSession, type RbacMe, type WorkspaceSummary } from "./api";
+import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentImpersonation, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RbacMe, type WorkspaceSummary } from "./api";
 import { AuthRequestError, ownerSetupSignUp, signInEmail, signOutAuth, updateAuthProfile } from "./auth-api";
 import { composeShellFromSurfaces, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
@@ -234,6 +234,7 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
   const [session, setSession] = useState<CoreSession | null>(null);
+  const [impersonation, setImpersonation] = useState<ImpersonationContext | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [permissions, setPermissions] = useState<string[]>([]);
@@ -261,6 +262,7 @@ export function App() {
       setActivePluginIds(active);
       setTools(runtimeTools);
       setShell(layout ? { ...composed, zones: layout.zones, placements: layout.placements } : composed);
+      void loadCurrentImpersonation().then(setImpersonation).catch(() => setImpersonation(null));
     }).catch((error) => {
       if (isCoreAuthRequiredError(error)) {
         setSession(null);
@@ -363,6 +365,7 @@ export function App() {
       invalidateApiCaches();
       window.dispatchEvent(new Event("v2-auth-changed"));
       setSession(null);
+      setImpersonation(null);
       setAuthStatus("anonymous");
       window.history.replaceState(null, "", "/login");
       emit(notification("success", "Signed out", "The current Auth session was closed."));
@@ -371,12 +374,33 @@ export function App() {
     }
   };
 
+  const stopImpersonating = async () => {
+    try {
+      const result = await stopCurrentImpersonation();
+      setImpersonation(null);
+      if (result.reauthenticationRequired) {
+        setSession(null);
+        setAuthStatus("anonymous");
+        window.location.assign("/login");
+        return;
+      }
+      window.location.reload();
+    } catch {
+      emit(notification("error", "Could not stop impersonation", "The original administrator session could not be restored."));
+    }
+  };
+
   if (authStatus === "checking") return <SessionCheckPage />;
   if (authStatus === "anonymous") return <LoginPage redirectTo={protectedRedirectTarget()} />;
   if (authStatus === "unavailable") return <SessionCheckPage unavailable />;
 
   return <>
-    <div className="app-shell">
+    {impersonation ? <div role="status" style={{ position: "fixed", inset: "0 0 auto 0", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem", padding: "0.65rem 1rem", background: "#7c2d12", color: "#fff" }}>
+      <strong>Impersonating {session?.user?.email ?? impersonation.subjectUserId}</strong>
+      <span>{impersonation.reason}</span>
+      <Button onClick={() => void stopImpersonating()}>Stop impersonation</Button>
+    </div> : null}
+    <div className="app-shell" style={impersonation ? { paddingTop: "3.25rem" } : undefined}>
       <header className="topbar">
         <button className="brand" type="button" onClick={() => openPage("overview")}><strong>v2</strong><Badge>runtime</Badge></button>
         <button className="search" type="button" onClick={() => setPaletteOpen(true)}>Search commands or tools</button>
