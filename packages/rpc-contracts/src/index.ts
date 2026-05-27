@@ -41,7 +41,26 @@ export const placementStateSchema = z.object({ surfaceId: z.string(), zoneId: z.
 export const workspaceLayoutSchema = z.object({ zones: z.array(zoneStateSchema), placements: z.array(placementStateSchema) });
 export const layoutWriteRequestSchema = z.object({ workspaceId: workspaceIdSchema, layout: workspaceLayoutSchema });
 
-export const appErrorCodeSchema = z.enum(["validation_failed", "not_authenticated", "not_authorized", "not_found", "conflict", "approval_required", "dependency_unavailable", "rate_limited", "internal_error"]);
+export const appErrorCodeSchema = z.enum([
+  "validation_failed",
+  "not_authenticated",
+  "not_authorized",
+  "not_found",
+  "conflict",
+  "approval_required",
+  "dependency_unavailable",
+  "rate_limited",
+  "internal_error",
+  "owner_setup_invalid_token",
+  "owner_setup_expired",
+  "owner_setup_email_mismatch",
+  "owner_setup_token_consumed",
+  "owner_setup_token_revoked",
+  "owner_account_already_exists",
+  "owner_password_invalid",
+  "owner_signup_failed",
+  "owner_membership_activation_failed",
+]);
 export const appErrorSchema = z.object({ code: appErrorCodeSchema, message: z.string().min(1), requestId: z.string().min(1).optional(), fieldErrors: z.record(z.string(), z.array(z.string())).optional(), details: z.record(z.string(), z.unknown()).optional(), retryable: z.boolean().default(false) });
 export const errorResponseSchema = z.object({ error: appErrorSchema });
 export const notificationLevelSchema = z.enum(["info", "success", "warning", "error"]);
