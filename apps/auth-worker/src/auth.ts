@@ -68,18 +68,18 @@ export function parseAuthConfig(env: AuthEnv): AuthConfigResult {
 
 export async function resolveAuthConfig(env: AuthEnv, workspaceId = env.AUTH_WORKSPACE_ID || "default"): Promise<AuthConfigResult> {
   const parsed = parseAuthConfig(env);
-  if (!parsed.ok || !env.CORE) return parsed;
+  if (!parsed.ok || !env.CORE || !parsed.config.production) return parsed;
   try {
     const response = await env.CORE.fetch(`https://core.internal/internal/workspaces/${encodeURIComponent(workspaceId)}/auth/trust-config`);
-    if (!response.ok) return parsed.config.production ? { ok: false, message: "Production authentication trust is not available from Core domains." } : parsed;
+    if (!response.ok) return { ok: false, message: "Production authentication trust is not available from Core domains." };
     const trust = await response.json() as CoreTrustConfig;
-    if (!trust.baseURL || !trust.passkey) return parsed.config.production ? { ok: false, message: "Production authentication requires an active verified auth domain." } : parsed;
+    if (!trust.baseURL || !trust.passkey) return { ok: false, message: "Production authentication requires an active verified auth domain." };
     const base = parseUrl(trust.baseURL, "Core auth domain");
     const trustedOrigins = [...new Set([base.origin, ...trust.trustedOrigins])];
     for (const origin of trustedOrigins) parseUrl(origin, "Core trusted origin");
     return { ok: true, config: { ...parsed.config, baseURL: base.origin, trustedOrigins, passkey: { ...parsed.config.passkey, rpID: trust.passkey.rpID, origin: trust.passkey.origin }, workspaceId } };
   } catch {
-    return parsed.ok && parsed.config.production ? { ok: false, message: "Production authentication trust could not be resolved from Core domains." } : parsed;
+    return { ok: false, message: "Production authentication trust could not be resolved from Core domains." };
   }
 }
 
@@ -101,12 +101,7 @@ export function createAuth(config: AuthConfig) {
     const response = await config.core.fetch(`https://core.internal/internal/workspaces/${encodeURIComponent(config.workspaceId)}/mail/send`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        purpose: input.purpose,
-        templateKey: input.templateKey,
-        to: input.to,
-        variables: input.purpose === "verify_email" ? { verificationUrl: input.url } : { resetUrl: input.url },
-      }),
+      body: JSON.stringify({ purpose: input.purpose, templateKey: input.templateKey, to: input.to, variables: input.purpose === "verify_email" ? { verificationUrl: input.url } : { resetUrl: input.url } }),
     });
     if (!response.ok) throw new Error("Core Mail Runtime request failed.");
     const result = await response.json() as { ok?: unknown; status?: unknown; errorSafe?: unknown };
@@ -117,17 +112,8 @@ export function createAuth(config: AuthConfig) {
     baseURL: config.baseURL,
     trustedOrigins: config.trustedOrigins,
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
-    emailAndPassword: {
-      enabled: true,
-      sendResetPassword: async ({ user, url }) => {
-        await sendCoreMail({ purpose: "reset_password", templateKey: "reset_password", to: user.email, url });
-      },
-    },
-    emailVerification: {
-      sendVerificationEmail: async ({ user, url }) => {
-        await sendCoreMail({ purpose: "verify_email", templateKey: "verify_email", to: user.email, url });
-      },
-    },
+    emailAndPassword: { enabled: true, sendResetPassword: async ({ user, url }) => { await sendCoreMail({ purpose: "reset_password", templateKey: "reset_password", to: user.email, url }); } },
+    emailVerification: { sendVerificationEmail: async ({ user, url }) => { await sendCoreMail({ purpose: "verify_email", templateKey: "verify_email", to: user.email, url }); } },
     plugins: [passkey({ rpID: config.passkey.rpID, rpName: config.passkey.rpName, origin: config.passkey.origin, registration: { requireSession: true } })],
     ...(config.github ? { socialProviders: { github: config.github } } : {}),
     advanced: { cookiePrefix: "v2-auth", useSecureCookies: config.production },
