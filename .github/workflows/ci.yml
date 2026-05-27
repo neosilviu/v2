@@ -17,6 +17,8 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
+      - run: pnpm api:generate
+      - run: pnpm api:check
       - name: Run pnpm typecheck
         run: pnpm typecheck 2>&1 | tee /tmp/v2-typecheck.log
         shell: bash
@@ -31,7 +33,8 @@ jobs:
       - run: pnpm build:analyze
       - run: pnpm test:generated -- --check-migrations
       - run: pnpm guard:architecture
-      - name: Production-like local smoke and browser boundary checks
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Production-like local smoke, browser and performance gates
         run: |
           pnpm dev > /tmp/v2-dev.log 2>&1 &
           echo $! > /tmp/v2-dev.pid
@@ -46,7 +49,10 @@ jobs:
             cat /tmp/v2-dev.log
             exit 1
           fi
+          pnpm dev:setup 2>&1 | tee /tmp/v2-dev-setup.log
           pnpm smoke:local -- --prepare-auth-db 2>&1 | tee /tmp/v2-smoke.log
+          pnpm test:e2e 2>&1 | tee /tmp/v2-e2e.log
+          pnpm perf:local 2>&1 | tee /tmp/v2-perf.log
           curl -sS -D /tmp/v2-auth-cors.headers -o /tmp/v2-auth-cors.body \
             -X POST http://localhost:8788/api/auth/sign-in/email \
             -H 'Origin: http://localhost:5173' \
@@ -62,7 +68,10 @@ jobs:
         with:
           name: local-browser-smoke-diagnostics
           path: |
+            /tmp/v2-dev-setup.log
             /tmp/v2-smoke.log
+            /tmp/v2-e2e.log
+            /tmp/v2-perf.log
             /tmp/v2-dev.log
             /tmp/v2-auth-cors.headers
             /tmp/v2-auth-cors.body
