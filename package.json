@@ -10,6 +10,7 @@
     "build": "turbo run build",
     "dev": "node scripts/dev.mjs",
     "dev:stop": "node scripts/stop-dev.mjs",
+    "dev:setup": "node scripts/bootstrap-workspace-dev.mjs",
     "typecheck": "turbo run typecheck",
     "build:analyze": "node scripts/analyze-build.mjs",
     "guard:architecture": "pnpm build:analyze -- --strict && pnpm test:generated -- --check-migrations",
