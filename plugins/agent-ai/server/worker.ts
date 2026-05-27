@@ -222,4 +222,5 @@ app.post("/runs", async (c) => {
   }
 });
 export default app;
+export type AgentAiApi = typeof app;
 export type AgentApp = typeof app;

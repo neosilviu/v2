@@ -12,6 +12,38 @@ export const agentAiManifest = definePlugin({
     { id: "agent.tools.execute", description: "Execute approved tools", risk: "sensitive" },
     { id: "agent.knowledge.query", description: "Query approved help and site knowledge", risk: "safe" }
   ],
+  api: {
+    version: 1,
+    operations: [
+      {
+        id: "agent.sendMessage",
+        title: "Send message",
+        permission: "agent.channels",
+        risk: "safe",
+        input: {
+          type: "object",
+          properties: {
+            workspaceId: { type: "string" },
+            channelId: { type: "string" },
+            content: { type: "string" },
+          },
+          required: ["channelId", "content"],
+          additionalProperties: false,
+        },
+        output: {
+          type: "object",
+          properties: {
+            message: { type: "unknown" },
+            run: { type: "unknown" },
+            toolCall: { type: "unknown" },
+            status: { type: "string" },
+          },
+          required: ["message", "status"],
+          additionalProperties: false,
+        },
+      },
+    ],
+  },
   contributes: {
     channels: [{ id: "general", title: "General", tools: ["runtime.*"], providers: [] }],
     surfaces: [{ id: "agent-ai.assistant-panel", title: "Assistant", zone: "assistant.right", kind: "panel", renderer: { mode: "declarative", schema: {

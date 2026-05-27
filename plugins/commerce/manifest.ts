@@ -12,6 +12,27 @@ export const commerceManifest = definePlugin({
     { id: "commerce.orders.read", description: "Read permitted order status", risk: "sensitive" },
     { id: "commerce.orders.manage", description: "Manage orders", risk: "sensitive" }
   ],
+  api: {
+    version: 1,
+    operations: [
+      {
+        id: "commerce.listProducts",
+        title: "List products",
+        permission: "commerce.catalog.read",
+        risk: "safe",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        output: { type: "object", properties: { products: { type: "array", items: { type: "unknown" } } }, required: ["products"], additionalProperties: false },
+      },
+      {
+        id: "commerce.readOrder",
+        title: "Read order status",
+        permission: "commerce.orders.read",
+        risk: "sensitive",
+        input: { type: "object", properties: { orderId: { type: "string" } }, required: ["orderId"], additionalProperties: false },
+        output: { type: "object", properties: { order: { type: "unknown" } }, required: ["order"], additionalProperties: false },
+      },
+    ],
+  },
   contributes: {
     surfaces: [{ id: "commerce.dashboard", title: "Commerce", zone: "workspace.main", kind: "page", renderer: { mode: "declarative", schema: {
       id: "commerce.products",

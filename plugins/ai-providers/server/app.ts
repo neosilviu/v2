@@ -66,3 +66,4 @@ app.post("/runtime/execute", async (c) => {
   return c.json(errorResponse(failure("not_found", "Provider runtime operation is not available.")), 404);
 });
 export default app;
+export type AiProvidersApi = typeof app;

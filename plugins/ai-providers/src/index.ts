@@ -7,6 +7,35 @@ export const aiProvidersPlugin = definePlugin({
     { id: "providers.manage", description: "Discover models and test AI provider connections", risk: "sensitive" },
     { id: "providers.use", description: "Invoke configured AI provider connections", risk: "sensitive" }
   ],
+  api: {
+    version: 1,
+    operations: [
+      {
+        id: "providers.listConnections",
+        title: "List provider connections",
+        permission: "providers.manage",
+        risk: "safe",
+        input: { type: "object", properties: { workspaceId: { type: "string" } }, required: ["workspaceId"], additionalProperties: false },
+        output: { type: "object", properties: { connections: { type: "array", items: { type: "unknown" } } }, required: ["connections"], additionalProperties: false },
+      },
+      {
+        id: "providers.detectModels",
+        title: "Detect provider models",
+        permission: "providers.manage",
+        risk: "sensitive",
+        input: { type: "object", properties: { connectionId: { type: "string" } }, required: ["connectionId"], additionalProperties: false },
+        output: { type: "object", properties: { models: { type: "array", items: { type: "unknown" } } }, required: ["models"], additionalProperties: false },
+      },
+      {
+        id: "providers.testConnection",
+        title: "Test provider connection",
+        permission: "providers.manage",
+        risk: "sensitive",
+        input: { type: "object", properties: { connectionId: { type: "string" }, modelId: { type: "string" } }, required: ["connectionId"], additionalProperties: false },
+        output: { type: "unknown" },
+      },
+    ],
+  },
   contributes: {
     providers: [
       { id: "cloudflare-workers-ai", title: "Cloudflare Workers AI", adapter: "cloudflare-workers-ai", enabled: true, description: "Cloudflare AI binding with optional account discovery.", capabilities: ["chat", "tool-use"], models: [{ id: "@cf/meta/llama-3.1-8b-instruct", title: "Llama 3.1 8B Instruct", capabilities: ["chat"] }], secretFields: [{ id: "api_token", title: "API token", required: false }, { id: "account_id", title: "Account ID", required: false, secret: false }] },
