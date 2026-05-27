@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { errorResponse, failure } from "@v2/feedback-runtime";
 import { createWorkersAiConnectionSchema, providerChatRequestSchema } from "@v2/provider-contracts";
-import { aiProvidersPlugin } from "../src/index";
+import { aiProvidersPlugin } from "../manifest";
 import { allowedOrigins, isInternalRequest, readSession, type ProviderAccessEnv } from "./access";
 import { detectProviderModels, invokeProviderChat, testProvider, type ProviderRuntimeEnv } from "./adapters/runtime";
 import { ProviderRepository } from "./repository";
