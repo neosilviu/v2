@@ -34,6 +34,40 @@ export const publicContributionAccessSchema = z.enum(["anonymous", "authenticate
 export const publicRouteContributionSchema = z.object({ id: z.string().min(1), title: z.string(), path: publicRoutePatternSchema, surfaceId: z.string().min(1).optional(), access: publicContributionAccessSchema.default("anonymous") });
 export const publicSurfaceContributionSchema = z.object({ id: z.string().min(1), title: z.string(), surfaceId: z.string().min(1), path: publicRoutePatternSchema, access: publicContributionAccessSchema.default("anonymous") });
 export const publicToolContributionSchema = z.object({ id: z.string().min(1), title: z.string(), toolId: z.string().min(1), path: publicRoutePatternSchema, access: publicContributionAccessSchema.default("authenticated") });
+export type PluginValueContract =
+  | { type: "unknown" }
+  | { type: "string"; minLength?: number; maxLength?: number }
+  | { type: "number"; integer?: boolean }
+  | { type: "boolean" }
+  | { type: "array"; items: PluginValueContract }
+  | { type: "object"; properties: Record<string, PluginValueContract>; required?: string[]; additionalProperties?: boolean };
+const pluginValueContractSchemaInternal: z.ZodTypeAny = z.lazy(() => z.union([
+  z.object({ type: z.literal("unknown") }),
+  z.object({ type: z.literal("string"), minLength: z.number().int().nonnegative().optional(), maxLength: z.number().int().positive().optional() }),
+  z.object({ type: z.literal("number"), integer: z.boolean().default(false) }),
+  z.object({ type: z.literal("boolean") }),
+  z.object({ type: z.literal("array"), items: pluginValueContractSchemaInternal }),
+  z.object({
+    type: z.literal("object"),
+    properties: z.record(z.string(), pluginValueContractSchemaInternal),
+    required: z.array(z.string()).default([]),
+    additionalProperties: z.boolean().default(false),
+  }),
+]));
+export const pluginValueContractSchema = pluginValueContractSchemaInternal as z.ZodType<PluginValueContract>;
+export const pluginOperationSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  permission: z.string().min(1),
+  risk: riskSchema.default("safe"),
+  input: pluginValueContractSchema,
+  output: pluginValueContractSchema,
+});
+export const pluginApiContractSchema = z.object({
+  version: z.literal(1).default(1),
+  operations: z.array(pluginOperationSchema).default([]),
+});
 export const declarativeUiBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string(), tone: z.enum(["default", "muted", "accent"]).default("default") }),
   z.object({ type: z.literal("metric"), label: z.string(), value: z.string(), detail: z.string().optional() }),
@@ -55,6 +89,7 @@ const emptyContributions = { tools: [], providers: [], channels: [], surfaces: [
 export const pluginManifestSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), version: z.string().min(1), builtIn: z.boolean().default(false), data: storageModeSchema.default({ mode: "none" }), capabilities: z.array(capabilitySchema).default([]),
   contributes: z.object({ tools: z.array(toolSchema).default([]), providers: z.array(providerSchema).default([]), channels: z.array(channelSchema).default([]), surfaces: z.array(surfaceSchema).default([]), zones: z.array(zoneSchema).default([]), layouts: z.array(layoutSchema).default([]), settings: z.array(settingSchema).default([]), settingsTabs: z.array(settingsTabContributionSchema).default([]), settingsPanels: z.array(settingsPanelContributionSchema).default([]), publicRoutes: z.array(publicRouteContributionSchema).default([]), publicSurfaces: z.array(publicSurfaceContributionSchema).default([]), publicTools: z.array(publicToolContributionSchema).default([]) }).default(emptyContributions),
+  api: pluginApiContractSchema.default({ version: 1, operations: [] }),
 });
 export const pluginPackageDescriptorSchema = z.object({
   manifest: pluginManifestSchema,
@@ -81,6 +116,8 @@ export type PublicContributionAccess = z.output<typeof publicContributionAccessS
 export type PublicRouteContribution = z.output<typeof publicRouteContributionSchema>;
 export type PublicSurfaceContribution = z.output<typeof publicSurfaceContributionSchema>;
 export type PublicToolContribution = z.output<typeof publicToolContributionSchema>;
+export type PluginOperation = z.output<typeof pluginOperationSchema>;
+export type PluginApiContract = z.output<typeof pluginApiContractSchema>;
 export type DeclarativeUiBlock = z.output<typeof declarativeUiBlockSchema>;
 export type DeclarativeUi = z.output<typeof declarativeUiSchema>;
 export type RuntimeDeclarativeRenderer = z.output<typeof runtimeDeclarativeRendererSchema>;

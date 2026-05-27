@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { errorResponse, failure } from "@v2/feedback-runtime";
+import { websiteStudioManifest } from "../manifest";
 import type { WebsiteStudioEnv } from "./env";
 
 const app = new Hono<{ Bindings: WebsiteStudioEnv }>();
@@ -129,6 +130,8 @@ app.post("/runtime/execute", async (c) => {
   const input = request?.input && typeof request.input === "object" ? request.input as Record<string, unknown> : {};
   const routeParams = request && "routeParams" in request && request.routeParams && typeof request.routeParams === "object" ? request.routeParams as Record<string, unknown> : {};
   if (!workspaceId || !operationId) return c.json(errorResponse(failure("validation_failed", "A valid runtime operation is required.")), 400);
+  const operation = websiteStudioManifest.api.operations.find((item) => item.id === operationId);
+  if (!operation) return c.json(errorResponse(failure("not_found", "Runtime operation is not available.")), 404);
   if (operationId === "website.listPages") {
     const rows = await c.env.WEBSITE_DB.prepare("SELECT id, slug, title, status, seo_title, seo_description, published_at, updated_at FROM website_pages WHERE workspace_id = ? ORDER BY updated_at DESC").bind(workspaceId).all<Record<string, unknown>>();
     return c.json({ pages: rows.results.map(rowToPage) });
@@ -163,48 +166,6 @@ app.post("/runtime/execute", async (c) => {
     return c.json({ page: await pageWithSections(c.env.WEBSITE_DB, workspaceId, row.id) });
   }
   return c.json(errorResponse(failure("not_found", "Runtime operation is not available.")), 404);
-});
-app.get("/workspaces/:workspaceId/pages", async (c) => {
-  const workspaceId = c.req.param("workspaceId");
-  const rows = await c.env.WEBSITE_DB.prepare("SELECT id, slug, title, status, seo_title, seo_description, published_at, updated_at FROM website_pages WHERE workspace_id = ? ORDER BY updated_at DESC").bind(workspaceId).all<Record<string, unknown>>();
-  return c.json({ pages: rows.results.map(rowToPage) });
-});
-app.post("/workspaces/:workspaceId/seed/defaults", async (c) => {
-  const page = await installDefaults(c.env.WEBSITE_DB, c.req.param("workspaceId"));
-  return c.json({ status: "seeded", demo: false, page }, 201);
-});
-app.post("/workspaces/:workspaceId/demo/install", async (c) => {
-  await installDemo(c.env.WEBSITE_DB, c.req.param("workspaceId"));
-  const rows = await c.env.WEBSITE_DB.prepare("SELECT id, slug, title, status, seo_title, seo_description, published_at, updated_at FROM website_pages WHERE workspace_id = ? ORDER BY slug").bind(c.req.param("workspaceId")).all<Record<string, unknown>>();
-  return c.json({ status: "installed", demo: true, pages: rows.results.map(rowToPage) }, 201);
-});
-app.post("/workspaces/:workspaceId/pages", async (c) => {
-  const input = await c.req.json<PageInput>();
-  const pageId = await upsertPage(c.env.WEBSITE_DB, c.req.param("workspaceId"), input);
-  const page = await pageWithSections(c.env.WEBSITE_DB, c.req.param("workspaceId"), pageId);
-  return c.json({ page }, 201);
-});
-app.get("/workspaces/:workspaceId/pages/:pageId", async (c) => {
-  const page = await pageWithSections(c.env.WEBSITE_DB, c.req.param("workspaceId"), c.req.param("pageId"));
-  if (!page) return c.json(errorResponse(failure("not_found", "Website page is not available.")), 404);
-  return c.json({ page });
-});
-app.post("/workspaces/:workspaceId/pages/:pageId/sections", async (c) => {
-  const page = await pageWithSections(c.env.WEBSITE_DB, c.req.param("workspaceId"), c.req.param("pageId"));
-  if (!page) return c.json(errorResponse(failure("not_found", "Website page is not available.")), 404);
-  const input = await c.req.json<SectionInput & { sortOrder?: unknown }>();
-  await upsertSection(c.env.WEBSITE_DB, c.req.param("pageId"), Number(input.sortOrder ?? Date.now()), input);
-  return c.json({ page: await pageWithSections(c.env.WEBSITE_DB, c.req.param("workspaceId"), c.req.param("pageId")) });
-});
-app.post("/workspaces/:workspaceId/pages/:pageId/publish", async (c) => {
-  const result = await c.env.WEBSITE_DB.prepare("UPDATE website_pages SET status = 'published', published_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND id = ?").bind(c.req.param("workspaceId"), c.req.param("pageId")).run();
-  if (result.meta.changes === 0) return c.json(errorResponse(failure("not_found", "Website page is not available.")), 404);
-  return c.json({ page: await pageWithSections(c.env.WEBSITE_DB, c.req.param("workspaceId"), c.req.param("pageId")) });
-});
-app.get("/workspaces/:workspaceId/context/:pageId", async (c) => {
-  const result = await c.env.WEBSITE_DB.prepare("SELECT surface_id, readable_json, allowed_tools_json FROM website_context_shares WHERE workspace_id = ? AND page_id = ? AND enabled = 1 LIMIT 1").bind(c.req.param("workspaceId"), c.req.param("pageId")).first();
-  if (!result) return c.json(errorResponse(failure("not_found", "Approved page context is not available.")), 404);
-  return c.json({ context: result });
 });
 
 export default app;

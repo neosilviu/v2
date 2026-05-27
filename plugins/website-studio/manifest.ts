@@ -12,6 +12,98 @@ export const websiteStudioManifest = definePlugin({
     { id: "website.publish", description: "Publish website page changes", risk: "sensitive" },
     { id: "website.context.share", description: "Share approved page context with Agent AI", risk: "safe" }
   ],
+  api: {
+    version: 1,
+    operations: [
+      {
+        id: "website.listPages",
+        title: "List pages",
+        permission: "website.pages.read",
+        risk: "safe",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        output: {
+          type: "object",
+          properties: {
+            pages: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  slug: { type: "string" },
+                  title: { type: "string" },
+                  status: { type: "string" },
+                  seoTitle: { type: "string" },
+                  seoDescription: { type: "string" },
+                  publishedAt: { type: "string" },
+                  updatedAt: { type: "string" },
+                },
+                required: ["id", "slug", "title", "status", "seoTitle", "seoDescription", "publishedAt", "updatedAt"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["pages"],
+          additionalProperties: false,
+        },
+      },
+      {
+        id: "website.updateSection",
+        title: "Update section",
+        permission: "website.pages.write",
+        risk: "reversible",
+        input: {
+          type: "object",
+          properties: {
+            pageId: { type: "string" },
+            sortOrder: { type: "number", integer: true },
+            kind: { type: "string" },
+            content: { type: "unknown" },
+            aiContextEnabled: { type: "boolean" },
+          },
+          required: ["pageId"],
+          additionalProperties: false,
+        },
+        output: { type: "object", properties: { page: { type: "unknown" } }, required: ["page"], additionalProperties: false },
+      },
+      {
+        id: "website.publishPage",
+        title: "Publish page",
+        permission: "website.publish",
+        risk: "sensitive",
+        input: { type: "object", properties: { pageId: { type: "string" } }, required: ["pageId"], additionalProperties: false },
+        output: { type: "object", properties: { page: { type: "unknown" } }, required: ["page"], additionalProperties: false },
+      },
+      {
+        id: "website.installDefaults",
+        title: "Install defaults",
+        permission: "website.pages.write",
+        risk: "reversible",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        output: { type: "object", properties: { status: { type: "string" }, demo: { type: "boolean" }, page: { type: "unknown" } }, required: ["status", "demo", "page"], additionalProperties: false },
+      },
+      {
+        id: "website.installDemoData",
+        title: "Install demo data",
+        permission: "website.pages.write",
+        risk: "reversible",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        output: { type: "object", properties: { status: { type: "string" }, demo: { type: "boolean" }, pages: { type: "array", items: { type: "unknown" } } }, required: ["status", "demo", "pages"], additionalProperties: false },
+      },
+      {
+        id: "website.readPageContext",
+        title: "Read page context",
+        permission: "website.context.share",
+        risk: "safe",
+        input: {
+          type: "object",
+          properties: { pageId: { type: "string" }, slug: { type: "string" } },
+          additionalProperties: false,
+        },
+        output: { type: "object", properties: { page: { type: "unknown" }, context: { type: "unknown" } }, additionalProperties: false },
+      },
+    ],
+  },
   contributes: {
     settingsTabs: [{
       id: "website-studio.settings",

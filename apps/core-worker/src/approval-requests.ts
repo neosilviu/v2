@@ -84,6 +84,10 @@ export class ApprovalRequestRepository {
     return row ? this.mapped(row) : undefined;
   }
 
+  async consume(approvalId: string): Promise<void> {
+    await this.db.prepare("UPDATE approval_requests SET status = 'consumed', consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'").bind(approvalId).run();
+  }
+
   async claimApproved(input: { workspaceId: string; approvalId: string; kind: ApprovalRequestKind; subjectId?: string; pluginId?: string }): Promise<ApprovalRequest | undefined> {
     const row = await this.db.prepare(`UPDATE approval_requests
       SET status = 'consumed', consumed_at = CURRENT_TIMESTAMP

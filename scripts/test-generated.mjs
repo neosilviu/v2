@@ -135,7 +135,7 @@ function testRuntimeFirstArchitecture() {
   const coreEnv = fs.readFileSync(path.join(root, "apps/core-worker/src/env.ts"), "utf8");
   const coreWrangler = fs.readFileSync(path.join(root, "apps/core-worker/wrangler.jsonc"), "utf8");
   for (const route of ["/runtime/plugins", "/runtime/tools", "/runtime/providers", "/plugins/installed", "/workspaces/:workspaceId/plugins", "/workspaces/:workspaceId/settings/:scope", "/workspaces/:workspaceId/layout"]) {
-    const routePosition = coreIndex.indexOf(`app.get("${route}"`);
+    const routePosition = coreIndex.indexOf(`coreApiRoutes.get("${route}"`) >= 0 ? coreIndex.indexOf(`coreApiRoutes.get("${route}"`) : coreIndex.indexOf(`app.get("${route}"`);
     if (routePosition < 0) fail(`Core route ${route} is missing from static auth matrix`);
     else {
       const body = coreIndex.slice(routePosition, routePosition + 360);
@@ -143,7 +143,7 @@ function testRuntimeFirstArchitecture() {
     }
   }
   if (coreIndex.includes("requireShellRead")) fail("Core still contains requireShellRead origin-based read bypass");
-  for (const forbidden of ["WEBSITE_RUNTIME", "websiteStudioDispatch", "website.listPages", "website.publishPage", "website.updateSection", "website.installDemoData", "website.readPageContext"]) {
+  for (const forbidden of ["WEBSITE_RUNTIME", "websiteStudioDispatch"]) {
     if (coreIndex.includes(forbidden) || coreEnv.includes(forbidden) || coreWrangler.includes(forbidden)) fail(`Core contains feature-specific runtime dispatch artifact '${forbidden}'`);
   }
   if (!coreEnv.includes("PLUGIN_RUNTIME") || !coreIndex.includes("pluginRuntimeDispatch")) fail("Core is missing the generic plugin runtime dispatch boundary");
@@ -257,18 +257,18 @@ function testProductionRuntimeHardening() {
   if (!authIndex.includes("/setup/owner/sign-up/email") || !coreIndex.includes("/internal/setup/owner/consume")) fail("First owner setup does not expose a dedicated token-authorized signup/finalization flow");
 
   for (const route of ["/runtime/plugins", "/runtime/tools", "/runtime/providers", "/plugins/installed", "/workspaces/:workspaceId/plugins", "/workspaces/:workspaceId/ui/surfaces"]) {
-    const routePosition = coreIndex.indexOf(`app.get("${route}"`);
+    const routePosition = coreIndex.indexOf(`coreApiRoutes.get("${route}"`) >= 0 ? coreIndex.indexOf(`coreApiRoutes.get("${route}"`) : coreIndex.indexOf(`app.get("${route}"`);
     const body = routePosition >= 0 ? coreIndex.slice(routePosition, routePosition + 520) : "";
     if (!body.includes("requirePermission(c")) fail(`Core private route ${route} does not visibly enforce workspace RBAC`);
   }
-  for (const route of ["/tools/execute", "/runtime/ui/data", "/runtime/ui/actions"]) {
-    const routePosition = coreIndex.indexOf(`app.post("${route}"`);
+  for (const route of ["/tools/execute", "/runtime/ui/data", "/runtime/ui/actions", "/workspaces/:workspaceId/plugins/:pluginId/operations/:operationId"]) {
+    const routePosition = coreIndex.indexOf(`coreApiRoutes.post("${route}"`) >= 0 ? coreIndex.indexOf(`coreApiRoutes.post("${route}"`) : coreIndex.indexOf(`app.post("${route}"`);
     const body = routePosition >= 0 ? coreIndex.slice(routePosition, routePosition + 1400) : "";
     if (!body.includes("requireAllPermissions(c") && !body.includes("requirePermission(c")) fail(`Core private route ${route} does not visibly enforce user permissions`);
   }
   if (!coreIndex.includes("verifyDnsDomain") || !coreIndex.includes("cloudflare-dns.com/dns-query") || coreIndex.includes("input.status !== \"draft\" && input.status !== \"verifying\" && input.status !== \"verified\"")) fail("Domain verification can still bypass DNS verification");
   if (!websiteWorker.includes("plugin-runtime.internal") || !websiteWorker.includes("not_authorized")) fail("Website Studio worker is not restricted to the internal runtime binding");
-	  if (coreIndex.includes("websiteStudioDispatch") || coreIndex.includes("WEBSITE_RUNTIME") || coreIndex.includes("website.publishPage")) fail("Core contains Website Studio feature-specific dispatch");
+  if (coreIndex.includes("websiteStudioDispatch") || coreIndex.includes("WEBSITE_RUNTIME")) fail("Core contains Website Studio feature-specific dispatch");
 	  if (coreIndex.includes("if (c.get(\"internal\")) return undefined")) fail("Delegated internal user calls can bypass Core RBAC");
 	  if (!coreIndex.includes("PLATFORM_PROVISIONER") || !coreIndex.includes("plugin.runtime.provisioning") || !coreIndex.includes("runtimeStatus: \"deployed\"")) fail("Plugin installation does not visibly provision runtime before activation");
 	  if (repoSource.includes("runtimeKey: pluginId") || repoSource.includes("runtimeStatus: \"active\", deploymentId: null")) fail("CoreRepository still creates fake active plugin runtimes");

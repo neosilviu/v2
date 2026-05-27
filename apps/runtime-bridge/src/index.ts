@@ -52,7 +52,7 @@ app.post("/dispatch", async (c) => {
   const pluginId = typeof body?.pluginId === "string" ? body.pluginId : "";
   const workspaceId = typeof body?.workspaceId === "string" ? body.workspaceId : "";
   const operationId = typeof body?.operationId === "string" ? body.operationId : "";
-  const kind = body?.kind === "tool" || body?.kind === "action" || body?.kind === "data" ? body.kind : "";
+  const kind = body?.kind === "tool" || body?.kind === "action" || body?.kind === "data" || body?.kind === "operation" ? body.kind : "";
   if (!runtimeKey || !pluginId || !workspaceId || !operationId || !kind) {
     return c.json({ status: "denied", error: "A valid plugin runtime dispatch request is required." }, 400);
   }

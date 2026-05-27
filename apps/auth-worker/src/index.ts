@@ -1,10 +1,11 @@
 import { Hono, type Context } from "hono";
 import { errorResponse, failure } from "@v2/feedback-runtime";
-import { ownerSetupSignupRequestSchema } from "@v2/api-contracts";
+import { authSignInEmailRequestSchema, authUpdateUserRequestSchema, ownerSetupSignupRequestSchema } from "@v2/auth-contracts";
 import type { AppErrorCode } from "@v2/rpc-contracts";
 import { createAuth, isAuthAdmin, parseAuthConfig, resolveAuthConfig, type AuthEnv } from "./auth";
 import { AuthRuntimeRepository } from "./runtime-config";
 
+export const authApiRoutes = new Hono<{ Bindings: AuthEnv }>();
 const app = new Hono<{ Bindings: AuthEnv }>();
 type AuthContext = Context<{ Bindings: AuthEnv }>;
 
@@ -32,7 +33,7 @@ function needsBrowserCors(path: string) {
   return path.startsWith("/api/auth/") || path.startsWith("/public/auth/") || path.startsWith("/admin/auth/") || path.startsWith("/setup/owner/");
 }
 
-app.get("/health", (c) => c.json({ ok: true, service: "auth-worker", configured: parseAuthConfig(c.env).ok }));
+authApiRoutes.get("/health", (c) => c.json({ ok: true, service: "auth-worker", configured: parseAuthConfig(c.env).ok }));
 app.use("*", async (c, next) => {
   const timingStart = performance.now();
   try {
@@ -65,7 +66,7 @@ app.use("*", async (c, next) => {
   await next();
   if (allowed) allowOrigin();
 });
-app.get("/public/auth/login-config", async (c) => {
+authApiRoutes.get("/public/auth/login-config", async (c) => {
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   const config = await new AuthRuntimeRepository(parsed.config.db).publicLoginConfig(c.req.query("workspaceId") ?? null, { github: Boolean(parsed.config.github) });
@@ -78,75 +79,75 @@ async function requireAdmin(c: AuthContext) {
   if (!await isAuthAdmin(parsed.config, c.req.raw.headers)) return { ok: false as const, response: c.json(errorResponse(failure("not_authorized", "Auth recovery administrator access is disabled or not authorized.")), 403) };
   return { ok: true as const, config: parsed.config };
 }
-app.post("/admin/auth/methods", async (c) => {
+authApiRoutes.post("/admin/auth/methods", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const method = await new AuthRuntimeRepository(admin.config.db).upsertMethod(await c.req.json());
   return c.json({ method }, 201);
 });
-app.get("/admin/auth/methods", async (c) => {
+authApiRoutes.get("/admin/auth/methods", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const methods = await new AuthRuntimeRepository(admin.config.db).listMethods(c.req.query("workspaceId") ?? null, { github: Boolean(admin.config.github) });
   return c.json({ methods });
 });
-app.put("/admin/auth/methods/:methodId", async (c) => {
+authApiRoutes.put("/admin/auth/methods/:methodId", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const body = await c.req.json() as Record<string, unknown>;
   const method = await new AuthRuntimeRepository(admin.config.db).upsertMethod({ ...body, providerId: body.providerId, type: body.type, title: body.title ?? c.req.param("methodId") });
   return c.json({ method });
 });
-app.post("/admin/auth/ui-contributions", async (c) => {
+authApiRoutes.post("/admin/auth/ui-contributions", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const contribution = await new AuthRuntimeRepository(admin.config.db).upsertUiContribution(await c.req.json());
   return c.json({ contribution }, 201);
 });
-app.get("/admin/auth/ui-contributions", async (c) => {
+authApiRoutes.get("/admin/auth/ui-contributions", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const contributions = await new AuthRuntimeRepository(admin.config.db).listUiContributions(c.req.query("workspaceId") ?? null);
   return c.json({ contributions });
 });
-app.put("/admin/auth/ui-contributions/:id", async (c) => {
+authApiRoutes.put("/admin/auth/ui-contributions/:id", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const contribution = await new AuthRuntimeRepository(admin.config.db).upsertUiContribution({ ...await c.req.json() as Record<string, unknown>, contributionId: c.req.param("id") });
   return c.json({ contribution });
 });
-app.post("/admin/auth/policies", async (c) => {
+authApiRoutes.post("/admin/auth/policies", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const policy = await new AuthRuntimeRepository(admin.config.db).upsertPolicy(await c.req.json());
   return c.json({ policy }, 201);
 });
-app.get("/admin/auth/policy", async (c) => {
+authApiRoutes.get("/admin/auth/policy", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const policy = await new AuthRuntimeRepository(admin.config.db).publicPolicy(c.req.query("workspaceId") ?? null);
   return c.json({ policy });
 });
-app.put("/admin/auth/policy", async (c) => {
+authApiRoutes.put("/admin/auth/policy", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const body = await c.req.json();
   const policy = await new AuthRuntimeRepository(admin.config.db).upsertPolicy(body, { mailDeliveryAvailable: isInternalRequest(c) && (body as { mailDeliveryAvailable?: unknown }).mailDeliveryAvailable === true });
   return c.json({ policy });
 });
-app.get("/admin/auth/security-summary", async (c) => {
+authApiRoutes.get("/admin/auth/security-summary", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const summary = await new AuthRuntimeRepository(admin.config.db).securitySummary(c.req.query("workspaceId") ?? null, { github: Boolean(admin.config.github) });
   return c.json({ summary });
 });
-app.get("/admin/auth/sessions/summary", async (c) => {
+authApiRoutes.get("/admin/auth/sessions/summary", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const summary = await new AuthRuntimeRepository(admin.config.db).sessionsSummary();
   return c.json({ summary });
 });
-app.get("/admin/auth/security-bootstrap", async (c) => {
+authApiRoutes.get("/admin/auth/security-bootstrap", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
   const repo = new AuthRuntimeRepository(admin.config.db);
@@ -157,12 +158,16 @@ app.get("/admin/auth/security-bootstrap", async (c) => {
   ]);
   return c.json({ summary: security, sessions });
 });
-app.post("/api/auth/sign-up/email", async (c) => {
+authApiRoutes.post("/api/auth/sign-up/email", async (c) => {
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   const policy = await new AuthRuntimeRepository(parsed.config.db).publicPolicy(null);
   if (policy.registrationMode !== "open") return c.json(errorResponse(failure("not_authorized", "Password registration is not open.")), 403);
-  return createAuth(parsed.config).handler(c.req.raw);
+  return createAuth(parsed.config).handler(new Request(new URL("/api/auth/sign-up/email", parsed.config.baseURL).toString(), {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(c.req.header("origin") ? { origin: c.req.header("origin")! } : {}) },
+    body: await c.req.text(),
+  }));
 });
 function ownerSetupError(c: AuthContext, status: 400 | 403 | 404 | 409 | 422 | 503, code: AppErrorCode, message: string, details?: Record<string, unknown>) {
   return c.json(errorResponse(failure(code, message, details ? { details } : {})), status);
@@ -192,7 +197,7 @@ async function parseBetterAuthError(response: Response) {
     return { raw: text, message: text, code: undefined as string | undefined };
   }
 }
-app.post("/setup/owner/sign-up/email", async (c) => {
+authApiRoutes.post("/setup/owner/sign-up/email", async (c) => {
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   if (!parsed.config.core) return c.json(errorResponse(failure("dependency_unavailable", "Core service binding is required for owner setup.")), 503);
@@ -243,10 +248,37 @@ app.post("/setup/owner/sign-up/email", async (c) => {
   if (!consumeResponse.ok) return ownerSetupError(c, 409, "owner_membership_activation_failed", "Owner account was created but workspace membership could not be finalized. Retry with the same setup link.");
   return response;
 });
-app.on(["POST", "GET"], "/api/auth/*", async (c) => {
+authApiRoutes.post("/api/auth/sign-in/email", async (c) => {
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const body = authSignInEmailRequestSchema.parse(await c.req.json());
+  const response = await createAuth(parsed.config).handler(new Request(new URL("/api/auth/sign-in/email", parsed.config.baseURL).toString(), {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(c.req.header("origin") ? { origin: c.req.header("origin")! } : {}) },
+    body: JSON.stringify(body),
+  }));
+  return response;
+});
+authApiRoutes.post("/api/auth/sign-out", async (c) => {
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  return createAuth(parsed.config).handler(new Request(new URL("/api/auth/sign-out", parsed.config.baseURL).toString(), { method: "POST", headers: { cookie: c.req.header("cookie") ?? "", authorization: c.req.header("authorization") ?? "", ...(c.req.header("origin") ? { origin: c.req.header("origin")! } : {}) } }));
+});
+authApiRoutes.post("/api/auth/update-user", async (c) => {
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const body = authUpdateUserRequestSchema.parse(await c.req.json());
+  return createAuth(parsed.config).handler(new Request(new URL("/api/auth/update-user", parsed.config.baseURL).toString(), {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: c.req.header("cookie") ?? "", authorization: c.req.header("authorization") ?? "" },
+    body: JSON.stringify(body),
+  }));
+});
+authApiRoutes.on(["POST", "GET"], "/api/auth/*", async (c) => {
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   return createAuth(parsed.config).handler(c.req.raw);
 });
-
+app.route("/", authApiRoutes);
+export type AuthApi = typeof authApiRoutes;
 export default app;

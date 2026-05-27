@@ -11,6 +11,76 @@ export const localNodeManifest = definePlugin({
     { id: "localnode.configure", description: "Configure runner endpoint and pairing metadata", risk: "sensitive" },
     { id: "localnode.execute", description: "Execute approved local runner commands", risk: "dangerous" }
   ],
+  api: {
+    version: 1,
+    operations: [
+      {
+        id: "localnode.health",
+        title: "Check Local Node health",
+        permission: "localnode.read",
+        risk: "safe",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        output: {
+          type: "object",
+          properties: {
+            health: {
+              type: "object",
+              properties: {
+                status: { type: "string" },
+                runnerVersion: { type: "string" },
+                paired: { type: "boolean" },
+                checkedAt: { type: "string" },
+              },
+              required: ["status", "runnerVersion", "paired", "checkedAt"],
+              additionalProperties: true,
+            },
+          },
+          required: ["health"],
+          additionalProperties: false,
+        },
+      },
+      {
+        id: "localnode.saveConfig",
+        title: "Save Local Node runner config",
+        permission: "localnode.configure",
+        risk: "sensitive",
+        input: {
+          type: "object",
+          properties: {
+            runnerBaseUrl: { type: "string" },
+            mockMode: { type: "boolean" },
+            pairingState: { type: "string" },
+          },
+          required: ["runnerBaseUrl"],
+          additionalProperties: false,
+        },
+        output: { type: "object", properties: { status: { type: "string" }, saved: { type: "boolean" } }, required: ["status", "saved"], additionalProperties: false },
+      },
+      {
+        id: "localnode.executeCommand",
+        title: "Execute Local Node command",
+        permission: "localnode.execute",
+        risk: "dangerous",
+        input: {
+          type: "object",
+          properties: {
+            kind: { type: "string" },
+            input: { type: "unknown" },
+          },
+          required: ["kind"],
+          additionalProperties: false,
+        },
+        output: {
+          type: "object",
+          properties: {
+            result: { type: "unknown" },
+            health: { type: "unknown" },
+          },
+          additionalProperties: false,
+        },
+      },
+    ],
+  },
   contributes: {
     settingsTabs: [{
       id: "local-node.settings",

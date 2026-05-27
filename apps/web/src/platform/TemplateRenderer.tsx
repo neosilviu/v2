@@ -12,7 +12,7 @@ export type TemplateRendererProps = {
   page: DeclarativePageContribution;
   data?: unknown;
   callbacks?: TemplateCallbacks | undefined;
-  runtime?: { contributionId?: string; public?: boolean; workspaceId?: string; routeParams?: Record<string, string> } | undefined;
+  runtime?: { contributionId?: string; pluginId?: string; public?: boolean; workspaceId?: string; routeParams?: Record<string, string> } | undefined;
 };
 
 function valueAt(row: unknown, field: string): string {
@@ -144,7 +144,7 @@ export function TemplateRenderer(props: TemplateRendererProps) {
     setStatus("Loading data...");
     void Promise.all(dataSources.map(async (dataSource) => {
       const result = props.runtime?.public
-        ? await loadPublicRuntimeData(contributionId, dataSource.id, routeParams, props.runtime.workspaceId)
+        ? await loadPublicRuntimeData(contributionId, dataSource.id, routeParams, props.runtime.workspaceId, props.runtime.pluginId)
         : await loadRuntimeData(contributionId, dataSource.id, routeParams);
       return { id: dataSource.id, result };
     })).then((results) => {
@@ -170,7 +170,7 @@ export function TemplateRenderer(props: TemplateRendererProps) {
     setStatus("Running action...");
     try {
       const result = props.runtime?.public
-        ? await executePublicRuntimeAction(contributionId, action.id, input, routeParams, props.runtime.workspaceId)
+        ? await executePublicRuntimeAction(contributionId, action.id, input, routeParams, props.runtime.workspaceId, props.runtime.pluginId)
         : await executeRuntimeAction(contributionId, action.id, input, routeParams);
       setStatus(result.status === "ok" ? "Action completed" : result.approvalId ? `Approval required: ${result.approvalId.slice(0, 8)}` : result.error ?? result.status);
     } catch (error) {

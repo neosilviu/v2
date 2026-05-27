@@ -81,9 +81,15 @@ export const authUiContributionWriteSchema = z.object({
   status: authUiContributionStatusSchema.default("draft"),
   displayOrder: z.number().int().default(0),
 });
+export const authSignInEmailRequestSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
+export const authUpdateUserRequestSchema = z.object({ name: z.string().nullable() });
+export const ownerSetupSignupRequestSchema = z.object({ token: z.string().min(24), email: z.string().email(), name: z.string().min(1), password: z.string().min(8) });
 export type AuthMethod = z.output<typeof authMethodSchema>;
 export type AuthPublicLoginConfig = z.output<typeof authPublicLoginConfigSchema>;
 export type AuthPolicy = z.output<typeof authPolicySchema>;
 export type AuthPolicyWrite = z.output<typeof authPolicyWriteSchema>;
 export type AuthUiContribution = z.output<typeof authUiContributionSchema>;
 export type LoginSlot = z.output<typeof loginSlotSchema>;
+export type AuthSignInEmailRequest = z.output<typeof authSignInEmailRequestSchema>;
+export type AuthUpdateUserRequest = z.output<typeof authUpdateUserRequestSchema>;
+export type OwnerSetupSignupRequest = z.output<typeof ownerSetupSignupRequestSchema>;

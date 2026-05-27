@@ -6,8 +6,9 @@
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "vite --host 127.0.0.1 --port 5173 --strictPort", "build": "vite build", "pages:deploy": "wrangler pages deploy dist --project-name v2-web" },
   "dependencies": {
     "@better-auth/passkey": "catalog:",
-    "@v2/api-client": "workspace:*",
+    "@v2/auth-worker": "workspace:*",
     "@v2/auth-contracts": "workspace:*",
+    "@v2/core-worker": "workspace:*",
     "@v2/feedback-runtime": "workspace:*",
     "@v2/mail-contracts": "workspace:*",
     "@v2/plugin-contracts": "workspace:*",
@@ -16,6 +17,7 @@
     "@v2/ui-runtime": "workspace:*",
     "@v2/ui-schema": "workspace:*",
     "better-auth": "catalog:",
+    "hono": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

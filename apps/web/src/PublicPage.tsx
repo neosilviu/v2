@@ -6,14 +6,15 @@ import { TemplateRenderer } from "./platform/TemplateRenderer";
 export function PublicPage() {
   const [page, setPage] = useState<DeclarativePageContribution | null>(null);
   const [routeParams, setRouteParams] = useState<Record<string, string>>({});
+  const [pluginId, setPluginId] = useState<string | undefined>(undefined);
   const workspaceId = window.location.pathname.split("/")[2] || "default";
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void loadPublicPage(window.location.pathname).then((result) => { setPage(result.page); setRouteParams(result.routeParams); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Public page unavailable"));
+    void loadPublicPage(window.location.pathname).then((result) => { setPage(result.page); setRouteParams(result.routeParams); setPluginId(result.plugin?.id); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Public page unavailable"));
   }, []);
 
   if (error) return <main className="public-content"><p className="message">{error}</p></main>;
   if (!page) return <main className="public-content"><p className="message">Loading public page...</p></main>;
-  return <TemplateRenderer page={page} data={{ ...page.data, routeParams }} runtime={{ contributionId: page.id, public: true, workspaceId, routeParams }} />;
+  return <TemplateRenderer page={page} data={{ ...page.data, routeParams }} runtime={{ contributionId: page.id, ...(pluginId ? { pluginId } : {}), public: true, workspaceId, routeParams }} />;
 }

@@ -106,7 +106,7 @@ function SecurityPanel({ emit }: { emit: (item: Notification) => void }) {
   const refresh = async () => {
     setBusy(true);
     try {
-      const loaded = await loadSecurityBootstrap<{ summary: AuthSecuritySummary; sessions: { sessions: number; passkeys: number }; rbac: RbacMe; mail: { activeTransactionalProvider: boolean } }>();
+      const loaded = await loadSecurityBootstrap();
       setSummary(loaded.summary);
       setSessions(loaded.sessions);
       setRbac(loaded.rbac);

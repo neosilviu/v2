@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { errorResponse, failure } from "@v2/feedback-runtime";
 import { mailMessageRequestSchema, mailProviderConfigureSchema, mailProviderTestRequestSchema } from "@v2/mail-contracts";
-import type { PluginBundle, PublicContributionAccess } from "@v2/plugin-contracts";
+import { pluginValueContractSchema, type PluginBundle, type PluginOperation, type PluginValueContract, type PublicContributionAccess } from "@v2/plugin-contracts";
 import { assessPluginBundle, unpackPluginZip } from "@v2/plugin-installer";
 import { approvalRequestDecisionRequestSchema, capabilityGrantRequestSchema, layoutWriteRequestSchema, pluginActivationRequestSchema, pluginInstallRequestSchema, settingScopeSchema, settingWriteRequestSchema, toolApprovalDecisionRequestSchema, toolApprovalLookupRequestSchema, toolExecutionRequestSchema, type SettingScope } from "@v2/rpc-contracts";
 import { RuntimeKernel } from "@v2/runtime";
@@ -15,6 +15,7 @@ import { ToolApprovalRepository } from "./tool-approvals";
 type CoreVariables = { user: CoreSessionUser | null; internal: boolean };
 type CoreBindings = { Bindings: CoreEnv; Variables: CoreVariables };
 type CoreContext = Context<CoreBindings>;
+export const coreApiRoutes = new Hono<CoreBindings>();
 const app = new Hono<CoreBindings>();
 const defaultWorkspaceId = "default";
 const readResponseCache = new Map<string, { expiresAt: number; status: number; headers: [string, string][]; body: string }>();
@@ -98,7 +99,7 @@ app.use("*", async (c, next) => {
   await next();
   if (c.req.method !== "GET" && c.res.ok) readResponseCache.clear();
 });
-app.onError((error, c) => {
+coreApiRoutes.onError((error, c) => {
   const validation = error instanceof Error && error.name === "ZodError";
   return c.json(errorResponse(failure(validation ? "validation_failed" : "internal_error", validation ? "Request validation failed." : "An unexpected error occurred.")), validation ? 400 : 500);
 });
@@ -263,7 +264,7 @@ async function installAndProvisionPluginRuntime(c: CoreContext, input: { repo: C
   await repo.audit(workspaceId, "plugin.runtime.provision.deployed", { pluginId: bundle.manifest.id, runtimeKey: payload.runtimeKey, runtimeKind: payload.runtimeKind, deploymentId: payload.deploymentId ?? null }, c.get("user")?.id);
   return { ok: true as const, state, runtime: payload };
 }
-async function pluginRuntimeDispatch(c: CoreContext, request: { workspaceId: string; pluginId: string; runtimeKey: string; kind: "tool" | "action" | "data"; operationId: string; contributionId?: string; input?: unknown; routeParams?: Record<string, string>; queryParams?: Record<string, string | string[]> }) {
+async function pluginRuntimeDispatch(c: CoreContext, request: { workspaceId: string; pluginId: string; runtimeKey: string; kind: "tool" | "action" | "data" | "operation"; operationId: string; contributionId?: string; input?: unknown; routeParams?: Record<string, string>; queryParams?: Record<string, string | string[]> }) {
   if (!c.env.PLUGIN_RUNTIME) return null;
   const response = await c.env.PLUGIN_RUNTIME.fetch("https://plugin-runtime.internal/dispatch", {
     method: "POST",
@@ -304,8 +305,106 @@ async function maybeActionApproval(c: CoreContext, repo: CoreRepository, action:
   await repo.audit(workspaceId, "runtime.ui.action.approval.requested", { approvalId: approval.id, pluginId, contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
   return { status: "approval-required" as const, data: null, error: null, approvalId: approval.id, auditEventId: null };
 }
-app.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
-app.get("/session", (c) => {
+function validatePluginValue(value: unknown, contract: PluginValueContract, path = "input"): { ok: true } | { ok: false; message: string } {
+  if (contract.type === "unknown") return { ok: true };
+  if (contract.type === "string") {
+    if (typeof value !== "string") return { ok: false, message: `${path} must be a string.` };
+    if (contract.minLength !== undefined && value.length < contract.minLength) return { ok: false, message: `${path} must be at least ${contract.minLength} characters.` };
+    if (contract.maxLength !== undefined && value.length > contract.maxLength) return { ok: false, message: `${path} must be at most ${contract.maxLength} characters.` };
+    return { ok: true };
+  }
+  if (contract.type === "number") {
+    if (typeof value !== "number" || !Number.isFinite(value)) return { ok: false, message: `${path} must be a number.` };
+    if (contract.integer && !Number.isInteger(value)) return { ok: false, message: `${path} must be an integer.` };
+    return { ok: true };
+  }
+  if (contract.type === "boolean") return typeof value === "boolean" ? { ok: true } : { ok: false, message: `${path} must be a boolean.` };
+  if (contract.type === "array") {
+    if (!Array.isArray(value)) return { ok: false, message: `${path} must be an array.` };
+    for (const [index, item] of value.entries()) {
+      const nested = validatePluginValue(item, contract.items, `${path}[${index}]`);
+      if (!nested.ok) return nested;
+    }
+    return { ok: true };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, message: `${path} must be an object.` };
+  const objectValue = value as Record<string, unknown>;
+  for (const key of contract.required ?? []) {
+    if (!(key in objectValue)) return { ok: false, message: `${path}.${key} is required.` };
+  }
+  for (const [key, nestedContract] of Object.entries(contract.properties)) {
+    if (key in objectValue) {
+      const nested = validatePluginValue(objectValue[key], nestedContract, `${path}.${key}`);
+      if (!nested.ok) return nested;
+    }
+  }
+  if (contract.additionalProperties === false) {
+    for (const key of Object.keys(objectValue)) {
+      if (!(key in contract.properties)) return { ok: false, message: `${path}.${key} is not allowed.` };
+    }
+  }
+  return { ok: true };
+}
+function pluginOperationEnvelope(status: "ok" | "denied" | "approval-required" | "unavailable", data: unknown = null, error: string | null = null, approvalId: string | null = null, auditEventId: string | null = null) {
+  return { status, data, error, approvalId, auditEventId };
+}
+async function dispatchPluginOperation(c: CoreContext, request: { workspaceId: string; pluginId: string; operationId: string; input: unknown; routeParams: Record<string, string> | undefined; queryParams: Record<string, string | string[]> | undefined }) {
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const manifest = await repo.installedById(request.pluginId);
+  if (!manifest) return c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404);
+  const operation = manifest.api.operations.find((item) => item.id === request.operationId);
+  if (!operation) return c.json(errorResponse(failure("not_found", "Plugin operation is not declared by the manifest.")), 404);
+  const denied = await requirePermission(c, request.workspaceId, operation.permission as WorkspacePermission);
+  if (denied) return denied;
+  const active = await activeRuntimeOrAudit(repo, request.workspaceId, request.pluginId, "plugin.operation", c.get("user")?.id);
+  if (!active) return c.json(pluginOperationEnvelope("unavailable", null, "Plugin runtime is not active."), 503);
+  const inputValidation = validatePluginValue(request.input, operation.input);
+  if (!inputValidation.ok) return c.json(errorResponse(failure("validation_failed", inputValidation.message)), 400);
+  const approvals = new ApprovalRequestRepository(c.env.CORE_DB);
+  let approvalId: string | null = null;
+  let dispatchInput = request.input;
+  if (operation.risk === "sensitive" || operation.risk === "dangerous") {
+    const requestedApprovalId = c.req.query("approvalId") ?? undefined;
+    if (!requestedApprovalId) {
+      const approval = await approvals.create({
+        workspaceId: request.workspaceId,
+        kind: "tool_execute",
+        subjectId: operation.id,
+        pluginId: request.pluginId,
+        risk: operation.risk,
+        payload: { source: "plugin-operation", pluginId: request.pluginId, operationId: operation.id, input: request.input },
+        requestedBy: c.get("user")?.id,
+      });
+      await repo.audit(request.workspaceId, "plugin.operation.approval.requested", { approvalId: approval.id, pluginId: request.pluginId, operationId: operation.id }, c.get("user")?.id);
+      return c.json(pluginOperationEnvelope("approval-required", null, null, approval.id), 202);
+    }
+    const approved = await approvals.claimApproved({ workspaceId: request.workspaceId, approvalId: requestedApprovalId, kind: "tool_execute", subjectId: operation.id, pluginId: request.pluginId });
+    if (!approved) return c.json(errorResponse(failure("not_authorized", "A matching approved operation request is required.")), 403);
+    approvalId = approved.id;
+    dispatchInput = approved.payload && typeof approved.payload === "object" && "input" in approved.payload ? (approved.payload as { input?: unknown }).input : request.input;
+  }
+  const runtimeResult = await pluginRuntimeDispatch(c, {
+    workspaceId: request.workspaceId,
+    pluginId: request.pluginId,
+    runtimeKey: active.runtimeKey,
+    kind: "operation",
+    operationId: request.operationId,
+    input: dispatchInput,
+    ...(request.routeParams ? { routeParams: request.routeParams } : {}),
+    ...(request.queryParams ? { queryParams: request.queryParams } : {}),
+  });
+  if (!runtimeResult) return c.json(pluginOperationEnvelope("unavailable", null, "Plugin runtime dispatch is unavailable."), 503);
+  if (!runtimeResult.response.ok) {
+    return c.json(pluginOperationEnvelope("denied", null, "Plugin runtime rejected the operation."), runtimeResult.response.status === 404 ? 404 : 403);
+  }
+  const outputValidation = validatePluginValue(runtimeResult.body, operation.output, "output");
+  if (!outputValidation.ok) return c.json(errorResponse(failure("validation_failed", outputValidation.message)), 502);
+  if (approvalId) await approvals.consume(approvalId);
+  await repo.audit(request.workspaceId, "plugin.operation.execute", { pluginId: request.pluginId, operationId: operation.id, approvalId }, c.get("user")?.id);
+  return c.json(pluginOperationEnvelope("ok", runtimeResult.body));
+}
+coreApiRoutes.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
+coreApiRoutes.get("/session", (c) => {
   const user = c.get("user");
   return c.json({ authenticated: Boolean(user), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
 });
@@ -351,17 +450,17 @@ async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string)
     },
   });
 }
-app.get("/workspaces/current/bootstrap", (c) => workspaceBootstrap(c));
-app.get("/workspaces/:workspaceId/bootstrap", (c) => workspaceBootstrap(c, c.req.param("workspaceId")));
-app.get("/runtime/ui/bootstrap", (c) => workspaceBootstrap(c, c.req.query("workspaceId") === "current" ? undefined : c.req.query("workspaceId")));
-app.get("/setup/owner", async (c) => {
+coreApiRoutes.get("/workspaces/current/bootstrap", (c) => workspaceBootstrap(c));
+coreApiRoutes.get("/workspaces/:workspaceId/bootstrap", (c) => workspaceBootstrap(c, c.req.param("workspaceId")));
+coreApiRoutes.get("/runtime/ui/bootstrap", (c) => workspaceBootstrap(c, c.req.query("workspaceId") === "current" ? undefined : c.req.query("workspaceId")));
+coreApiRoutes.get("/setup/owner", async (c) => {
   const token = c.req.query("token");
   if (!token || token.length < 24) return c.json(errorResponse(failure("not_found", "Owner setup link is not available.")), 404);
   const status = await new CoreRepository(c.env.CORE_DB).ownerProvisioningStatus(await sha256Hex(token));
   if (!status) return c.json(errorResponse(failure("not_found", "Owner setup link is not available.")), 404);
   return c.json({ setup: { workspaceId: status.workspaceId, ownerEmail: status.ownerEmail, status: status.status, expiresAt: status.expiresAt } });
 });
-app.post("/setup/owner/consume", async (c) => {
+coreApiRoutes.post("/setup/owner/consume", async (c) => {
   const denied = requireRead(c);
   if (denied) return denied;
   const body = await c.req.json().catch(() => null) as { token?: unknown } | null;
@@ -385,7 +484,7 @@ app.post("/setup/owner/consume", async (c) => {
   const status = code === "not_authenticated" ? 401 : code === "owner_setup_email_mismatch" ? 403 : code === "owner_setup_invalid_token" ? 404 : 409;
   return c.json(errorResponse(failure(code, "Owner setup link cannot be consumed.")), status);
 });
-app.post("/internal/setup/owner/consume", async (c) => {
+coreApiRoutes.post("/internal/setup/owner/consume", async (c) => {
   if (!c.get("internal")) return c.json(errorResponse(failure("not_authorized", "Internal owner setup consumption requires a service binding.")), 403);
   const body = await c.req.json().catch(() => null) as { token?: unknown; user?: { id?: unknown; email?: unknown; name?: unknown } } | null;
   const token = typeof body?.token === "string" ? body.token : "";
@@ -408,7 +507,7 @@ app.post("/internal/setup/owner/consume", async (c) => {
   const status = code === "owner_setup_email_mismatch" ? 403 : code === "owner_setup_invalid_token" ? 404 : 409;
   return c.json(errorResponse(failure(code, "Owner setup link cannot be consumed.")), status);
 });
-app.post("/internal/provision/workspace", async (c) => {
+coreApiRoutes.post("/internal/provision/workspace", async (c) => {
   const provided = c.req.header("x-v2-provisioning-secret");
   if (!c.get("internal") && (!c.env.PROVISIONING_SECRET || provided !== c.env.PROVISIONING_SECRET)) return c.json(errorResponse(failure("not_authorized", "Workspace provisioning requires internal or provisioner credentials.")), 403);
   const body = await c.req.json().catch(() => null) as { workspaceId?: unknown; workspaceName?: unknown; ownerEmail?: unknown; ttlHours?: unknown; setupBaseUrl?: unknown; breakGlassPrintToken?: unknown } | null;
@@ -428,7 +527,7 @@ app.post("/internal/provision/workspace", async (c) => {
   await repo.audit(workspaceId, "workspace.provisioning.owner.mail.sent", { ownerEmail, eventId: delivery.eventId }, "provision:workspace:core");
   return c.json({ workspaceId, ownerEmail, expiresAt, mailEventId: delivery.eventId, ...(body?.breakGlassPrintToken === true ? { setupUrl } : {}) }, 201);
 });
-app.get("/internal/workspaces/:workspaceId/auth/trust-config", async (c) => {
+coreApiRoutes.get("/internal/workspaces/:workspaceId/auth/trust-config", async (c) => {
   if (!c.get("internal")) return c.json(errorResponse(failure("not_authorized", "Auth trust config requires an internal service binding.")), 403);
   const workspaceId = c.req.param("workspaceId");
   const domains = await new CoreRepository(c.env.CORE_DB).activeDomains(workspaceId, ["auth", "admin"]);
@@ -442,12 +541,12 @@ app.get("/internal/workspaces/:workspaceId/auth/trust-config", async (c) => {
     passkey: authDomain ? { rpID: authDomain.hostname, origin: `https://${authDomain.hostname}` } : null,
   });
 });
-app.get("/workspaces/:workspaceId/rbac/me", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/rbac/me", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.read");
   if (denied) return denied;
   return c.json(await new CoreRepository(c.env.CORE_DB).memberSummary(c.req.param("workspaceId"), c.get("user")));
 });
-app.post("/workspaces/:workspaceId/rbac/roles/:roleId/permissions", async (c) => {
+coreApiRoutes.post("/workspaces/:workspaceId/rbac/roles/:roleId/permissions", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "workspace.members.manage");
   if (denied) return denied;
@@ -456,7 +555,7 @@ app.post("/workspaces/:workspaceId/rbac/roles/:roleId/permissions", async (c) =>
   const permissions = await new CoreRepository(c.env.CORE_DB).assignRolePermissions(workspaceId, c.req.param("roleId"), body.permissions, c.get("user")?.id);
   return permissions ? c.json({ roleId: c.req.param("roleId"), permissions }) : c.json(errorResponse(failure("validation_failed", "Role or permission is not available in this workspace.")), 400);
 });
-app.get("/public/:workspaceId/*", async (c) => {
+coreApiRoutes.get("/public/:workspaceId/*", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const prefix = `/public/${workspaceId}`;
   const publicPath = new URL(c.req.url).pathname.slice(prefix.length) || "/";
@@ -468,13 +567,13 @@ app.get("/public/:workspaceId/*", async (c) => {
   }
   return c.json({ publication: delivery.publication, plugin: delivery.manifest ? { id: delivery.manifest.id, name: delivery.manifest.name, version: delivery.manifest.version } : null, contribution: delivery.contribution ?? null, page: delivery.page, routeParams: delivery.routeParams });
 });
-app.get("/runtime/plugins", async (c) => { const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId; const denied = await requirePermission(c, workspaceId, "workspace.read"); if (denied) return denied; return c.json({ plugins: await new CoreRepository(c.env.CORE_DB).workspaceInstalled(workspaceId) }); });
-app.get("/runtime/tools", async (c) => { const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId; const denied = await requirePermission(c, workspaceId, "workspace.read"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const active = new Set(await repo.activePlugins(workspaceId)); return c.json({ tools: runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.tools) }); });
-app.get("/runtime/providers", async (c) => { const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId; const denied = await requirePermission(c, workspaceId, "provider.read"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const active = new Set(await repo.activePlugins(workspaceId)); return c.json({ providers: runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.providers) }); });
-app.get("/plugins/installed", async (c) => { const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId; const denied = await requirePermission(c, workspaceId, "workspace.read"); if (denied) return denied; return c.json({ plugins: await new CoreRepository(c.env.CORE_DB).workspaceInstalled(workspaceId) }); });
-app.get("/workspaces/:workspaceId/plugins", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.read"); if (denied) return denied; return c.json({ active: await new CoreRepository(c.env.CORE_DB).activePlugins(c.req.param("workspaceId")) }); });
-app.get("/workspaces/:workspaceId/ui/surfaces", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.read"); if (denied) return denied; return c.json({ surfaces: await new CoreRepository(c.env.CORE_DB).workspaceUiSurfaces(c.req.param("workspaceId")) }); });
-app.get("/marketplace/plugins", async (c) => {
+coreApiRoutes.get("/runtime/plugins", async (c) => { const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId; const denied = await requirePermission(c, workspaceId, "workspace.read"); if (denied) return denied; return c.json({ plugins: await new CoreRepository(c.env.CORE_DB).workspaceInstalled(workspaceId) }); });
+coreApiRoutes.get("/runtime/tools", async (c) => { const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId; const denied = await requirePermission(c, workspaceId, "workspace.read"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const active = new Set(await repo.activePlugins(workspaceId)); return c.json({ tools: runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.tools) }); });
+coreApiRoutes.get("/runtime/providers", async (c) => { const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId; const denied = await requirePermission(c, workspaceId, "provider.read"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const runtime = await runtimeFor(repo); const active = new Set(await repo.activePlugins(workspaceId)); return c.json({ providers: runtime.plugins.all().filter((plugin) => active.has(plugin.id)).flatMap((plugin) => plugin.contributes.providers) }); });
+coreApiRoutes.get("/plugins/installed", async (c) => { const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId; const denied = await requirePermission(c, workspaceId, "workspace.read"); if (denied) return denied; return c.json({ plugins: await new CoreRepository(c.env.CORE_DB).workspaceInstalled(workspaceId) }); });
+coreApiRoutes.get("/workspaces/:workspaceId/plugins", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.read"); if (denied) return denied; return c.json({ active: await new CoreRepository(c.env.CORE_DB).activePlugins(c.req.param("workspaceId")) }); });
+coreApiRoutes.get("/workspaces/:workspaceId/ui/surfaces", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.read"); if (denied) return denied; return c.json({ surfaces: await new CoreRepository(c.env.CORE_DB).workspaceUiSurfaces(c.req.param("workspaceId")) }); });
+coreApiRoutes.get("/marketplace/plugins", async (c) => {
   const repo = new CoreRepository(c.env.CORE_DB);
   const workspaceId = c.req.query("workspaceId");
   if (!workspaceId) {
@@ -489,7 +588,7 @@ app.get("/marketplace/plugins", async (c) => {
   const catalog = await repo.catalogPlugins();
   return c.json({ plugins: catalog.map((item) => ({ ...item, installed: installed.has(item.manifest.id), active: active.has(item.manifest.id) })) });
 });
-app.post("/marketplace/plugins/:pluginId/releases", async (c) => {
+coreApiRoutes.post("/marketplace/plugins/:pluginId/releases", async (c) => {
   const denied = await requirePermission(c, defaultWorkspaceId, "marketplace.publish");
   if (denied) return denied;
   const form = await c.req.formData();
@@ -513,7 +612,7 @@ app.post("/marketplace/plugins/:pluginId/releases", async (c) => {
   await repo.audit(null, "marketplace.release.publish", { pluginId: release.pluginId, version: release.version, releaseId: release.id, status: release.status }, c.get("user")?.id);
   return c.json({ status: release.status, release, bundle: assessment.bundle, sensitiveCapabilities: assessment.sensitiveCapabilities }, 201);
 });
-app.post("/marketplace/plugins/:pluginId/install", async (c) => {
+coreApiRoutes.post("/marketplace/plugins/:pluginId/install", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId;
   const denied = await requirePermission(c, workspaceId, "plugin.install");
   if (denied) return denied;
@@ -555,7 +654,7 @@ app.post("/marketplace/plugins/:pluginId/install", async (c) => {
   await repo.audit(workspaceId, "marketplace.plugin.install", { pluginId: assessment.bundle.manifest.id, category: plugin.category, releaseId: release.id, approvalId: consumedApprovalId ?? null }, c.get("user")?.id);
   return c.json({ status: "installed", plugin: { ...plugin, manifest: assessment.bundle.manifest, installed: true, active: true } }, 201);
 });
-app.post("/plugins/upload", async (c) => {
+coreApiRoutes.post("/plugins/upload", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? defaultWorkspaceId;
   const denied = await requirePermission(c, workspaceId, "plugin.install");
   if (denied) return denied;
@@ -587,7 +686,7 @@ app.post("/plugins/upload", async (c) => {
   await repo.audit(workspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id, source: "zip", approvalId: null }, c.get("user")?.id);
   return c.json({ status: "installed", manifest: assessment.bundle.manifest }, 201);
 });
-app.post("/plugins/install", async (c) => {
+coreApiRoutes.post("/plugins/install", async (c) => {
   const request = pluginInstallRequestSchema.parse(await c.req.json());
   const denied = await requirePermission(c, request.workspaceId, "plugin.install");
   if (denied) return denied;
@@ -626,13 +725,13 @@ app.post("/plugins/install", async (c) => {
   await repo.audit(request.workspaceId, "plugin.install", { pluginId: assessment.bundle.manifest.id, approvalId: consumedApprovalId ?? null }, c.get("user")?.id);
   return c.json({ status: "installed", manifest: assessment.bundle.manifest }, 201);
 });
-app.post("/plugins/activate", async (c) => { const request = pluginActivationRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "plugin.activate"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); if (!await repo.installedById(request.pluginId)) return c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404); const deployment = await repo.pluginRuntimeDeployment(request.workspaceId, request.pluginId); if (!deployment || !["deployed", "active", "disabled"].includes(deployment.runtimeStatus)) return c.json(errorResponse(failure("dependency_unavailable", "Plugin runtime deployment must be confirmed before activation.", { retryable: true })), 409); const state = await repo.activate(request.workspaceId, request.pluginId); return state ? c.json(state, 201) : c.json(errorResponse(failure("dependency_unavailable", "Plugin runtime deployment must be confirmed before activation.", { retryable: true })), 409); });
-app.post("/plugins/deactivate", async (c) => { const request = pluginActivationRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "plugin.activate"); if (denied) return denied; const state = await new CoreRepository(c.env.CORE_DB).deactivate(request.workspaceId, request.pluginId); return state ? c.json(state) : c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404); });
-app.post("/plugins/grants", async (c) => { const request = capabilityGrantRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "plugin.grantCapability"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); if (!await repo.installedById(request.pluginId)) return c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404); const declared = new Set(await repo.declaredCapabilities(request.pluginId)); if (!request.capabilities.every((capability) => declared.has(capability))) return c.json(errorResponse(failure("validation_failed", "Capability is not declared by the plugin.")), 400); return c.json({ pluginId: request.pluginId, capabilities: await repo.grantCapabilities(request.workspaceId, request.pluginId, request.capabilities) }); });
-app.post("/publications", async (c) => { const request = publicPublicationRequest(await c.req.json()); if (!request) return c.json(errorResponse(failure("validation_failed", "A valid public publication request is required.")), 400); const denied = await requirePermission(c, request.workspaceId, "publication.publish"); if (denied) return denied; const publication = await new CoreRepository(c.env.CORE_DB).publishWorkspaceContribution(request); return publication ? c.json({ publication }, 201) : c.json(errorResponse(failure("validation_failed", "The public contribution must be declared by an active installed plugin.")), 400); });
-app.get("/workspaces/:workspaceId/tool-approvals", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "approval.read"); if (denied) return denied; return c.json({ approvals: await new ToolApprovalRepository(c.env.CORE_DB).listPending(c.req.param("workspaceId")) }); });
-app.get("/workspaces/:workspaceId/approval-requests", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "approval.read"); if (denied) return denied; return c.json({ approvals: await new ApprovalRequestRepository(c.env.CORE_DB).listPending(c.req.param("workspaceId")) }); });
-app.post("/approval-requests/:approvalId/decision", async (c) => {
+coreApiRoutes.post("/plugins/activate", async (c) => { const request = pluginActivationRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "plugin.activate"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); if (!await repo.installedById(request.pluginId)) return c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404); const deployment = await repo.pluginRuntimeDeployment(request.workspaceId, request.pluginId); if (!deployment || !["deployed", "active", "disabled"].includes(deployment.runtimeStatus)) return c.json(errorResponse(failure("dependency_unavailable", "Plugin runtime deployment must be confirmed before activation.", { retryable: true })), 409); const state = await repo.activate(request.workspaceId, request.pluginId); return state ? c.json(state, 201) : c.json(errorResponse(failure("dependency_unavailable", "Plugin runtime deployment must be confirmed before activation.", { retryable: true })), 409); });
+coreApiRoutes.post("/plugins/deactivate", async (c) => { const request = pluginActivationRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "plugin.activate"); if (denied) return denied; const state = await new CoreRepository(c.env.CORE_DB).deactivate(request.workspaceId, request.pluginId); return state ? c.json(state) : c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404); });
+coreApiRoutes.post("/plugins/grants", async (c) => { const request = capabilityGrantRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "plugin.grantCapability"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); if (!await repo.installedById(request.pluginId)) return c.json(errorResponse(failure("not_found", "Plugin is not installed.")), 404); const declared = new Set(await repo.declaredCapabilities(request.pluginId)); if (!request.capabilities.every((capability) => declared.has(capability))) return c.json(errorResponse(failure("validation_failed", "Capability is not declared by the plugin.")), 400); return c.json({ pluginId: request.pluginId, capabilities: await repo.grantCapabilities(request.workspaceId, request.pluginId, request.capabilities) }); });
+coreApiRoutes.post("/publications", async (c) => { const request = publicPublicationRequest(await c.req.json()); if (!request) return c.json(errorResponse(failure("validation_failed", "A valid public publication request is required.")), 400); const denied = await requirePermission(c, request.workspaceId, "publication.publish"); if (denied) return denied; const publication = await new CoreRepository(c.env.CORE_DB).publishWorkspaceContribution(request); return publication ? c.json({ publication }, 201) : c.json(errorResponse(failure("validation_failed", "The public contribution must be declared by an active installed plugin.")), 400); });
+coreApiRoutes.get("/workspaces/:workspaceId/tool-approvals", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "approval.read"); if (denied) return denied; return c.json({ approvals: await new ToolApprovalRepository(c.env.CORE_DB).listPending(c.req.param("workspaceId")) }); });
+coreApiRoutes.get("/workspaces/:workspaceId/approval-requests", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "approval.read"); if (denied) return denied; return c.json({ approvals: await new ApprovalRequestRepository(c.env.CORE_DB).listPending(c.req.param("workspaceId")) }); });
+coreApiRoutes.post("/approval-requests/:approvalId/decision", async (c) => {
   const request = approvalRequestDecisionRequestSchema.parse(await c.req.json());
   const denied = await requirePermission(c, request.workspaceId, "tool.approve");
   if (denied) return denied;
@@ -642,9 +741,18 @@ app.post("/approval-requests/:approvalId/decision", async (c) => {
   await repo.audit(request.workspaceId, `approval.${request.decision}`, { approvalId: approval.id, kind: approval.kind, subjectId: approval.subjectId, pluginId: approval.pluginId }, c.get("user")?.id);
   return c.json({ approval });
 });
-app.get("/tool-approvals/:approvalId", async (c) => { const request = toolApprovalLookupRequestSchema.parse({ workspaceId: c.req.query("workspaceId"), approvalId: c.req.param("approvalId") }); const denied = await requirePermission(c, request.workspaceId, "approval.read"); if (denied) return denied; const approval = await new ToolApprovalRepository(c.env.CORE_DB).getForWorkspace(request.workspaceId, request.approvalId); return approval ? c.json({ approval }) : c.json(errorResponse(failure("not_found", "Approval is not available.")), 404); });
-app.post("/tool-approvals/decision", async (c) => { const request = toolApprovalDecisionRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "tool.approve"); if (denied) return denied; const approval = await new ToolApprovalRepository(c.env.CORE_DB).decide(request.workspaceId, request.approvalId, request.decision, c.get("user")?.id); if (!approval) return c.json(errorResponse(failure("conflict", "Approval is not pending.")), 409); await new CoreRepository(c.env.CORE_DB).audit(request.workspaceId, `tool.approval.${request.decision}`, { approvalId: approval.id, toolId: approval.toolId }, c.get("user")?.id); return c.json({ approval }); });
-app.post("/tools/execute", async (c) => {
+coreApiRoutes.get("/tool-approvals/:approvalId", async (c) => { const request = toolApprovalLookupRequestSchema.parse({ workspaceId: c.req.query("workspaceId"), approvalId: c.req.param("approvalId") }); const denied = await requirePermission(c, request.workspaceId, "approval.read"); if (denied) return denied; const approval = await new ToolApprovalRepository(c.env.CORE_DB).getForWorkspace(request.workspaceId, request.approvalId); return approval ? c.json({ approval }) : c.json(errorResponse(failure("not_found", "Approval is not available.")), 404); });
+coreApiRoutes.post("/tool-approvals/decision", async (c) => { const request = toolApprovalDecisionRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "tool.approve"); if (denied) return denied; const approval = await new ToolApprovalRepository(c.env.CORE_DB).decide(request.workspaceId, request.approvalId, request.decision, c.get("user")?.id); if (!approval) return c.json(errorResponse(failure("conflict", "Approval is not pending.")), 409); await new CoreRepository(c.env.CORE_DB).audit(request.workspaceId, `tool.approval.${request.decision}`, { approvalId: approval.id, toolId: approval.toolId }, c.get("user")?.id); return c.json({ approval }); });
+coreApiRoutes.post("/workspaces/:workspaceId/plugins/:pluginId/operations/:operationId", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const pluginId = c.req.param("pluginId");
+  const operationId = c.req.param("operationId");
+  const denied = await requirePermission(c, workspaceId, "workspace.read");
+  if (denied) return denied;
+  const body = await c.req.json().catch(() => null) as { input?: unknown; routeParams?: Record<string, string>; queryParams?: Record<string, string | string[]> } | null;
+  return dispatchPluginOperation(c, { workspaceId, pluginId, operationId, input: body?.input, routeParams: body?.routeParams, queryParams: body?.queryParams });
+});
+coreApiRoutes.post("/tools/execute", async (c) => {
   const readDenied = requireRead(c);
   if (readDenied) return readDenied;
   const request = toolExecutionRequestSchema.parse(await c.req.json());
@@ -694,7 +802,7 @@ app.post("/tools/execute", async (c) => {
   await repo.audit(request.workspaceId, "tool.execute.unavailable", { toolId: tool.id, pluginId: owner.id, approvalId: consumedApprovalId ?? null }, c.get("user")?.id);
   return c.json({ status: "denied", toolId: tool.id, reason: "Plugin runtime dispatch is unavailable" }, 503);
 });
-app.post("/runtime/ui/data", async (c) => {
+coreApiRoutes.post("/runtime/ui/data", async (c) => {
   const readDenied = requireRead(c);
   if (readDenied) return readDenied;
   const request = runtimeDataRequestSchema.parse(await c.req.json());
@@ -711,7 +819,7 @@ app.post("/runtime/ui/data", async (c) => {
   if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor(resolved.page.data, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
   const deployment = await activeRuntimeOrAudit(repo, request.workspaceId, resolved.pluginId, "runtime.ui.data", c.get("user")?.id);
   if (!deployment) return c.json(runtimeUnavailable("Plugin runtime is not active."), 503);
-  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "data", operationId: dataSource.resource ?? dataSource.id, contributionId: request.contributionId, routeParams: request.routeParams, queryParams: request.queryParams });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "data", operationId: dataSource.resource ?? dataSource.id, contributionId: request.contributionId, ...(request.routeParams ? { routeParams: request.routeParams } : {}), ...(request.queryParams ? { queryParams: request.queryParams } : {}) });
   if (runtimeResult) {
     if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the data request.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
     await repo.audit(request.workspaceId, "runtime.ui.data.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id, dispatched: "plugin-runtime" }, c.get("user")?.id);
@@ -720,7 +828,7 @@ app.post("/runtime/ui/data", async (c) => {
   await repo.audit(request.workspaceId, "runtime.ui.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
-app.post("/runtime/ui/actions", async (c) => {
+coreApiRoutes.post("/runtime/ui/actions", async (c) => {
   const readDenied = requireRead(c);
   if (readDenied) return readDenied;
   const request = runtimeActionRequestSchema.parse(await c.req.json());
@@ -741,7 +849,7 @@ app.post("/runtime/ui/actions", async (c) => {
   if (approval) return c.json(approval, 202);
   const deployment = await activeRuntimeOrAudit(repo, request.workspaceId, resolved.pluginId, "runtime.ui.action", c.get("user")?.id);
   if (!deployment) return c.json(runtimeUnavailable("Plugin runtime is not active."), 503);
-  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "action", operationId: action.commandId, contributionId: request.contributionId, input: request.input, routeParams: request.routeParams });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "action", operationId: action.commandId, contributionId: request.contributionId, input: request.input, ...(request.routeParams ? { routeParams: request.routeParams } : {}) });
   if (runtimeResult) {
     if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the operation.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
     await repo.audit(request.workspaceId, "runtime.ui.action.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId, dispatched: "plugin-runtime" }, c.get("user")?.id);
@@ -750,7 +858,7 @@ app.post("/runtime/ui/actions", async (c) => {
   await repo.audit(request.workspaceId, "runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
-app.post("/public/:workspaceId/runtime/data", async (c) => {
+coreApiRoutes.post("/public/:workspaceId/runtime/data", async (c) => {
   const request = runtimeDataRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
   const repo = new CoreRepository(c.env.CORE_DB);
   const resolved = await repo.publicRuntimeContribution(request.workspaceId, request.contributionId);
@@ -762,7 +870,7 @@ app.post("/public/:workspaceId/runtime/data", async (c) => {
   if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor(resolved.page.data, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
   const deployment = await activeRuntimeOrAudit(repo, request.workspaceId, resolved.pluginId, "public.runtime.ui.data", c.get("user")?.id);
   if (!deployment) return c.json(runtimeUnavailable("Plugin runtime is not active."), 503);
-  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "data", operationId: dataSource.resource ?? dataSource.id, contributionId: request.contributionId, routeParams: request.routeParams, queryParams: request.queryParams });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "data", operationId: dataSource.resource ?? dataSource.id, contributionId: request.contributionId, ...(request.routeParams ? { routeParams: request.routeParams } : {}), ...(request.queryParams ? { queryParams: request.queryParams } : {}) });
   if (runtimeResult) {
     if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the public data request.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
     await repo.audit(request.workspaceId, "public.runtime.ui.data.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id, dispatched: "plugin-runtime" }, c.get("user")?.id);
@@ -771,7 +879,7 @@ app.post("/public/:workspaceId/runtime/data", async (c) => {
   await repo.audit(request.workspaceId, "public.runtime.ui.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
-app.post("/public/:workspaceId/runtime/actions", async (c) => {
+coreApiRoutes.post("/public/:workspaceId/runtime/actions", async (c) => {
   const request = runtimeActionRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
   const repo = new CoreRepository(c.env.CORE_DB);
   const resolved = await repo.publicRuntimeContribution(request.workspaceId, request.contributionId);
@@ -784,7 +892,7 @@ app.post("/public/:workspaceId/runtime/actions", async (c) => {
   if (approval) return c.json(approval, 202);
   const deployment = await activeRuntimeOrAudit(repo, request.workspaceId, resolved.pluginId, "public.runtime.ui.action", c.get("user")?.id);
   if (!deployment) return c.json(runtimeUnavailable("Plugin runtime is not active."), 503);
-  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "action", operationId: action.commandId, contributionId: request.contributionId, input: request.input, routeParams: request.routeParams });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "action", operationId: action.commandId, contributionId: request.contributionId, input: request.input, ...(request.routeParams ? { routeParams: request.routeParams } : {}) });
   if (runtimeResult) {
     if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the public operation.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
     await repo.audit(request.workspaceId, "public.runtime.ui.action.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId, dispatched: "plugin-runtime" }, c.get("user")?.id);
@@ -793,7 +901,7 @@ app.post("/public/:workspaceId/runtime/actions", async (c) => {
   await repo.audit(request.workspaceId, "public.runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
-app.get("/workspaces/:workspaceId/settings/tabs", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/settings/tabs", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read");
   if (denied) return denied;
   const repo = new CoreRepository(c.env.CORE_DB);
@@ -801,7 +909,7 @@ app.get("/workspaces/:workspaceId/settings/tabs", async (c) => {
   const permissions = new Set((await repo.memberSummary(c.req.param("workspaceId"), c.get("user"))).permissions);
   return c.json({ tabs: tabs.filter((tab) => tab.status === "active" && (!tab.requiredPermission || permissions.has(tab.requiredPermission) || permissions.has("workspace.admin"))) });
 });
-app.get("/workspaces/:workspaceId/settings/tabs/:tabId", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/settings/tabs/:tabId", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read");
   if (denied) return denied;
   const repo = new CoreRepository(c.env.CORE_DB);
@@ -812,7 +920,7 @@ app.get("/workspaces/:workspaceId/settings/tabs/:tabId", async (c) => {
   }
   return resolved ? c.json(resolved) : c.json(errorResponse(failure("not_found", "Settings tab is not available.")), 404);
 });
-app.post("/workspaces/:workspaceId/settings/tabs/order", async (c) => {
+coreApiRoutes.post("/workspaces/:workspaceId/settings/tabs/order", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.write");
   if (denied) return denied;
   const body = await c.req.json() as { tabIds?: unknown };
@@ -820,7 +928,7 @@ app.post("/workspaces/:workspaceId/settings/tabs/order", async (c) => {
   await new CoreRepository(c.env.CORE_DB).reorderSettingsTabs(c.req.param("workspaceId"), body.tabIds);
   return c.json({ saved: true });
 });
-app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
+coreApiRoutes.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read");
   if (denied) return denied;
   const request = runtimeDataRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
@@ -834,7 +942,7 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
   if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor(resolved.page.data, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
   const deployment = await activeRuntimeOrAudit(repo, request.workspaceId, resolved.pluginId, "settings.runtime.ui.data", c.get("user")?.id);
   if (!deployment) return c.json(runtimeUnavailable("Plugin runtime is not active."), 503);
-  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "data", operationId: dataSource.resource ?? dataSource.id, contributionId: request.contributionId, routeParams: request.routeParams, queryParams: request.queryParams });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "data", operationId: dataSource.resource ?? dataSource.id, contributionId: request.contributionId, ...(request.routeParams ? { routeParams: request.routeParams } : {}), ...(request.queryParams ? { queryParams: request.queryParams } : {}) });
   if (runtimeResult) {
     if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the data request.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
     await repo.audit(request.workspaceId, "settings.runtime.ui.data.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id, dispatched: "plugin-runtime" }, c.get("user")?.id);
@@ -843,7 +951,7 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
   await repo.audit(request.workspaceId, "settings.runtime.ui.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
-app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
+coreApiRoutes.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read");
   if (denied) return denied;
   const request = runtimeActionRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
@@ -861,7 +969,7 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
   if (approval) return c.json(approval, 202);
   const deployment = await activeRuntimeOrAudit(repo, request.workspaceId, resolved.pluginId, "settings.runtime.ui.action", c.get("user")?.id);
   if (!deployment) return c.json(runtimeUnavailable("Plugin runtime is not active."), 503);
-  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "action", operationId: action.commandId, contributionId: request.contributionId, input: request.input, routeParams: request.routeParams });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "action", operationId: action.commandId, contributionId: request.contributionId, input: request.input, ...(request.routeParams ? { routeParams: request.routeParams } : {}) });
   if (runtimeResult) {
     if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the operation.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
     await repo.audit(request.workspaceId, "settings.runtime.ui.action.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId, dispatched: "plugin-runtime" }, c.get("user")?.id);
@@ -870,22 +978,22 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
   await repo.audit(request.workspaceId, "settings.runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
-app.get("/workspaces/:workspaceId/settings/general", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "workspace.settings.read"); if (denied) return denied; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).generalSettings(workspaceId) }); });
-app.put("/workspaces/:workspaceId/settings/general", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "workspace.settings.write"); if (denied) return denied; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).saveGeneralSettings(workspaceId, await c.req.json(), c.get("user")?.id) }); });
-app.get("/workspaces/:workspaceId/settings/:scope", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read"); if (denied) return denied; const scope = settingScopeSchema.parse(c.req.param("scope")) as SettingScope; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).listSettings(c.req.param("workspaceId"), scope) }); });
-app.put("/settings", async (c) => { const request = settingWriteRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "workspace.settings.write"); if (denied) return denied; await new CoreRepository(c.env.CORE_DB).setSetting(request.workspaceId, request.scope as SettingScope, request.key, request.value); return c.json({ saved: true }); });
-app.get("/workspaces/:workspaceId/domains", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.read"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).listDomains(c.req.param("workspaceId")) }); });
-app.post("/workspaces/:workspaceId/domains", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; const input = domainInput(await c.req.json()); if (!input) return c.json(errorResponse(failure("validation_failed", "A valid hostname, kind and verification method are required.")), 400); return c.json({ domains: await new CoreRepository(c.env.CORE_DB).createDomain(c.req.param("workspaceId"), input, c.get("user")?.id) }, 201); });
-app.put("/workspaces/:workspaceId/domains/:domainId", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; const input = await c.req.json() as { status?: string; recoveryReason?: string }; if (input.status !== "draft" && input.status !== "verifying" && input.status !== "disabled") return c.json(errorResponse(failure("validation_failed", "Domains can only be moved to verified/active through verification endpoints.")), 400); return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), input.status, c.get("user")?.id) }); });
-app.post("/workspaces/:workspaceId/domains/:domainId/verify", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "domains.verify"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const domain = await repo.domain(workspaceId, c.req.param("domainId")); if (!domain) return c.json(errorResponse(failure("not_found", "Domain is not available.")), 404); const verified = await verifyDnsDomain(domain); if (!verified.ok) return c.json(errorResponse(failure("validation_failed", verified.error ?? "Domain verification failed.")), 400); await repo.audit(workspaceId, "domain.verify.dns", { domainId: domain.id, hostname: domain.hostname, method: domain.verificationMethod }, c.get("user")?.id); return c.json({ domains: await repo.updateDomainStatus(workspaceId, domain.id, "verified", c.get("user")?.id) }); });
-app.post("/workspaces/:workspaceId/domains/:domainId/activate", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "domains.write"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const domain = await repo.domain(workspaceId, c.req.param("domainId")); if (!domain) return c.json(errorResponse(failure("not_found", "Domain is not available.")), 404); if (domain.status !== "verified" && domain.status !== "active") return c.json(errorResponse(failure("validation_failed", "Only verified domains can be activated.")), 400); return c.json({ domains: await repo.updateDomainStatus(workspaceId, domain.id, "active", c.get("user")?.id) }); });
-app.post("/workspaces/:workspaceId/domains/:domainId/disable", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "disabled", c.get("user")?.id) }); });
-app.get("/workspaces/:workspaceId/mail", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/settings/general", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "workspace.settings.read"); if (denied) return denied; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).generalSettings(workspaceId) }); });
+coreApiRoutes.put("/workspaces/:workspaceId/settings/general", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "workspace.settings.write"); if (denied) return denied; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).saveGeneralSettings(workspaceId, await c.req.json(), c.get("user")?.id) }); });
+coreApiRoutes.get("/workspaces/:workspaceId/settings/:scope", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read"); if (denied) return denied; const scope = settingScopeSchema.parse(c.req.param("scope")) as SettingScope; return c.json({ settings: await new CoreRepository(c.env.CORE_DB).listSettings(c.req.param("workspaceId"), scope) }); });
+coreApiRoutes.put("/settings", async (c) => { const request = settingWriteRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "workspace.settings.write"); if (denied) return denied; await new CoreRepository(c.env.CORE_DB).setSetting(request.workspaceId, request.scope as SettingScope, request.key, request.value); return c.json({ saved: true }); });
+coreApiRoutes.get("/workspaces/:workspaceId/domains", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.read"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).listDomains(c.req.param("workspaceId")) }); });
+coreApiRoutes.post("/workspaces/:workspaceId/domains", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; const input = domainInput(await c.req.json()); if (!input) return c.json(errorResponse(failure("validation_failed", "A valid hostname, kind and verification method are required.")), 400); return c.json({ domains: await new CoreRepository(c.env.CORE_DB).createDomain(c.req.param("workspaceId"), input, c.get("user")?.id) }, 201); });
+coreApiRoutes.put("/workspaces/:workspaceId/domains/:domainId", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; const input = await c.req.json() as { status?: string; recoveryReason?: string }; if (input.status !== "draft" && input.status !== "verifying" && input.status !== "disabled") return c.json(errorResponse(failure("validation_failed", "Domains can only be moved to verified/active through verification endpoints.")), 400); return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), input.status, c.get("user")?.id) }); });
+coreApiRoutes.post("/workspaces/:workspaceId/domains/:domainId/verify", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "domains.verify"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const domain = await repo.domain(workspaceId, c.req.param("domainId")); if (!domain) return c.json(errorResponse(failure("not_found", "Domain is not available.")), 404); const verified = await verifyDnsDomain(domain); if (!verified.ok) return c.json(errorResponse(failure("validation_failed", verified.error ?? "Domain verification failed.")), 400); await repo.audit(workspaceId, "domain.verify.dns", { domainId: domain.id, hostname: domain.hostname, method: domain.verificationMethod }, c.get("user")?.id); return c.json({ domains: await repo.updateDomainStatus(workspaceId, domain.id, "verified", c.get("user")?.id) }); });
+coreApiRoutes.post("/workspaces/:workspaceId/domains/:domainId/activate", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "domains.write"); if (denied) return denied; const repo = new CoreRepository(c.env.CORE_DB); const domain = await repo.domain(workspaceId, c.req.param("domainId")); if (!domain) return c.json(errorResponse(failure("not_found", "Domain is not available.")), 404); if (domain.status !== "verified" && domain.status !== "active") return c.json(errorResponse(failure("validation_failed", "Only verified domains can be activated.")), 400); return c.json({ domains: await repo.updateDomainStatus(workspaceId, domain.id, "active", c.get("user")?.id) }); });
+coreApiRoutes.post("/workspaces/:workspaceId/domains/:domainId/disable", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "domains.write"); if (denied) return denied; return c.json({ domains: await new CoreRepository(c.env.CORE_DB).updateDomainStatus(c.req.param("workspaceId"), c.req.param("domainId"), "disabled", c.get("user")?.id) }); });
+coreApiRoutes.get("/workspaces/:workspaceId/mail", async (c) => {
   const denied = await requirePermission(c, c.req.param("workspaceId"), "mail.read");
   if (denied) return denied;
   return c.json(await new CoreRepository(c.env.CORE_DB).mailSummary(c.req.param("workspaceId")));
 });
-app.post("/workspaces/:workspaceId/mail/providers", async (c) => {
+coreApiRoutes.post("/workspaces/:workspaceId/mail/providers", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "mail.configure");
   if (denied) return denied;
@@ -893,43 +1001,43 @@ app.post("/workspaces/:workspaceId/mail/providers", async (c) => {
   if (input.kind === "mock-development-only" && c.env.ENVIRONMENT === "production") return c.json(errorResponse(failure("validation_failed", "Development-only mail providers are not available in production.")), 400);
   return c.json(await new CoreRepository(c.env.CORE_DB).configureMailProvider(workspaceId, input, c.get("user")?.id), 201);
 });
-app.post("/workspaces/:workspaceId/mail/providers/:providerId/activate", async (c) => {
+coreApiRoutes.post("/workspaces/:workspaceId/mail/providers/:providerId/activate", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "mail.configure");
   if (denied) return denied;
   return c.json(await new CoreRepository(c.env.CORE_DB).activateMailProvider(workspaceId, c.req.param("providerId"), c.get("user")?.id));
 });
-app.post("/workspaces/:workspaceId/mail/providers/:providerId/disable", async (c) => {
+coreApiRoutes.post("/workspaces/:workspaceId/mail/providers/:providerId/disable", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "mail.configure");
   if (denied) return denied;
   return c.json(await new CoreRepository(c.env.CORE_DB).disableMailProvider(workspaceId, c.req.param("providerId"), c.get("user")?.id));
 });
-app.post("/workspaces/:workspaceId/mail/providers/:providerId/test", async (c) => {
+coreApiRoutes.post("/workspaces/:workspaceId/mail/providers/:providerId/test", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "mail.test");
   if (denied) return denied;
   const input = mailProviderTestRequestSchema.parse(await c.req.json());
   return c.json(await new CoreRepository(c.env.CORE_DB, c.env).testMailProvider(workspaceId, c.req.param("providerId"), input.to, c.get("user")?.id));
 });
-app.post("/internal/workspaces/:workspaceId/mail/send", async (c) => {
+coreApiRoutes.post("/internal/workspaces/:workspaceId/mail/send", async (c) => {
   if (!c.get("internal")) return c.json(errorResponse(failure("not_authorized", "Internal mail delivery requires a service binding.")), 403);
   const request = mailMessageRequestSchema.parse({ ...await c.req.json(), workspaceId: c.req.param("workspaceId") });
   return c.json(await new CoreRepository(c.env.CORE_DB, c.env).sendMail(request));
 });
-app.get("/workspaces/:workspaceId/auth/security-summary", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/auth/security-summary", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.read");
   if (denied) return denied;
   return c.json(await authAdminJson(c, `/admin/auth/security-summary?workspaceId=${encodeURIComponent(workspaceId)}`));
 });
-app.get("/workspaces/:workspaceId/auth/sessions/summary", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/auth/sessions/summary", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.session.read");
   if (denied) return denied;
   return c.json(await authAdminJson(c, `/admin/auth/sessions/summary?workspaceId=${encodeURIComponent(workspaceId)}`));
 });
-app.get("/workspaces/:workspaceId/auth/security-bootstrap", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/auth/security-bootstrap", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requireAnyPermission(c, workspaceId, ["auth.read", "auth.session.read"]);
   if (denied) return denied;
@@ -941,13 +1049,13 @@ app.get("/workspaces/:workspaceId/auth/security-bootstrap", async (c) => {
   ]);
   return c.json({ summary: security.summary, sessions: security.sessions, rbac, mail: { activeTransactionalProvider: Boolean(activeMailProvider) } });
 });
-app.get("/workspaces/:workspaceId/auth/methods", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/auth/methods", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.read");
   if (denied) return denied;
   return c.json(await authAdminJson(c, `/admin/auth/methods?workspaceId=${encodeURIComponent(workspaceId)}`));
 });
-app.put("/workspaces/:workspaceId/auth/methods/:methodId", async (c) => {
+coreApiRoutes.put("/workspaces/:workspaceId/auth/methods/:methodId", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.method.publish");
   if (denied) return denied;
@@ -956,13 +1064,13 @@ app.put("/workspaces/:workspaceId/auth/methods/:methodId", async (c) => {
   await new CoreRepository(c.env.CORE_DB).audit(workspaceId, "auth.method.update", { methodId: c.req.param("methodId") }, c.get("user")?.id);
   return c.json(result);
 });
-app.get("/workspaces/:workspaceId/auth/policy", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/auth/policy", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.read");
   if (denied) return denied;
   return c.json(await authAdminJson(c, `/admin/auth/policy?workspaceId=${encodeURIComponent(workspaceId)}`));
 });
-app.put("/workspaces/:workspaceId/auth/policy", async (c) => {
+coreApiRoutes.put("/workspaces/:workspaceId/auth/policy", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.policy.write");
   if (denied) return denied;
@@ -983,13 +1091,13 @@ app.put("/workspaces/:workspaceId/auth/policy", async (c) => {
   await repo.audit(workspaceId, "auth.policy.update", {}, c.get("user")?.id);
   return c.json(result);
 });
-app.get("/workspaces/:workspaceId/auth/ui-contributions", async (c) => {
+coreApiRoutes.get("/workspaces/:workspaceId/auth/ui-contributions", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.read");
   if (denied) return denied;
   return c.json(await authAdminJson(c, `/admin/auth/ui-contributions?workspaceId=${encodeURIComponent(workspaceId)}`));
 });
-app.put("/workspaces/:workspaceId/auth/ui-contributions/:contributionId", async (c) => {
+coreApiRoutes.put("/workspaces/:workspaceId/auth/ui-contributions/:contributionId", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.ui.publish");
   if (denied) return denied;
@@ -998,7 +1106,8 @@ app.put("/workspaces/:workspaceId/auth/ui-contributions/:contributionId", async 
   await new CoreRepository(c.env.CORE_DB).audit(workspaceId, "auth.ui.update", { contributionId: c.req.param("contributionId") }, c.get("user")?.id);
   return c.json(result);
 });
-app.get("/workspaces/:workspaceId/layout", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "layout.read"); if (denied) return denied; return c.json({ layout: (await new CoreRepository(c.env.CORE_DB).getLayout(c.req.param("workspaceId"))) ?? null }); });
-app.put("/layouts", async (c) => { const request = layoutWriteRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "layout.write"); if (denied) return denied; await new CoreRepository(c.env.CORE_DB).saveLayout(request.workspaceId, request.layout); return c.json({ saved: true, layout: request.layout }); });
+coreApiRoutes.get("/workspaces/:workspaceId/layout", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "layout.read"); if (denied) return denied; return c.json({ layout: (await new CoreRepository(c.env.CORE_DB).getLayout(c.req.param("workspaceId"))) ?? null }); });
+coreApiRoutes.put("/layouts", async (c) => { const request = layoutWriteRequestSchema.parse(await c.req.json()); const denied = await requirePermission(c, request.workspaceId, "layout.write"); if (denied) return denied; await new CoreRepository(c.env.CORE_DB).saveLayout(request.workspaceId, request.layout); return c.json({ saved: true, layout: request.layout }); });
+app.route("/", coreApiRoutes);
+export type CoreApi = typeof coreApiRoutes;
 export default app;
-export type CoreApp = typeof app;

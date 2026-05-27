@@ -45,13 +45,9 @@ Owner setup now maps token/account failures to platform codes including `owner_s
 
 ## API Contracts
 
-- Browser API contracts live in `packages/api-contracts`.
-- The generated browser client lives in `packages/api-client`.
-- OpenAPI artifacts are generated under:
-  - `generated/openapi/core.json`
-  - `generated/openapi/auth.json`
-- `pnpm api:generate` refreshes the generated client and specs.
-- `pnpm api:check` fails on generated drift and on direct fetch usage in migrated Web consumers.
+- Browser payload and domain schemas now live in shared Zod contract packages.
+- Web uses Hono RPC clients for Core and Auth instead of generated OpenAPI browser clients.
+- Plugin operations are resolved from manifest-declared contracts and dispatched through the generic Core gateway.
 
 Migrated endpoint groups:
 
@@ -61,7 +57,7 @@ Migrated endpoint groups:
 - Plugins/runtime: marketplace list, upload/install/approval/grants, activate/deactivate, runtime tools, runtime data/actions for plugin surfaces.
 - Administration: domains, mail delivery, approvals and audit-related browser reads used by Web.
 
-`apps/web/src/api.ts` and `apps/web/src/auth-api.ts` are now thin adapters over `@v2/api-client` for migrated browser API routes. Remaining direct fetch use is limited to public/runtime delivery helpers and Better Auth protocol surfaces that still need the official client path.
+`apps/web/src/api.ts` and `apps/web/src/auth-api.ts` are thin Hono RPC adapters for platform routes. Remaining direct fetch use is limited to public/runtime delivery helpers and Better Auth protocol surfaces that still need the official client path.
 
 ## Performance Cache Semantics
 
@@ -116,8 +112,6 @@ The local perf run sends `x-v2-server-timing: 1` and records Server-Timing heade
 ## Local Validation Results
 
 - `pnpm install --frozen-lockfile`: passed
-- `pnpm api:generate`: passed
-- `pnpm api:check`: passed
 - `pnpm typecheck`: passed
 - `pnpm --filter @v2/web build`: passed
 - `pnpm build:analyze`: passed
@@ -129,4 +123,4 @@ The local perf run sends `x-v2-server-timing: 1` and records Server-Timing heade
 - `pnpm test:e2e`: passed
 - `pnpm perf:local`: passed with all measured p95 values below 30ms
 
-CI now runs `api:generate`, `api:check`, Playwright Chromium installation, `dev:setup`, `smoke:local`, `test:e2e` and `perf:local` as required gates.
+CI now runs Playwright Chromium installation, `dev:setup`, `smoke:local`, `test:e2e` and `perf:local` as required gates.
