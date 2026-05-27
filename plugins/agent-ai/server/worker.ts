@@ -23,14 +23,14 @@ type Variables = { user: AgentSessionUser | null; internal: boolean };
 type AppBinding = { Bindings: AgentAiEnv; Variables: Variables };
 type AppContext = Context<AppBinding>;
 
-const app = new Hono<AppBinding>();
+let app = new Hono<AppBinding>();
 const terminalToolStatuses = new Set(["completed", "denied", "failed"]);
 const toolLoopSystemPrompt = `You can request one runtime tool by responding only with JSON: {"toolCall":{"toolId":"tool.id","input":{}}}. If no tool is needed, respond normally. After a tool result is provided, write the final assistant response.`;
 
-app.use("*", cors({ origin: (origin, c) => allowedOrigins(c.env).includes(origin) ? origin : "", allowHeaders: ["Content-Type", "Authorization"], allowMethods: ["GET", "POST", "PUT", "OPTIONS"], credentials: true, maxAge: 600 }));
-app.use("*", async (c, next) => { const internal = isInternalRequest(c.req.raw); c.set("internal", internal); c.set("user", c.req.path === "/health" ? null : await readSession(c.env, c.req.raw.headers)); await next(); });
-app.use("*", async (c, next) => c.req.path === "/health" || c.get("user") ? next() : c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401));
-app.onError((error, c) => { const validation = error instanceof Error && error.name === "ZodError"; return c.json(errorResponse(failure(validation ? "validation_failed" : "internal_error", validation ? "Request validation failed." : "An unexpected error occurred.")), validation ? 400 : 500); });
+app = app.use("*", cors({ origin: (origin, c) => allowedOrigins(c.env).includes(origin) ? origin : "", allowHeaders: ["Content-Type", "Authorization"], allowMethods: ["GET", "POST", "PUT", "OPTIONS"], credentials: true, maxAge: 600 }));
+app = app.use("*", async (c, next) => { const internal = isInternalRequest(c.req.raw); c.set("internal", internal); c.set("user", c.req.path === "/health" ? null : await readSession(c.env, c.req.raw.headers)); await next(); });
+app = app.use("*", async (c, next) => c.req.path === "/health" || c.get("user") ? next() : c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401));
+app = app.onError((error, c) => { const validation = error instanceof Error && error.name === "ZodError"; return c.json(errorResponse(failure(validation ? "validation_failed" : "internal_error", validation ? "Request validation failed." : "An unexpected error occurred.")), validation ? 400 : 500); });
 
 async function getCoreApproval(c: AppContext, workspaceId: string, approvalId: string): Promise<ToolApproval | null> {
   const response = await c.env.CORE.fetch(`https://core.internal/tool-approvals/${encodeURIComponent(approvalId)}?workspaceId=${encodeURIComponent(workspaceId)}`, { headers: delegatedHeaders(c) });
@@ -138,19 +138,19 @@ async function refreshToolCall(c: AppContext, repository: AgentRepository, works
   return executeViaCore(c, repository, workspaceId, toolCall, approval.id);
 }
 
-app.route("/provider-runtime", createProviderRoutes());
-app.route("/knowledge", createKnowledgeRoutes());
-app.get("/health", (c) => c.json({ ok: true, service: "agent-ai" }));
-app.get("/workspaces/:workspaceId/channels", async (c) => c.json({ channels: await new AgentRepository(c.env.AGENT_DB).listChannels(c.req.param("workspaceId")) }));
-app.post("/channels", async (c) => { const input = createChannelRequestSchema.parse(await c.req.json()); return c.json({ channel: await new AgentRepository(c.env.AGENT_DB).createChannel(input.workspaceId, input.title, input.providerId ?? null) }, 201); });
-app.put("/channels/:channelId/provider", async (c) => { const input = setChannelProviderRequestSchema.parse(await c.req.json()); await new AgentRepository(c.env.AGENT_DB).setChannelProvider(c.req.param("channelId"), input.providerId); return c.json({ saved: true }); });
-app.get("/workspaces/:workspaceId/providers", async (c) => c.json({ providers: await new AgentRepository(c.env.AGENT_DB).listProviders(c.req.param("workspaceId")) }));
-app.post("/providers", async (c) => { const input = createProviderBindingRequestSchema.parse(await c.req.json()); return c.json({ provider: await new AgentRepository(c.env.AGENT_DB).createProvider(input.workspaceId, input.contributionId, input.connectionId, input.title, input.model) }, 201); });
-app.get("/channels/:channelId/messages", async (c) => c.json({ messages: await new AgentRepository(c.env.AGENT_DB).listMessages(c.req.param("channelId")) }));
-app.post("/messages", async (c) => { const input = sendMessageRequestSchema.parse(await c.req.json()); return c.json({ message: await new AgentRepository(c.env.AGENT_DB).addMessage(input.channelId, "user", input.content), status: "stored" }, 201); });
-app.get("/channels/:channelId/tool-calls", async (c) => c.json({ toolCalls: await new AgentRepository(c.env.AGENT_DB).listToolCallsForChannel(c.req.param("channelId")) }));
-app.get("/runs/:runId/tool-calls", async (c) => c.json({ toolCalls: await new AgentRepository(c.env.AGENT_DB).listToolCallsForRun(c.req.param("runId")) }));
-app.post("/tool-calls", async (c) => {
+app = app.route("/provider-runtime", createProviderRoutes());
+app = app.route("/knowledge", createKnowledgeRoutes());
+app = app.get("/health", (c) => c.json({ ok: true, service: "agent-ai" }));
+app = app.get("/workspaces/:workspaceId/channels", async (c) => c.json({ channels: await new AgentRepository(c.env.AGENT_DB).listChannels(c.req.param("workspaceId")) }));
+app = app.post("/channels", async (c) => { const input = createChannelRequestSchema.parse(await c.req.json()); return c.json({ channel: await new AgentRepository(c.env.AGENT_DB).createChannel(input.workspaceId, input.title, input.providerId ?? null) }, 201); });
+app = app.put("/channels/:channelId/provider", async (c) => { const input = setChannelProviderRequestSchema.parse(await c.req.json()); await new AgentRepository(c.env.AGENT_DB).setChannelProvider(c.req.param("channelId"), input.providerId); return c.json({ saved: true }); });
+app = app.get("/workspaces/:workspaceId/providers", async (c) => c.json({ providers: await new AgentRepository(c.env.AGENT_DB).listProviders(c.req.param("workspaceId")) }));
+app = app.post("/providers", async (c) => { const input = createProviderBindingRequestSchema.parse(await c.req.json()); return c.json({ provider: await new AgentRepository(c.env.AGENT_DB).createProvider(input.workspaceId, input.contributionId, input.connectionId, input.title, input.model) }, 201); });
+app = app.get("/channels/:channelId/messages", async (c) => c.json({ messages: await new AgentRepository(c.env.AGENT_DB).listMessages(c.req.param("channelId")) }));
+app = app.post("/messages", async (c) => { const input = sendMessageRequestSchema.parse(await c.req.json()); return c.json({ message: await new AgentRepository(c.env.AGENT_DB).addMessage(input.channelId, "user", input.content), status: "stored" }, 201); });
+app = app.get("/channels/:channelId/tool-calls", async (c) => c.json({ toolCalls: await new AgentRepository(c.env.AGENT_DB).listToolCallsForChannel(c.req.param("channelId")) }));
+app = app.get("/runs/:runId/tool-calls", async (c) => c.json({ toolCalls: await new AgentRepository(c.env.AGENT_DB).listToolCallsForRun(c.req.param("runId")) }));
+app = app.post("/tool-calls", async (c) => {
   const input = createToolCallRequestSchema.parse(await c.req.json());
   const repository = new AgentRepository(c.env.AGENT_DB);
   const channel = await repository.getChannel(input.channelId);
@@ -166,7 +166,7 @@ app.post("/tool-calls", async (c) => {
     return c.json({ toolCall: await repository.getToolCall(toolCall.id) }, 502);
   }
 });
-app.post("/tool-calls/:toolCallId/refresh", async (c) => {
+app = app.post("/tool-calls/:toolCallId/refresh", async (c) => {
   const input = refreshToolCallRequestSchema.parse(await c.req.json());
   const repository = new AgentRepository(c.env.AGENT_DB);
   const toolCall = await repository.getToolCall(c.req.param("toolCallId"));
@@ -186,7 +186,7 @@ app.post("/tool-calls/:toolCallId/refresh", async (c) => {
     return c.json({ toolCall: await repository.getToolCall(toolCall.id) }, 502);
   }
 });
-app.post("/runs", async (c) => {
+app = app.post("/runs", async (c) => {
   const input = createRunRequestSchema.parse(await c.req.json()); const repository = new AgentRepository(c.env.AGENT_DB);
   const channel = (await repository.listChannels(input.workspaceId)).find((item) => item.id === input.channelId);
   if (!channel) return c.json(errorResponse(failure("not_found", "Channel is not available.")), 404);

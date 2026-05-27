@@ -1,11 +1,23 @@
 import { hc } from "hono/client";
 import type { AgentChannel, AgentMessage, AgentProviderBinding, AgentToolCall } from "@v2/agent-contracts";
 import type { ProviderConnection } from "@v2/provider-contracts";
-import type { AgentAiApi } from "../server/app";
 
 const workspaceId = "default";
 const configuredBaseUrl = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_AGENT_AI_API_URL;
 const agentUrl = (configuredBaseUrl ?? "http://localhost:8791").replace(/\/$/, "");
+type HonoRequestArgs = {
+  param?: Record<string, string>;
+  query?: Record<string, unknown>;
+  json?: unknown;
+  body?: BodyInit | null;
+  headers?: HeadersInit;
+};
+type HonoRoute = {
+  $get(args?: HonoRequestArgs): Promise<Response>;
+  $post(args?: HonoRequestArgs): Promise<Response>;
+  $put(args?: HonoRequestArgs): Promise<Response>;
+  $delete(args?: HonoRequestArgs): Promise<Response>;
+};
 type AgentApiClient = {
   workspaces: {
     ":workspaceId": {
@@ -29,7 +41,7 @@ type AgentApiClient = {
     ":toolCallId": { refresh: { $post(args: { param: { toolCallId: string }; json: { workspaceId: string; approvalId?: string } }): Promise<Response> } };
   };
 };
-const agentApi = hc<AgentAiApi>(agentUrl, { init: { credentials: "include" } }) as unknown as AgentApiClient;
+const agentApi = hc(agentUrl, { init: { credentials: "include" } }) as unknown as AgentApiClient;
 
 async function read<T>(request: Promise<Response>): Promise<T> {
   const response = await request;

@@ -1,6 +1,22 @@
 import { hc } from "hono/client";
 import type { ProviderConnection } from "@v2/provider-contracts";
-type AiProvidersApi = typeof import("../server/app").default;
+
+const workspaceId = "default";
+const configuredUrl = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_AI_PROVIDERS_API_URL;
+const baseUrl = (configuredUrl ?? "http://localhost:8792").replace(/\/$/, "");
+type HonoRequestArgs = {
+  param?: Record<string, string>;
+  query?: Record<string, unknown>;
+  json?: unknown;
+  body?: BodyInit | null;
+  headers?: HeadersInit;
+};
+type HonoRoute = {
+  $get(args?: HonoRequestArgs): Promise<Response>;
+  $post(args?: HonoRequestArgs): Promise<Response>;
+  $put(args?: HonoRequestArgs): Promise<Response>;
+  $delete(args?: HonoRequestArgs): Promise<Response>;
+};
 type ProviderApiClient = {
   manage: {
     connections: {
@@ -11,11 +27,7 @@ type ProviderApiClient = {
     };
   };
 };
-
-const workspaceId = "default";
-const configuredUrl = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_AI_PROVIDERS_API_URL;
-const baseUrl = (configuredUrl ?? "http://localhost:8792").replace(/\/$/, "");
-const providerApi = hc<AiProvidersApi>(baseUrl, { init: { credentials: "include" } }) as unknown as ProviderApiClient;
+const providerApi = hc(baseUrl, { init: { credentials: "include" } }) as unknown as ProviderApiClient;
 
 async function read<T>(request: Promise<Response>): Promise<T> {
   const response = await request;
