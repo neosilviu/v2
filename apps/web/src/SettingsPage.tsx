@@ -703,38 +703,18 @@ export function SettingsPage({ shell, onShellChange, emit, workspace, permission
   };
 
   return <div className="settings-hub">
-    <SurfaceCard className="settings-header-card">
-      <div className="settings-hero">
-        <div className="surface-header">
-          <div>
-            <small>{workspace?.id ?? "no-workspace"}</small>
-            <h2>Settings</h2>
-            <p>{status}</p>
-          </div>
-          <div className="settings-hero-actions">
-            <Badge>{allTabs.length} tabs</Badge>
-            <Button onClick={() => void refreshRuntime()}>Refresh runtime</Button>
-          </div>
-        </div>
-        <div className="settings-summary-grid">
-          <div className="summary-tile">
-            <small>Active tab</small>
-            <strong>{selectedTab?.label ?? "No tab selected"}</strong>
-            <p>{selectedTabMode} · {selectedTabSource}</p>
-          </div>
-          <div className="summary-tile">
-            <small>Platform tabs</small>
-            <strong>{visibleNativeTabs.length}</strong>
-            <p>General, Security, Domains, Mail, Marketplace and Interface</p>
-          </div>
-          <div className="summary-tile">
-            <small>Plugin tabs</small>
-            <strong>{tabs.length}</strong>
-            <p>Installed runtime contributions are rendered from manifests</p>
-          </div>
-        </div>
+    <header className="settings-header">
+      <div className="settings-header-copy">
+        <small>{workspace?.id ?? "no-workspace"}</small>
+        <h2>Settings</h2>
+        <p>{status}</p>
+        <span className="settings-meta">{selectedTab ? `${selectedTabMode} · ${selectedTabSource} · ${selectedTab.label}` : "No tab selected"}</span>
       </div>
-    </SurfaceCard>
+      <div className="settings-header-actions">
+        <Badge>{allTabs.length} tabs</Badge>
+        <Button onClick={() => void refreshRuntime()}>Refresh runtime</Button>
+      </div>
+    </header>
     <div className="settings-layout">
       <nav className="settings-tabs" aria-label="Settings tabs">
         {allTabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "settings-tab active" : "settings-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
