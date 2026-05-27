@@ -7,6 +7,7 @@ const webUrl = process.env.V2_WEB_URL ?? "http://localhost:5173";
 const workspaceId = process.env.V2_PERF_WORKSPACE_ID ?? `perf-${Date.now()}`;
 const email = process.env.V2_PERF_EMAIL ?? `perf-${Date.now()}@example.local`;
 const password = process.env.V2_PERF_PASSWORD ?? "LocalDevPassword123!";
+const warmP95BudgetMs = Number(process.env.V2_PERF_P95_BUDGET_MS ?? "30");
 const cookies = new Map();
 
 function run(name, command, args) {
@@ -79,13 +80,7 @@ async function measure(name, base, path, iterations = 40) {
     if (!result.response.ok) throw new Error(`${name} failed during measurement: HTTP ${result.response.status}`);
     samples.push(result.ms);
   }
-  return {
-    name,
-    min: Math.min(...samples),
-    median: percentile(samples, 50),
-    p95: percentile(samples, 95),
-    max: Math.max(...samples),
-  };
+  return { name, min: Math.min(...samples), median: percentile(samples, 50), p95: percentile(samples, 95), max: Math.max(...samples) };
 }
 
 async function main() {
@@ -98,13 +93,11 @@ async function main() {
   ];
   const results = [];
   for (const endpoint of endpoints) results.push(await measure(...endpoint));
-  console.log(`Local warm performance for ${workspaceId}`);
-  for (const item of results) {
-    console.log(`${item.name}: min=${item.min.toFixed(1)}ms median=${item.median.toFixed(1)}ms p95=${item.p95.toFixed(1)}ms max=${item.max.toFixed(1)}ms`);
-  }
-  const slow = results.filter((item) => item.p95 > 50);
+  console.log(`Local warm performance for ${workspaceId}; enforced p95 budget <= ${warmP95BudgetMs.toFixed(1)}ms`);
+  for (const item of results) console.log(`${item.name}: min=${item.min.toFixed(1)}ms median=${item.median.toFixed(1)}ms p95=${item.p95.toFixed(1)}ms max=${item.max.toFixed(1)}ms`);
+  const slow = results.filter((item) => item.p95 > warmP95BudgetMs);
   if (slow.length) {
-    console.error(`Warm p95 exceeded 50ms for: ${slow.map((item) => item.name).join(", ")}`);
+    console.error(`Warm p95 exceeded ${warmP95BudgetMs.toFixed(1)}ms for: ${slow.map((item) => item.name).join(", ")}`);
     process.exit(1);
   }
 }
