@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { AuthPublicLoginConfig, AuthUiContribution, LoginSlot } from "@v2/auth-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { loadLoginConfig } from "./auth-api";
+import { AuthRequestError, loadLoginConfig, signInEmail } from "./auth-api";
 import { authClient } from "./auth-client";
 import { DeclarativeBlocks } from "./platform/DeclarativeSurface";
 
@@ -48,11 +48,17 @@ function PasswordMethod({ method, passkeyAvailable, allowSignup, redirectTo }: {
       setStatus("Registration is not open.");
       return;
     }
-    const result = mode === "signin"
-      ? await authClient.signIn.email({ email, password })
-      : await authClient.signUp.email({ name, email, password });
-    if (result.error) {
-      setStatus("Authentication failed. Check your credentials and try again.");
+    try {
+      if (mode === "signin") await signInEmail({ email, password });
+      else {
+        const result = await authClient.signUp.email({ name, email, password });
+        if (result.error) {
+          setStatus("Authentication failed. Check your credentials and try again.");
+          return;
+        }
+      }
+    } catch (error) {
+      setStatus(error instanceof AuthRequestError ? error.message : "Authentication failed. Check your credentials and try again.");
       return;
     }
     setStatus("signed in");

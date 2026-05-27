@@ -4,9 +4,8 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe, type WorkspaceSummary } from "./api";
-import { AuthRequestError, ownerSetupSignUp, signOutAuth, updateAuthProfile } from "./auth-api";
-import { authClient } from "./auth-client";
+import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, type CoreSession, type RbacMe, type WorkspaceSummary } from "./api";
+import { AuthRequestError, ownerSetupSignUp, signInEmail, signOutAuth, updateAuthProfile } from "./auth-api";
 import { composeShellFromSurfaces, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { CommandPalette } from "./platform/CommandPalette";
@@ -309,6 +308,8 @@ export function App() {
   const signOut = async () => {
     try {
       await signOutAuth();
+      invalidateApiCaches();
+      window.dispatchEvent(new Event("v2-auth-changed"));
       setSession(null);
       setAuthStatus("anonymous");
       window.history.replaceState(null, "", "/login");
@@ -423,11 +424,7 @@ function OwnerSetupPage() {
     setBusy(true);
     try {
       setStatus("Signing in owner account...");
-      const result = await authClient.signIn.email({ email: setup.ownerEmail, password: existingPassword });
-      if (result.error) {
-        setStatus("Sign-in failed for the authorized owner email.");
-        return;
-      }
+      await signInEmail({ email: setup.ownerEmail, password: existingPassword });
       const nextSession = await loadCoreSession();
       setSession(nextSession);
       await consumeOwnerSetup(token);

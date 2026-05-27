@@ -4,8 +4,11 @@ import type { SurfaceContribution } from "@v2/plugin-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult, WorkspaceLayout } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
 import type { DeclarativePageContribution, RuntimeResultEnvelope, SettingsPanelContribution, SettingsTabContribution } from "@v2/ui-schema";
+import { CoreAuthRequiredError, PlatformApiError, createGeneratedApiClient } from "@v2/api-client";
+import { authUrl } from "./auth-client";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
+const apiClient = createGeneratedApiClient({ coreUrl, authUrl });
 
 let activeWorkspaceId: string | null = null;
 let shellBootstrap: Promise<ShellBootstrap> | null = null;
@@ -25,13 +28,6 @@ export function setCurrentWorkspaceId(workspaceId: string) {
   window.localStorage.setItem("v2.workspaceId", workspaceId);
 }
 
-export class CoreAuthRequiredError extends Error {
-  constructor() {
-    super("Core authentication is required.");
-    this.name = "CoreAuthRequiredError";
-  }
-}
-
 export class CoreRequestError extends Error {
   constructor(readonly status: number, readonly code: string | undefined, message: string) {
     super(message);
@@ -41,6 +37,16 @@ export class CoreRequestError extends Error {
 
 export function isCoreAuthRequiredError(error: unknown): error is CoreAuthRequiredError {
   return error instanceof CoreAuthRequiredError;
+}
+
+async function generated<T>(promise: Promise<unknown>): Promise<T> {
+  try {
+    return await promise as T;
+  } catch (error) {
+    if (error instanceof CoreAuthRequiredError) throw error;
+    if (error instanceof PlatformApiError) throw new CoreRequestError(error.status, error.code, error.message);
+    throw error;
+  }
 }
 
 async function parseCoreError(response: Response) {
@@ -60,13 +66,17 @@ async function json<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !(init.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
   if ((method === "GET" || method === "HEAD") && !init.body) headers.delete("content-type");
   const response = await fetch(`${coreUrl}${path}`, { ...init, method, credentials: "include", headers });
-  if (response.status === 401) throw new CoreAuthRequiredError();
+  if (response.status === 401) throw new CoreAuthRequiredError("legacyCoreRequest");
   if (!response.ok) throw await parseCoreError(response);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
 function resetShellBootstrap() { shellBootstrap = null; }
+export function invalidateApiCaches() {
+  shellBootstrap = null;
+  securityBootstrap = null;
+}
 
 export type CoreSession = { authenticated: boolean; isAdmin: boolean; user: { id: string; email: string; name: string | null } | null };
 export type WorkspaceSummary = { id: string; name: string; status: string; roles: Array<{ name: string; system_key: string | null }>; permissions: string[] };
@@ -120,8 +130,10 @@ export type MailSummary = {
 
 export function loadShellBootstrap(workspaceId = workspaceFromLocation()): Promise<ShellBootstrap> {
   if (!shellBootstrap) {
-    const path = workspaceId ? `/workspaces/${encodeURIComponent(workspaceId)}/bootstrap` : "/workspaces/current/bootstrap";
-    shellBootstrap = json<ShellBootstrap>(path).then((bootstrap) => {
+    const request = workspaceId
+      ? apiClient.workspaceBootstrap({ params: { workspaceId } })
+      : apiClient.workspaceBootstrapCurrent();
+    shellBootstrap = generated<ShellBootstrap>(request).then((bootstrap) => {
       setCurrentWorkspaceId(bootstrap.currentWorkspace.id);
       return bootstrap;
     }).catch((error) => {
@@ -132,35 +144,35 @@ export function loadShellBootstrap(workspaceId = workspaceFromLocation()): Promi
   return shellBootstrap;
 }
 
-export async function loadCoreSession(): Promise<CoreSession> { return json<CoreSession>("/session"); }
-export async function loadOwnerSetup(token: string): Promise<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }> { return json<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }>(`/setup/owner?token=${encodeURIComponent(token)}`); }
-export async function consumeOwnerSetup(token: string): Promise<{ status: "consumed"; workspaceId: string }> { const result = await json<{ status: "consumed"; workspaceId: string }>("/setup/owner/consume", { method: "POST", body: JSON.stringify({ token }) }); setCurrentWorkspaceId(result.workspaceId); resetShellBootstrap(); return result; }
-export async function loadCurrentRbac(): Promise<RbacMe> { return json<RbacMe>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/rbac/me`); }
+export async function loadCoreSession(): Promise<CoreSession> { return generated<CoreSession>(apiClient.coreSession()); }
+export async function loadOwnerSetup(token: string): Promise<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }> { return generated<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }>(apiClient.ownerSetupStatus({ query: { token } })); }
+export async function consumeOwnerSetup(token: string): Promise<{ status: "consumed"; workspaceId: string }> { const result = await generated<{ status: "consumed"; workspaceId: string }>(apiClient.ownerSetupConsume({ body: { token } })); setCurrentWorkspaceId(result.workspaceId); resetShellBootstrap(); return result; }
+export async function loadCurrentRbac(): Promise<RbacMe> { return generated<RbacMe>(apiClient.currentRbac({ params: { workspaceId: currentWorkspaceId() } })); }
 export function runtimeSurfaceUrl(surfaceId: string): string { return `${coreUrl}/runtime/ui/surfaces/${encodeURIComponent(surfaceId)}?workspaceId=${encodeURIComponent(currentWorkspaceId())}`; }
 export async function loadLayout(): Promise<WorkspaceLayout | null> { return (await loadShellBootstrap()).layout; }
-export async function saveLayout(state: ShellState): Promise<void> { await json("/layouts", { method: "PUT", body: JSON.stringify({ workspaceId: currentWorkspaceId(), layout: { zones: state.zones, placements: state.placements } }) }); resetShellBootstrap(); }
+export async function saveLayout(state: ShellState): Promise<void> { await generated(apiClient.saveLayout({ body: { workspaceId: currentWorkspaceId(), layout: { zones: state.zones, placements: state.placements } } })); resetShellBootstrap(); }
 export async function loadActivePlugins(): Promise<string[]> { return (await loadShellBootstrap()).active; }
 export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> { return (await loadShellBootstrap()).surfaces; }
 export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> { return (await loadShellBootstrap()).settingsNavigation.pluginTabs; }
-export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTabResolution> { return json<RuntimeSettingsTabResolution>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/settings/tabs/${encodeURIComponent(tabId)}`); }
-export async function saveSettingsTabOrder(tabIds: string[]): Promise<void> { await json(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/settings/tabs/order`, { method: "POST", body: JSON.stringify({ tabIds }) }); }
+export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTabResolution> { return generated<RuntimeSettingsTabResolution>(apiClient.settingsTab({ params: { workspaceId: currentWorkspaceId(), tabId } })); }
+export async function saveSettingsTabOrder(tabIds: string[]): Promise<void> { await generated(apiClient.settingsTabOrder({ params: { workspaceId: currentWorkspaceId() }, body: { tabIds } })); }
 export async function loadPublicPage(pathname: string): Promise<{ page: DeclarativePageContribution; routeParams: Record<string, string> }> { return json<{ page: DeclarativePageContribution; routeParams: Record<string, string> }>(pathname); }
-export async function loadRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>("/runtime/ui/data", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), contributionId, dataSourceId, routeParams }) }); }
-export async function executeRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>("/runtime/ui/actions", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), contributionId, actionId, input, routeParams }) }); }
+export async function loadRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> { return generated<RuntimeResultEnvelope>(apiClient.runtimeData({ body: { workspaceId: currentWorkspaceId(), contributionId, dataSourceId, routeParams } })); }
+export async function executeRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> { return generated<RuntimeResultEnvelope>(apiClient.runtimeAction({ body: { workspaceId: currentWorkspaceId(), contributionId, actionId, input, routeParams } })); }
 export async function loadPublicRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}, publicWorkspaceId = currentWorkspaceId()): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>(`/public/${encodeURIComponent(publicWorkspaceId)}/runtime/data`, { method: "POST", body: JSON.stringify({ contributionId, dataSourceId, routeParams }) }); }
 export async function executePublicRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}, publicWorkspaceId = currentWorkspaceId()): Promise<RuntimeResultEnvelope> { return json<RuntimeResultEnvelope>(`/public/${encodeURIComponent(publicWorkspaceId)}/runtime/actions`, { method: "POST", body: JSON.stringify({ contributionId, actionId, input, routeParams }) }); }
-export async function activatePlugin(pluginId: string): Promise<void> { await json("/plugins/activate", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), pluginId }) }); resetShellBootstrap(); }
-export async function deactivatePlugin(pluginId: string): Promise<void> { await json("/plugins/deactivate", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), pluginId }) }); resetShellBootstrap(); }
-export async function loadSettings(scope: "platform" | `plugin:${string}`): Promise<Record<string, unknown>> { return (await json<{ settings: Record<string, unknown> }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/settings/${encodeURIComponent(scope)}`)).settings; }
+export async function activatePlugin(pluginId: string): Promise<void> { await generated(apiClient.activatePlugin({ body: { workspaceId: currentWorkspaceId(), pluginId } })); resetShellBootstrap(); }
+export async function deactivatePlugin(pluginId: string): Promise<void> { await generated(apiClient.deactivatePlugin({ body: { workspaceId: currentWorkspaceId(), pluginId } })); resetShellBootstrap(); }
+export async function loadSettings(scope: "platform" | `plugin:${string}`): Promise<Record<string, unknown>> { return (await generated<{ settings: Record<string, unknown> }>(apiClient.settingsScope({ params: { workspaceId: currentWorkspaceId(), scope } }))).settings; }
 export async function saveSetting(scope: "platform" | `plugin:${string}`, key: string, value: unknown): Promise<void> { await json("/settings", { method: "PUT", body: JSON.stringify({ workspaceId: currentWorkspaceId(), scope, key, value }) }); }
-export async function loadGeneralSettings(): Promise<Record<string, unknown>> { return (await json<{ settings: Record<string, unknown> }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/settings/general`)).settings; }
-export async function saveGeneralSettings(input: Record<string, unknown>): Promise<Record<string, unknown>> { return (await json<{ settings: Record<string, unknown> }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/settings/general`, { method: "PUT", body: JSON.stringify(input) })).settings; }
+export async function loadGeneralSettings(): Promise<Record<string, unknown>> { return (await generated<{ settings: Record<string, unknown> }>(apiClient.generalSettings({ params: { workspaceId: currentWorkspaceId() } }))).settings; }
+export async function saveGeneralSettings(input: Record<string, unknown>): Promise<Record<string, unknown>> { return (await generated<{ settings: Record<string, unknown> }>(apiClient.saveGeneralSettings({ params: { workspaceId: currentWorkspaceId() }, body: input }))).settings; }
 export async function loadSecurityBootstrap<T>(): Promise<T> {
   const workspaceId = currentWorkspaceId();
   if (!securityBootstrap || securityBootstrap.workspaceId !== workspaceId) {
     securityBootstrap = {
       workspaceId,
-      promise: json<T>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/security-bootstrap`).catch((error) => {
+      promise: generated<T>(apiClient.securityBootstrap({ params: { workspaceId } })).catch((error) => {
         securityBootstrap = null;
         throw error;
       }),
@@ -168,28 +180,28 @@ export async function loadSecurityBootstrap<T>(): Promise<T> {
   }
   return securityBootstrap.promise as Promise<T>;
 }
-export async function loadDomains(): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/domains`)).domains; }
-export async function createDomain(input: { hostname: string; kind: WorkspaceDomain["kind"]; verificationMethod: WorkspaceDomain["verificationMethod"]; isPrimary?: boolean }): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/domains`, { method: "POST", body: JSON.stringify(input) })).domains; }
-export async function verifyDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/domains/${encodeURIComponent(domainId)}/verify`, { method: "POST" })).domains; }
-export async function activateDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/domains/${encodeURIComponent(domainId)}/activate`, { method: "POST" })).domains; }
-export async function disableDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await json<{ domains: WorkspaceDomain[] }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/domains/${encodeURIComponent(domainId)}/disable`, { method: "POST" })).domains; }
-export async function loadMailSummary(): Promise<MailSummary> { return json<MailSummary>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/mail`); }
-export async function configureMailProvider(input: MailProviderConfigure): Promise<MailSummary> { return json<MailSummary>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/mail/providers`, { method: "POST", body: JSON.stringify(input) }); }
-export async function activateMailProvider(providerId: string): Promise<MailSummary> { return json<MailSummary>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/mail/providers/${encodeURIComponent(providerId)}/activate`, { method: "POST" }); }
-export async function disableMailProvider(providerId: string): Promise<MailSummary> { return json<MailSummary>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/mail/providers/${encodeURIComponent(providerId)}/disable`, { method: "POST" }); }
-export async function testMailProvider(providerId: string, to: string): Promise<MailProviderTestResult> { return json<MailProviderTestResult>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/mail/providers/${encodeURIComponent(providerId)}/test`, { method: "POST", body: JSON.stringify({ to }) }); }
-export async function executeTool(toolId: string, approvalId?: string): Promise<ToolExecutionResult> { return json<ToolExecutionResult>("/tools/execute", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), toolId, ...(approvalId ? { approvalId } : {}) }) }); }
-export async function decideToolApproval(approvalId: string, decision: "approved" | "denied"): Promise<ToolApproval> { return (await json<{ approval: ToolApproval }>("/tool-approvals/decision", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), approvalId, decision }) })).approval; }
-export async function loadPendingToolApprovals(): Promise<ToolApproval[]> { return (await json<{ approvals: ToolApproval[] }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/tool-approvals`)).approvals; }
+export async function loadDomains(): Promise<WorkspaceDomain[]> { return (await generated<{ domains: WorkspaceDomain[] }>(apiClient.domains({ params: { workspaceId: currentWorkspaceId() } }))).domains; }
+export async function createDomain(input: { hostname: string; kind: WorkspaceDomain["kind"]; verificationMethod: WorkspaceDomain["verificationMethod"]; isPrimary?: boolean }): Promise<WorkspaceDomain[]> { return (await generated<{ domains: WorkspaceDomain[] }>(apiClient.createDomain({ params: { workspaceId: currentWorkspaceId() }, body: input }))).domains; }
+export async function verifyDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await generated<{ domains: WorkspaceDomain[] }>(apiClient.verifyDomain({ params: { workspaceId: currentWorkspaceId(), domainId } }))).domains; }
+export async function activateDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await generated<{ domains: WorkspaceDomain[] }>(apiClient.activateDomain({ params: { workspaceId: currentWorkspaceId(), domainId } }))).domains; }
+export async function disableDomain(domainId: string): Promise<WorkspaceDomain[]> { return (await generated<{ domains: WorkspaceDomain[] }>(apiClient.disableDomain({ params: { workspaceId: currentWorkspaceId(), domainId } }))).domains; }
+export async function loadMailSummary(): Promise<MailSummary> { return generated<MailSummary>(apiClient.mailSummary({ params: { workspaceId: currentWorkspaceId() } })); }
+export async function configureMailProvider(input: MailProviderConfigure): Promise<MailSummary> { return generated<MailSummary>(apiClient.configureMailProvider({ params: { workspaceId: currentWorkspaceId() }, body: input })); }
+export async function activateMailProvider(providerId: string): Promise<MailSummary> { return generated<MailSummary>(apiClient.activateMailProvider({ params: { workspaceId: currentWorkspaceId(), providerId } })); }
+export async function disableMailProvider(providerId: string): Promise<MailSummary> { return generated<MailSummary>(apiClient.disableMailProvider({ params: { workspaceId: currentWorkspaceId(), providerId } })); }
+export async function testMailProvider(providerId: string, to: string): Promise<MailProviderTestResult> { return generated<MailProviderTestResult>(apiClient.testMailProvider({ params: { workspaceId: currentWorkspaceId(), providerId }, body: { to } })); }
+export async function executeTool(toolId: string, approvalId?: string): Promise<ToolExecutionResult> { return generated<ToolExecutionResult>(apiClient.executeTool({ body: { workspaceId: currentWorkspaceId(), toolId, ...(approvalId ? { approvalId } : {}) } })); }
+export async function decideToolApproval(approvalId: string, decision: "approved" | "denied"): Promise<ToolApproval> { return (await generated<{ approval: ToolApproval }>(apiClient.decideToolApproval({ body: { workspaceId: currentWorkspaceId(), approvalId, decision } }))).approval; }
+export async function loadPendingToolApprovals(): Promise<ToolApproval[]> { return (await generated<{ approvals: ToolApproval[] }>(apiClient.pendingToolApprovals({ params: { workspaceId: currentWorkspaceId() } }))).approvals; }
 export async function approveToolApproval(approvalId: string): Promise<ToolApproval> { return decideToolApproval(approvalId, "approved"); }
 export async function denyToolApproval(approvalId: string): Promise<ToolApproval> { return decideToolApproval(approvalId, "denied"); }
-export async function loadPendingApprovalRequests(): Promise<ApprovalRequest[]> { return (await json<{ approvals: ApprovalRequest[] }>(`/workspaces/${encodeURIComponent(currentWorkspaceId())}/approval-requests`)).approvals; }
-export async function decideApprovalRequest(approvalId: string, decision: "approved" | "denied"): Promise<ApprovalRequest> { return (await json<{ approval: ApprovalRequest }>(`/approval-requests/${encodeURIComponent(approvalId)}/decision`, { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), decision }) })).approval; }
+export async function loadPendingApprovalRequests(): Promise<ApprovalRequest[]> { return (await generated<{ approvals: ApprovalRequest[] }>(apiClient.pendingApprovalRequests({ params: { workspaceId: currentWorkspaceId() } }))).approvals; }
+export async function decideApprovalRequest(approvalId: string, decision: "approved" | "denied"): Promise<ApprovalRequest> { return (await generated<{ approval: ApprovalRequest }>(apiClient.decideApprovalRequest({ params: { approvalId }, body: { workspaceId: currentWorkspaceId(), decision } }))).approval; }
 export async function loadInstalledPlugins(): Promise<PluginManifest[]> { return (await loadShellBootstrap()).plugins; }
-export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> { return (await json<{ plugins: MarketplacePlugin[] }>(`/marketplace/plugins?workspaceId=${encodeURIComponent(currentWorkspaceId())}`)).plugins; }
-export async function installMarketplacePlugin(pluginId: string, approvalId?: string): Promise<PluginInstallResult> { const result = await json<PluginInstallResult>(`/marketplace/plugins/${encodeURIComponent(pluginId)}/install?workspaceId=${encodeURIComponent(currentWorkspaceId())}`, approvalId ? { method: "POST", body: JSON.stringify({ approvalId }) } : { method: "POST" }); resetShellBootstrap(); return result; }
-export async function publishMarketplaceRelease(pluginId: string, file: File, fields?: { category?: string; source?: string; status?: "draft" | "published" | "deprecated"; demoAvailable?: boolean }): Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }> { const body = new FormData(); body.append("file", file); if (fields?.category) body.append("category", fields.category); if (fields?.source) body.append("source", fields.source); if (fields?.status) body.append("status", fields.status); if (fields?.demoAvailable !== undefined) body.append("demoAvailable", String(fields.demoAvailable)); const response = await fetch(`${coreUrl}/marketplace/plugins/${encodeURIComponent(pluginId)}/releases`, { method: "POST", body, credentials: "include" }); if (response.status === 401) throw new CoreAuthRequiredError(); if (!response.ok) throw await parseCoreError(response); return response.json() as Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }>; }
+export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> { return (await generated<{ plugins: MarketplacePlugin[] }>(apiClient.marketplacePlugins({ query: { workspaceId: currentWorkspaceId() } }))).plugins; }
+export async function installMarketplacePlugin(pluginId: string, approvalId?: string): Promise<PluginInstallResult> { const result = await generated<PluginInstallResult>(apiClient.installMarketplacePlugin({ params: { pluginId }, query: { workspaceId: currentWorkspaceId() }, body: approvalId ? { approvalId } : {} })); resetShellBootstrap(); return result; }
+export async function publishMarketplaceRelease(pluginId: string, file: File, fields?: { category?: string; source?: string; status?: "draft" | "published" | "deprecated"; demoAvailable?: boolean }): Promise<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }> { const body = new FormData(); body.append("file", file); if (fields?.category) body.append("category", fields.category); if (fields?.source) body.append("source", fields.source); if (fields?.status) body.append("status", fields.status); if (fields?.demoAvailable !== undefined) body.append("demoAvailable", String(fields.demoAvailable)); return generated<{ status: string; bundle: PluginBundle; sensitiveCapabilities: string[] }>(apiClient.publishMarketplaceRelease({ params: { pluginId }, body })); }
 export async function loadRuntimeTools(): Promise<ToolContribution[]> { return (await loadShellBootstrap()).tools; }
-export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const response = await fetch(`${coreUrl}/plugins/upload?workspaceId=${encodeURIComponent(currentWorkspaceId())}`, { method: "POST", body, credentials: "include" }); if (!response.ok && response.status !== 202) throw await parseCoreError(response); resetShellBootstrap(); return response.json() as Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }>; }
-export async function approveInstall(approvalId: string): Promise<PluginManifest> { const manifest = (await json<{ status: string; manifest: PluginManifest }>("/plugins/install", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), approvalId }) })).manifest; resetShellBootstrap(); return manifest; }
-export async function grantCapabilities(pluginId: string, capabilities: string[]): Promise<void> { await json("/plugins/grants", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), pluginId, capabilities }) }); }
+export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }> { const body = new FormData(); body.append("file", file); const result = await generated<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }>(apiClient.uploadPlugin({ query: { workspaceId: currentWorkspaceId() }, body })); resetShellBootstrap(); return result; }
+export async function approveInstall(approvalId: string): Promise<PluginManifest> { const manifest = (await generated<{ status: string; manifest: PluginManifest }>(apiClient.approveInstall({ body: { workspaceId: currentWorkspaceId(), approvalId } }))).manifest; resetShellBootstrap(); return manifest; }
+export async function grantCapabilities(pluginId: string, capabilities: string[]): Promise<void> { await generated(apiClient.grantCapabilities({ body: { workspaceId: currentWorkspaceId(), pluginId, capabilities } })); }

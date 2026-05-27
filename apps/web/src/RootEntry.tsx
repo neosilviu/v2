@@ -8,6 +8,10 @@ type GateState = "checking" | "authenticated" | "anonymous" | "unavailable";
 
 let publicSessionProbe: Promise<CoreSession> | null = null;
 
+export function invalidatePublicSessionProbe() {
+  publicSessionProbe = null;
+}
+
 function probeSession(): Promise<CoreSession> {
   publicSessionProbe ??= loadCoreSession().catch((error) => {
     publicSessionProbe = null;
@@ -35,6 +39,8 @@ export function RootEntry() {
 
   useEffect(() => {
     if (publicRoute) return;
+    const invalidate = () => { invalidatePublicSessionProbe(); };
+    window.addEventListener("v2-auth-changed", invalidate);
     let alive = true;
     void probeSession().then((session) => {
       if (!alive) return;
@@ -43,7 +49,10 @@ export function RootEntry() {
       if (!alive) return;
       setState(isCoreAuthRequiredError(error) ? "anonymous" : "unavailable");
     });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+      window.removeEventListener("v2-auth-changed", invalidate);
+    };
   }, [publicRoute]);
 
   if (publicRoute || state === "authenticated") return <App />;

@@ -1,8 +1,11 @@
 import { authPolicySchema, authPublicLoginConfigSchema, type AuthMethod, type AuthPolicy, type AuthPublicLoginConfig, type AuthUiContribution } from "@v2/auth-contracts";
+import { PlatformApiError, createGeneratedApiClient } from "@v2/api-client";
 import { currentWorkspaceId } from "./api";
 import { authUrl } from "./auth-client";
 
 const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
+const apiClient = createGeneratedApiClient({ coreUrl, authUrl });
+const loginConfigCache = new Map<string, Promise<AuthPublicLoginConfig>>();
 
 export class AuthRequestError extends Error {
   constructor(readonly status: number, readonly code: string | undefined, message: string) {
@@ -11,45 +14,26 @@ export class AuthRequestError extends Error {
   }
 }
 
-async function parseError(response: Response, fallback: string) {
-  const text = await response.text().catch(() => "");
-  if (!text) return new AuthRequestError(response.status, undefined, fallback);
+async function generated<T>(promise: Promise<unknown>): Promise<T> {
   try {
-    const payload = JSON.parse(text) as { code?: string; error?: string; message?: string };
-    return new AuthRequestError(response.status, payload.code ?? payload.error, payload.message ?? payload.error ?? fallback);
-  } catch {
-    return new AuthRequestError(response.status, undefined, fallback);
+    return await promise as T;
+  } catch (error) {
+    if (error instanceof PlatformApiError) throw new AuthRequestError(error.status, error.code, error.message);
+    throw error;
   }
 }
 
 export async function loadLoginConfig(workspaceId = "default"): Promise<AuthPublicLoginConfig> {
-  const url = new URL("/public/auth/login-config", authUrl);
-  url.searchParams.set("workspaceId", workspaceId);
-  const response = await fetch(url, { credentials: "include" });
-  if (!response.ok) throw new Error(`Auth login config failed: ${response.status}`);
-  return authPublicLoginConfigSchema.parse(await response.json());
-}
-
-async function authJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  if (init?.body && !(init.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
-  const response = await fetch(new URL(path, authUrl), { ...init, credentials: "include", headers });
-  if (!response.ok) throw await parseError(response, `Auth request failed: ${response.status}`);
-  if (response.status === 204) return undefined as T;
-  const text = await response.text();
-  return (text ? JSON.parse(text) : undefined) as T;
-}
-
-async function coreJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  const method = (init?.method ?? "GET").toUpperCase();
-  if (init?.body && !(init.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
-  if ((method === "GET" || method === "HEAD") && !init?.body) headers.delete("content-type");
-  const response = await fetch(new URL(path, coreUrl), { ...init, method, credentials: "include", headers });
-  if (!response.ok) throw await parseError(response, `Core auth request failed: ${response.status}`);
-  if (response.status === 204) return undefined as T;
-  const text = await response.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  const key = workspaceId || "default";
+  if (!loginConfigCache.has(key)) {
+    loginConfigCache.set(key, generated(apiClient.loginConfig({ query: { workspaceId } }))
+      .then((payload) => authPublicLoginConfigSchema.parse(payload))
+      .catch((error) => {
+        loginConfigCache.delete(key);
+        throw error;
+      }));
+  }
+  return loginConfigCache.get(key)!;
 }
 
 export type AuthSecuritySummary = {
@@ -62,35 +46,38 @@ export type AuthSecuritySummary = {
 };
 
 export async function loadAuthSecuritySummary(workspaceId = currentWorkspaceId()): Promise<AuthSecuritySummary> {
-  return (await coreJson<{ summary: AuthSecuritySummary }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/security-summary`)).summary;
+  return (await generated<{ summary: AuthSecuritySummary; sessions: { sessions: number; passkeys: number } }>(apiClient.securityBootstrap({ params: { workspaceId } }))).summary;
 }
 
 export async function loadAuthSessionsSummary(workspaceId = currentWorkspaceId()): Promise<{ sessions: number; passkeys: number }> {
-  return (await coreJson<{ summary: { sessions: number; passkeys: number } }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/sessions/summary`)).summary;
+  return (await generated<{ sessions: { sessions: number; passkeys: number } }>(apiClient.securityBootstrap({ params: { workspaceId } }))).sessions;
 }
 
 export async function saveAuthPolicy(policy: AuthPolicy, workspaceId = currentWorkspaceId()): Promise<AuthPolicy> {
-  const result = await coreJson<{ policy: AuthPolicy }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/policy`, { method: "PUT", body: JSON.stringify({ workspaceId, registrationMode: policy.registrationMode, requireEmailVerification: policy.requireEmailVerification, allowPasskeyRegistration: policy.allowPasskeyRegistration, allowPasskeySignin: policy.allowPasskeySignin }) });
+  const result = await generated<{ policy: AuthPolicy }>(apiClient.saveAuthPolicy({ params: { workspaceId }, body: { workspaceId, registrationMode: policy.registrationMode, requireEmailVerification: policy.requireEmailVerification, allowPasskeyRegistration: policy.allowPasskeyRegistration, allowPasskeySignin: policy.allowPasskeySignin } }));
   return authPolicySchema.parse(result.policy);
 }
 
 export async function saveAuthMethod(method: AuthMethod, workspaceId = currentWorkspaceId()): Promise<AuthMethod> {
-  return (await coreJson<{ method: AuthMethod }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/methods/${encodeURIComponent(method.id)}`, { method: "PUT", body: JSON.stringify({ workspaceId, type: method.type, providerId: method.providerId, title: method.title, status: method.status, publicVisible: method.publicVisible, displayOrder: method.displayOrder }) })).method;
+  return (await generated<{ method: AuthMethod }>(apiClient.saveAuthMethod({ params: { workspaceId, methodId: method.id }, body: { workspaceId, type: method.type, providerId: method.providerId, title: method.title, status: method.status, publicVisible: method.publicVisible, displayOrder: method.displayOrder } }))).method;
 }
 
 export async function loadAuthUiContributions(workspaceId = currentWorkspaceId()): Promise<AuthUiContribution[]> {
-  return (await coreJson<{ contributions: AuthUiContribution[] }>(`/workspaces/${encodeURIComponent(workspaceId)}/auth/ui-contributions`)).contributions;
+  return (await generated<{ contributions: AuthUiContribution[] }>(apiClient.authUiContributions({ params: { workspaceId } }))).contributions;
 }
 
 export async function updateAuthProfile(input: { name: string }): Promise<void> {
-  await authJson<unknown>("/api/auth/update-user", { method: "POST", body: JSON.stringify({ name: input.name.trim() || null }) });
+  await generated(apiClient.updateUser({ body: { name: input.name.trim() || null } }));
 }
 
 export async function ownerSetupSignUp(input: { token: string; email: string; name: string; password: string }): Promise<void> {
-  await authJson<unknown>("/setup/owner/sign-up/email", { method: "POST", body: JSON.stringify(input) });
+  await generated(apiClient.ownerSetupSignup({ body: input }));
+}
+
+export async function signInEmail(input: { email: string; password: string }): Promise<void> {
+  await generated(apiClient.signInEmail({ body: input }));
 }
 
 export async function signOutAuth(): Promise<void> {
-  const response = await fetch(new URL("/api/auth/sign-out", authUrl), { method: "POST", credentials: "include" });
-  if (!response.ok) throw new Error(`Auth sign out failed: ${response.status}`);
+  await generated(apiClient.signOut());
 }
