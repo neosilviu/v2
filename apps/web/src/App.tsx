@@ -243,6 +243,12 @@ export function App() {
   const selectedPluginSurfaces = selectedPlugin ? shell.surfaces.filter((surface) => surface.id.startsWith(`${selectedPlugin.id}.`)) : [];
   const title = selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : activePage === "profile" ? "Profile" : "Dashboard");
   const subtitle = selectedPlugin ? "Active plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Platform and plugin administration" : activePage === "profile" ? "Account profile and workspace access" : "Workspace status and setup";
+  const headerContext = selectedPlugin ? `Plugin ${selectedPlugin.id}` : activePage === "settings" ? "Administration hub" : activePage === "approvals" ? "Approval queue" : activePage === "profile" ? "Account area" : "Workspace overview";
+  const headerPills = [
+    { label: workspace?.id ?? "no-workspace", value: "workspace" },
+    { label: `${activePluginIds.size}/${plugins.length}`, value: "plugins" },
+    { label: `${tools.length}`, value: "tools" },
+  ];
 
   const openPage = (page: Page, path = "/") => {
     setActivePage(page);
@@ -342,7 +348,14 @@ export function App() {
       </aside>
       <main className="workspace">
         <div className="workspace-header">
-          <div><h1>{title}</h1><p>{subtitle}</p></div>
+          <div>
+            <h1>{title}</h1>
+            <p>{subtitle}</p>
+            <div className="header-meta">
+              <Badge>{headerContext}</Badge>
+              {headerPills.map((pill) => <Badge key={pill.value}>{pill.label}</Badge>)}
+            </div>
+          </div>
           <div className="header-actions"><Badge>{workspace?.id ?? "no-workspace"}</Badge><Button onClick={persistLayout}>Save layout</Button></div>
         </div>
         {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} workspace={workspace} permissions={permissions} onOpenPlugins={() => setActivePage("plugins")} onOpenSettings={() => openPage("settings", "/settings")} /> : null}

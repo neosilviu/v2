@@ -209,8 +209,21 @@ function SecurityAdministrationCrud({ emit }: { emit: (item: Notification) => vo
   };
 
   const pluginOptions = installedPlugins.filter((plugin) => plugin.id).map((plugin) => ({ id: plugin.id, name: plugin.name }));
+  const summaryTiles = [
+    { label: "Publications", value: publications.length, detail: "Published workspace delivery entries" },
+    { label: "Pending approvals", value: approvals.length, detail: "One-shot approval requests in the queue" },
+    { label: "Audit events", value: auditEvents.length, detail: "Recent platform changes and policy actions" },
+    { label: "Installed plugins", value: installedPlugins.length, detail: "Available plugin manifests for publications" },
+  ];
 
   return <section className="settings-subpanel">
+    <div className="settings-summary-grid">
+      {summaryTiles.map((tile) => <div className="summary-tile" key={tile.label}>
+        <small>{tile.label}</small>
+        <strong>{tile.value}</strong>
+        <p>{tile.detail}</p>
+      </div>)}
+    </div>
     <CrudRenderer
       title="Publications"
       status={status}
@@ -638,6 +651,8 @@ export function SettingsPage({ shell, onShellChange, emit, workspace, permission
   const allTabs = useMemo(() => [...visibleNativeTabs, ...tabs], [tabs, visibleNativeTabs]);
   const selectedTab = useMemo(() => allTabs.find((tab) => tab.id === selectedTabId) ?? null, [selectedTabId, allTabs]);
   const selectedPluginTab = useMemo(() => tabs.find((tab) => tab.id === selectedTabId) ?? null, [selectedTabId, tabs]);
+  const selectedTabSource = selectedPluginTab ? selectedPluginTab.ownerName : selectedTabId.startsWith("platform.settings.") ? "Platform" : "Runtime";
+  const selectedTabMode = selectedPluginTab ? "Plugin contribution" : selectedTabId.startsWith("platform.settings.") ? "Built-in tab" : "Runtime tab";
 
   useEffect(() => {
     let alive = true;
@@ -689,9 +704,35 @@ export function SettingsPage({ shell, onShellChange, emit, workspace, permission
 
   return <div className="settings-hub">
     <SurfaceCard className="settings-header-card">
-      <div className="surface-header">
-        <div><small>{workspace?.id ?? "no-workspace"}</small><h2>Settings</h2><p>{status}</p></div>
-        <Badge>{allTabs.length} tabs</Badge>
+      <div className="settings-hero">
+        <div className="surface-header">
+          <div>
+            <small>{workspace?.id ?? "no-workspace"}</small>
+            <h2>Settings</h2>
+            <p>{status}</p>
+          </div>
+          <div className="settings-hero-actions">
+            <Badge>{allTabs.length} tabs</Badge>
+            <Button onClick={() => void refreshRuntime()}>Refresh runtime</Button>
+          </div>
+        </div>
+        <div className="settings-summary-grid">
+          <div className="summary-tile">
+            <small>Active tab</small>
+            <strong>{selectedTab?.label ?? "No tab selected"}</strong>
+            <p>{selectedTabMode} · {selectedTabSource}</p>
+          </div>
+          <div className="summary-tile">
+            <small>Platform tabs</small>
+            <strong>{visibleNativeTabs.length}</strong>
+            <p>General, Security, Domains, Mail, Marketplace and Interface</p>
+          </div>
+          <div className="summary-tile">
+            <small>Plugin tabs</small>
+            <strong>{tabs.length}</strong>
+            <p>Installed runtime contributions are rendered from manifests</p>
+          </div>
+        </div>
       </div>
     </SurfaceCard>
     <div className="settings-layout">
