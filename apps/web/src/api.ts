@@ -4,9 +4,9 @@ import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc-contracts";
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
-import { approvalRequestListSchema, coreSessionSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, type CoreSession, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary } from "./platform-contracts";
+import { approvalRequestListSchema, coreSessionSchema, entrySessionSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, type CoreSession, type EntrySession, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary } from "./platform-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-export type { CoreSession, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary } from "./platform-contracts";
+export type { CoreSession, EntrySession, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary } from "./platform-contracts";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 type HonoRequestArgs = {
@@ -32,7 +32,7 @@ type CoreApiClient = {
     ":workspaceId": {
       bootstrap: HonoRoute;
       rbac: { me: HonoRoute };
-      settings: { runtime: { data: HonoRoute; actions: HonoRoute } };
+      settings: { tabs: { $get(args?: HonoRequestArgs): Promise<Response>; ":tabId": HonoRoute }; runtime: { data: HonoRoute; actions: HonoRoute } };
       "approval-requests": HonoRoute;
       "tool-approvals": HonoRoute;
       plugins: { ":pluginId": { operations: { ":operationId": HonoRoute } } };
@@ -159,6 +159,15 @@ export function loadShellBootstrap(workspaceId = workspaceFromLocation()): Promi
   return shellBootstrap;
 }
 
+export async function loadEntrySession(): Promise<EntrySession> {
+  const entry = await coreResponse(coreApi.session.$get({ query: { includeBootstrap: "true" } }), entrySessionSchema);
+  if (entry.bootstrap) {
+    shellBootstrap = Promise.resolve(entry.bootstrap);
+    setCurrentWorkspaceId(entry.bootstrap.currentWorkspace.id);
+  }
+  return entry;
+}
+
 export async function loadCoreSession(): Promise<CoreSession> {
   return coreResponse(coreApi.session.$get(), coreSessionSchema);
 }
@@ -240,15 +249,18 @@ export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> 
 }
 
 export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> {
-  const bootstrap = await loadShellBootstrap();
-  return bootstrap.settingsNavigation.tabs.map((item) => item.tab);
+  const schema = z.object({ tabs: z.array(runtimeSettingsTabSchema) });
+  return (await coreResponse(
+    coreApi.workspaces[":workspaceId"].settings.tabs.$get({ param: { workspaceId: currentWorkspaceId() } }),
+    schema,
+  )).tabs;
 }
 
 export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTabResolution> {
-  const bootstrap = await loadShellBootstrap();
-  const resolution = bootstrap.settingsNavigation.tabs.find((item) => item.tab.id === tabId);
-  if (!resolution) throw new CoreRequestError(404, "not_found", `Settings tab ${tabId} is not available.`);
-  return runtimeSettingsTabResolutionSchema.parse(resolution);
+  return coreResponse(
+    coreApi.workspaces[":workspaceId"].settings.tabs[":tabId"].$get({ param: { workspaceId: currentWorkspaceId(), tabId } }),
+    runtimeSettingsTabResolutionSchema,
+  );
 }
 
 export async function loadPublicPage(pathname: string): Promise<{ page: DeclarativePageContribution; routeParams: Record<string, string>; plugin: { id: string; name: string; version: string } | null }> {

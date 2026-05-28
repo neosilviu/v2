@@ -1,23 +1,24 @@
 import { useEffect, useState } from "react";
 import { App } from "./App";
-import { isCoreAuthRequiredError, loadCoreSession, type CoreSession } from "./api";
+import { invalidateApiCaches, loadEntrySession, type EntrySession } from "./api";
 import { LoginPage } from "./LoginPage";
 import { SurfaceCard, Badge } from "@v2/ui-kit";
 
 type GateState = "checking" | "authenticated" | "anonymous" | "unavailable";
 
-let publicSessionProbe: Promise<CoreSession> | null = null;
+let sessionProbe: Promise<EntrySession> | null = null;
 
 export function invalidatePublicSessionProbe() {
-  publicSessionProbe = null;
+  sessionProbe = null;
+  invalidateApiCaches();
 }
 
-function probeSession(): Promise<CoreSession> {
-  publicSessionProbe ??= loadCoreSession().catch((error) => {
-    publicSessionProbe = null;
+function probeSession(): Promise<EntrySession> {
+  sessionProbe ??= loadEntrySession().catch((error) => {
+    sessionProbe = null;
     throw error;
   });
-  return publicSessionProbe;
+  return sessionProbe;
 }
 
 function protectedRedirectTarget() {
@@ -27,8 +28,8 @@ function protectedRedirectTarget() {
 function SessionProbePage({ unavailable = false }: { unavailable?: boolean }) {
   return <main className="login-page">
     <SurfaceCard className="login-panel">
-      <div className="surface-header"><div><small>session</small><h2>{unavailable ? "Authentication unavailable" : "Checking session"}</h2></div><Badge>public</Badge></div>
-      <p className="login-status">{unavailable ? "Auth session could not be read. No protected workspace request was made." : "Checking your public session before loading protected workspace data."}</p>
+      <div className="surface-header"><div><small>session</small><h2>{unavailable ? "Workspace unavailable" : "Checking session"}</h2></div><Badge>public</Badge></div>
+      <p className="login-status">{unavailable ? "Workspace access could not be loaded." : "Verifying your sign-in status."}</p>
     </SurfaceCard>
   </main>;
 }
@@ -45,9 +46,9 @@ export function RootEntry() {
     void probeSession().then((session) => {
       if (!alive) return;
       setState(session.authenticated ? "authenticated" : "anonymous");
-    }).catch((error: unknown) => {
+    }).catch(() => {
       if (!alive) return;
-      setState(isCoreAuthRequiredError(error) ? "anonymous" : "unavailable");
+      setState("unavailable");
     });
     return () => {
       alive = false;

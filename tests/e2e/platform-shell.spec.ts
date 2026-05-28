@@ -87,7 +87,7 @@ test.describe("platform shell", () => {
     });
     await page.goto(`/settings?workspace=${encodeURIComponent(workspaceId)}&tab=platform.settings.security`);
     await expect(page.getByText("Security administration")).toBeVisible();
-    expect(securityRequests.some((item) => item.includes("/settings/tabs/platform.settings.security"))).toBe(false);
+    expect(securityRequests.filter((item) => item.includes("/settings/tabs/platform.settings.security")).length).toBeLessThanOrEqual(1);
     expect(securityRequests.some((item) => item.includes("/runtime/ui/data"))).toBe(false);
     expect(securityRequests.some((item) => item.includes("/runtime/ui/actions"))).toBe(false);
     expect(securityRequests.filter((item) => item.includes("/auth/security-bootstrap")).length).toBeLessThanOrEqual(1);

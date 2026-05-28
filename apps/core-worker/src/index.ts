@@ -663,9 +663,13 @@ async function dispatchPluginOperation(c: CoreContext, request: { workspaceId: s
   return c.json(pluginOperationEnvelope("ok", runtimeResult.body));
 }
 coreApiRoutes = coreApiRoutes.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
-coreApiRoutes = coreApiRoutes.get("/session", (c) => {
+coreApiRoutes = coreApiRoutes.get("/session", async (c) => {
   const user = c.get("user");
-  return c.json({ authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
+  const session = { authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null };
+  if (!user || c.req.query("includeBootstrap") !== "true") return c.json(session);
+  const bootstrapResponse = await workspaceBootstrap(c);
+  if (!bootstrapResponse.ok) return c.json(session);
+  return c.json({ ...session, bootstrap: await bootstrapResponse.json() });
 });
 coreApiRoutes = coreApiRoutes.get("/session/impersonation", async (c) => {
   const denied = requireRead(c);
@@ -708,21 +712,16 @@ async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string)
   const workspaceId = currentWorkspace.id;
   const permissions = new Set(currentWorkspace.permissions);
   await repo.ensureWorkspaceRbac(workspaceId);
-  await repo.ensurePlatformSettingsContributions(workspaceId);
-  const [installed, activeIds, layout, surfaces, settingsTabs] = await Promise.all([
+  const [installed, activeIds, layout, surfaces] = await Promise.all([
     repo.workspaceInstalled(workspaceId),
     repo.activePlugins(workspaceId),
     repo.getLayout(workspaceId),
     repo.workspaceUiSurfaces(workspaceId),
-    repo.settingsTabs(workspaceId).catch(() => []),
   ]);
   const active = new Set(activeIds);
   const runtime = new RuntimeKernel();
   for (const manifest of installed) await runtime.registerPlugin(manifest);
   const activePlugins = runtime.plugins.all().filter((plugin) => active.has(plugin.id));
-  const visiblePluginTabs = settingsTabs.filter((tab) => tab.pluginId !== "platform" && tab.status === "active" && (!tab.requiredPermission || permissions.has(tab.requiredPermission) || permissions.has("workspace.admin")));
-  const visibleSettingsTabs = settingsTabs.filter((tab) => tab.status === "active" && (!tab.requiredPermission || permissions.has(tab.requiredPermission) || permissions.has("workspace.admin")));
-  const visibleSettingsTabResolutions = (await Promise.all(visibleSettingsTabs.map(async (tab) => repo.settingsTab(workspaceId, tab.id)))).filter((tab): tab is NonNullable<typeof tab> => Boolean(tab));
   return c.json({
     session: { authenticated: true, impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null },
     workspaces,
@@ -733,7 +732,7 @@ async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string)
     active: activeIds,
     tools: activePlugins.flatMap((plugin) => plugin.contributes.tools),
     surfaces: surfaces.filter((surface) => !surface.id.startsWith("platform.settings.")),
-    settingsNavigation: { pluginTabs: visiblePluginTabs, tabs: visibleSettingsTabResolutions },
+    settingsNavigation: { pluginTabs: [], tabs: [] },
     featureAvailability: {
       canReadMarketplace: permissions.has("marketplace.read") || permissions.has("workspace.admin"),
       canInstallPlugins: permissions.has("plugin.install") || permissions.has("workspace.admin"),
@@ -1290,6 +1289,7 @@ coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/settings/tabs", asyn
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read");
   if (denied) return denied;
   const repo = new CoreRepository(c.env.CORE_DB);
+  await repo.ensurePlatformSettingsContributions(c.req.param("workspaceId"));
   const tabs = await repo.settingsTabs(c.req.param("workspaceId"));
   const permissions = new Set((await repo.memberSummary(c.req.param("workspaceId"), c.get("user"))).permissions);
   return c.json({ tabs: tabs.filter((tab) => tab.status === "active" && (!tab.requiredPermission || permissions.has(tab.requiredPermission) || permissions.has("workspace.admin"))) });
@@ -1298,6 +1298,7 @@ coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/settings/tabs/:tabId
   const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.settings.read");
   if (denied) return denied;
   const repo = new CoreRepository(c.env.CORE_DB);
+  await repo.ensurePlatformSettingsContributions(c.req.param("workspaceId"));
   const resolved = await repo.settingsTab(c.req.param("workspaceId"), c.req.param("tabId"));
   if (resolved?.tab.requiredPermission) {
     const permissions = new Set((await repo.memberSummary(c.req.param("workspaceId"), c.get("user"))).permissions);
