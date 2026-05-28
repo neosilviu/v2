@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { PluginManifest } from "@v2/plugin-contracts";
 import type { Notification } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-import { Button, SurfaceCard } from "@v2/ui-kit";
+import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { loadActivePlugins, loadInstalledPlugins, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, type RuntimeSettingsTab, type RuntimeSettingsTabResolution } from "./api";
 import { SettingsRenderer } from "./platform/SettingsRenderer";
 import { composeShellFromSurfaces } from "./shell";
@@ -14,31 +14,63 @@ type SettingsPageProps = {
   onRuntimeChanged: (plugins: PluginManifest[], activePluginIds: Set<string>, shell: ShellState) => void;
 };
 
+const tabDescriptions: Record<string, string> = {
+  "platform.settings.general": "Workspace name, branding, locale and public contact details.",
+  "platform.settings.mail": "Transactional email providers and delivery verification.",
+  "platform.settings.security": "Authentication, members, permissions and access control.",
+  "platform.settings.audit": "Workspace activity and administrative history.",
+  "platform.settings.plans": "Plans, usage limits and customer assignments.",
+  "platform.settings.domains": "Domains used by websites, authentication and mail.",
+  "platform.settings.interface": "Navigation, layout and interface customization.",
+};
+
 function selectedTabFromUrl(tabs: RuntimeSettingsTab[]) {
   const params = new URLSearchParams(window.location.search);
   const desired = params.get("tab") ?? "";
   return tabs.find((tab) => tab.id === desired)?.id ?? tabs[0]?.id ?? "";
 }
 
+function createNotification(level: Notification["level"], title: string, message: string): Notification {
+  return {
+    id: crypto.randomUUID(),
+    level,
+    title,
+    message,
+    source: "settings",
+    dismissible: true,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: SettingsPageProps) {
   const [tabs, setTabs] = useState<RuntimeSettingsTab[]>([]);
   const [selectedTabId, setSelectedTabId] = useState("");
   const [resolution, setResolution] = useState<RuntimeSettingsTabResolution | null>(null);
-  const [status, setStatus] = useState("Settings ready");
+  const [status, setStatus] = useState("Loading settings...");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const selectedTab = tabs.find((tab) => tab.id === selectedTabId) ?? null;
+  const title = selectedTab?.label ?? "Settings";
+  const description = selectedTab ? tabDescriptions[selectedTab.id] ?? "Manage workspace configuration." : "Select a settings section.";
 
   useEffect(() => {
     let alive = true;
+    setBusy(true);
     void loadSettingsTabs().then((loaded) => {
       if (!alive) return;
       setTabs(loaded);
       setSelectedTabId(selectedTabFromUrl(loaded));
-      setStatus("Settings loaded");
-    }).catch((error) => {
+      setStatus("Settings ready");
+      setError(null);
+    }).catch((requestError) => {
       if (!alive) return;
-      setStatus(error instanceof Error ? error.message : "Settings registry unavailable");
+      const message = requestError instanceof Error ? requestError.message : "Settings registry unavailable.";
+      setError(message);
+      setStatus("Settings unavailable");
       setSelectedTabId("");
+    }).finally(() => {
+      if (alive) setBusy(false);
     });
     return () => { alive = false; };
   }, []);
@@ -48,47 +80,85 @@ export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: S
     const params = new URLSearchParams(window.location.search);
     params.set("tab", selectedTabId);
     const nextSearch = `?${params.toString()}`;
-    const nextUrl = `/settings${nextSearch}`;
-    if (window.location.pathname !== "/settings" || window.location.search !== nextSearch) window.history.replaceState(null, "", nextUrl);
+    if (window.location.pathname !== "/settings" || window.location.search !== nextSearch) {
+      window.history.replaceState(null, "", `/settings${nextSearch}`);
+    }
     let alive = true;
+    setBusy(true);
+    setError(null);
     void loadSettingsTab(selectedTabId).then((loaded) => {
       if (!alive) return;
       setResolution(loaded);
       setStatus(`${loaded.tab.label} loaded`);
-    }).catch((error) => {
+    }).catch((requestError) => {
       if (!alive) return;
-      setStatus(error instanceof Error ? error.message : "Settings tab unavailable");
+      const message = requestError instanceof Error ? requestError.message : "This settings section could not be loaded.";
+      setError(message);
+      setStatus("Section unavailable");
+    }).finally(() => {
+      if (alive) setBusy(false);
     });
     return () => { alive = false; };
   }, [selectedTabId]);
 
   const refreshRuntime = async () => {
-    const [installed, activeIds, surfaces] = await Promise.all([loadInstalledPlugins(), loadActivePlugins(), loadWorkspaceUiSurfaces()]);
-    onRuntimeChanged(installed as PluginManifest[], new Set(activeIds), composeShellFromSurfaces(surfaces));
-    emit({ id: crypto.randomUUID(), level: "success", title: "Runtime refreshed", message: "Settings and plugin contributions were reloaded.", source: "platform", dismissible: true, createdAt: new Date().toISOString() });
+    setBusy(true);
+    try {
+      const [installed, activeIds, surfaces, loadedTabs] = await Promise.all([
+        loadInstalledPlugins(),
+        loadActivePlugins(),
+        loadWorkspaceUiSurfaces(),
+        loadSettingsTabs(),
+      ]);
+      setTabs(loadedTabs);
+      if (selectedTabId) {
+        const loadedResolution = await loadSettingsTab(selectedTabId);
+        setResolution(loadedResolution);
+      }
+      onRuntimeChanged(installed, new Set(activeIds), composeShellFromSurfaces(surfaces));
+      setStatus("Saved values reloaded");
+      setError(null);
+      emit(createNotification("success", "Settings refreshed", "Saved configuration and installed applications were reloaded."));
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Settings could not be refreshed.";
+      setError(message);
+      emit(createNotification("error", "Refresh failed", message));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return <div className="settings-hub">
-    <header className="settings-header">
+    <header className="settings-header settings-product-header">
       <div className="settings-header-copy">
-        <h2>Settings</h2>
-        {selectedTabId === "platform.settings.security" ? <strong>Security administration</strong> : null}
-        <p>{status}</p>
-        <span className="settings-meta">{selectedTab ? selectedTab.label : "No tab selected"}</span>
+        <small>Workspace administration</small>
+        <h2>{title}</h2>
+        <p>{description}</p>
       </div>
       <div className="settings-header-actions">
-        <Button onClick={() => void refreshRuntime()}>Reload</Button>
+        <Badge>{busy ? "Loading" : error ? "Attention required" : "Ready"}</Badge>
+        <Button onClick={() => void refreshRuntime()} disabled={busy}>Reload saved values</Button>
       </div>
     </header>
-    <div className="settings-layout">
-      <nav className="settings-tabs" aria-label="Settings tabs">
+
+    {error ? <div className="settings-feedback error" role="alert">
+      <strong>Something went wrong</strong>
+      <span>{error}</span>
+      <Button onClick={() => void refreshRuntime()} disabled={busy}>Try again</Button>
+    </div> : null}
+
+    <div className="settings-layout settings-product-layout">
+      <nav className="settings-tabs settings-navigation" aria-label="Settings sections">
         {tabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "settings-tab active" : "settings-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
           <span>{tab.label}</span>
-          <small>{"ownerName" in tab ? tab.ownerName : "Platform"}</small>
+          <small>{tabDescriptions[tab.id] ?? ("ownerName" in tab ? tab.ownerName : "Workspace")}</small>
         </button>)}
       </nav>
-      <section className="settings-panel">
-        {!resolution ? <SurfaceCard><h2>No Settings tab</h2><p>No active Settings contribution is available for this workspace.</p></SurfaceCard> : <SettingsRenderer panel={resolution.panel} shell={shell} onShellChange={onShellChange} />}
+
+      <section className="settings-panel" aria-busy={busy}>
+        {!resolution
+          ? <SurfaceCard className="settings-empty"><h2>{busy ? "Loading settings..." : "No settings available"}</h2><p>{busy ? "Loading saved configuration for this workspace." : status}</p></SurfaceCard>
+          : <SettingsRenderer key={resolution.panel.id} panel={resolution.panel} shell={shell} onShellChange={onShellChange} emit={emit} />}
       </section>
     </div>
   </div>;
