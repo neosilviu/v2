@@ -105,9 +105,10 @@ export function GeneratedWorkspaceApp() {
     if (page.id === "platform.account") { await updateAuthProfile({ name: String(values.name ?? "") }); emit(notification("success", "Profile saved", "Your display name was updated.")); }
   };
   const actionPage = async (action: ActionDefinition) => { if (action.intent === "navigate") openPath(action.commandId); };
+  const redirectAfterLogin = window.location.pathname === "/login" ? null : `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
   if (authStatus === "checking") return loading();
-  if (authStatus === "anonymous") return <LoginPage redirectTo={`${window.location.pathname}${window.location.search}${window.location.hash}`} />;
+  if (authStatus === "anonymous") return redirectAfterLogin ? <LoginPage redirectTo={redirectAfterLogin} /> : <LoginPage />;
   if (authStatus === "unavailable" || !bootstrap) return loading(true);
   const userNavigation = navigation.filter((item) => item.section === "user");
   const adminNavigation = navigation.filter((item) => item.section === "administration");
@@ -124,7 +125,7 @@ export function GeneratedWorkspaceApp() {
     <div className="app-shell">
       <header className="topbar"><button className="brand" type="button" onClick={() => openPath(navigation[0]?.path ?? "/")}><strong>v2</strong><Badge>generated runtime</Badge></button><span className="search">{selected?.label ?? "Workspace"}</span><label className="workspace-switcher"><small>Workspace</small><select value={bootstrap.currentWorkspace.id} onChange={(event) => switchWorkspace(event.currentTarget.value)}>{bootstrap.workspaces.map((workspace: WorkspaceSummary) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label><button className="user-button" type="button" onClick={() => void signOut()}><span className="avatar">{userInitial(session)}</span><span>{displayUser(session)}</span></button></header>
       <aside className="sidebar"><div className="sidebar-label">USER</div>{userNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}{adminNavigation.length ? <div className="sidebar-label">ADMINISTRATION</div> : null}{adminNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}</aside>
-      <main className="workspace"><div className="workspace-header"><div><h1>{selected?.label ?? "Workspace"}</h1><p>{selected ? `${selected.source} generated page` : "Page unavailable"}</p></div><div className="header-actions"><Badge>{bootstrap.currentWorkspace.status}</Badge><Button onClick={() => void persistLayout()}>Save layout</Button></div></div>{pageOutput}{selected?.id === "platform.home" ? <RuntimeSurfaceZone surfaces={shell.surfaces} zoneId="workspace.main" /> : null}</main>
+      <main className="workspace"><div className="workspace-header"><div><h1>{selected?.label ?? "Workspace"}</h1><p>{selected ? `${selected.source} generated page` : "Page unavailable"}</p></div><div className="header-actions"><Badge>{bootstrap.currentWorkspace.status}</Badge><Button onClick={() => void persistLayout()}>Save layout</Button></div></div>{pageOutput}</main>
       <aside className="assistant"><RuntimeSurfaceZone surfaces={shell.surfaces} zoneId="assistant.right" emptyMessage="No active assistant panel contribution." /></aside>
       <footer className="statusbar"><span>{notice}</span><span>{navigation.length} navigation items</span><span>Core {bootstrap.currentWorkspace.id}</span></footer>
     </div>
