@@ -4,7 +4,6 @@ import type { WorkspaceLayout } from "@v2/rpc-contracts";
 import { errorResponse, failure } from "@v2/feedback-runtime";
 import { mailProviderConfigureSchema } from "@v2/mail-contracts";
 import { runtimeActionRequestSchema, runtimeDataRequestSchema } from "@v2/ui-schema";
-import { ApprovalRequestRepository } from "./approvals";
 import { CoreRepository, type WorkspacePermission } from "./repository";
 import type { CoreEnv } from "./env";
 
@@ -14,7 +13,8 @@ const readResponseCache = new Map<string, { expiresAt: number; response: Respons
 const sessionAssertionCache = new Map<string, { expiresAt: number; user: { id: string; email: string; name?: string | null; impersonatedBy?: string | null } | null }>();
 
 function isPlatformAdmin(env: CoreEnv, user: { email: string } | null | undefined) {
-  return Boolean(user && env.PLATFORM_ADMIN_EMAIL && user.email.toLowerCase() === env.PLATFORM_ADMIN_EMAIL.toLowerCase());
+  const admins = new Set((env.PLATFORM_ADMIN_EMAILS ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean));
+  return Boolean(user && admins.has(user.email.toLowerCase()));
 }
 
 function requestCredentialKey(c: CoreContext) {
@@ -63,14 +63,14 @@ async function requirePermission(c: CoreContext, workspaceId: string, permission
   return null;
 }
 
-async function authAdminJson<T>(c: CoreContext, path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
+async function authAdminJson<T>(c: CoreContext, path: string, init?: { method?: string; body?: string }): Promise<T> {
+  const headers = new Headers();
   const cookie = c.req.header("cookie");
   const authorization = c.req.header("authorization");
   if (cookie) headers.set("cookie", cookie);
   if (authorization) headers.set("authorization", authorization);
   if (init?.body) headers.set("content-type", "application/json");
-  const response = await c.env.AUTH.fetch(`https://auth.internal${path}`, { ...init, headers });
+  const response = await c.env.AUTH.fetch(`https://auth.internal${path}`, { method: init?.method, body: init?.body, headers });
   if (!response.ok) throw new Error(`Auth administration failed: ${response.status}`);
   return response.json() as Promise<T>;
 }
@@ -104,6 +104,12 @@ function pluginOperationEnvelope(status: "ok" | "denied" | "approval-required" |
 }
 function normalizeEmptyString(value: unknown) { return value === "" ? null : value; }
 function objectInput(value: unknown) { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+function domainKind(value: unknown): "admin" | "auth" | "website" | "storefront" | "public-chat" | "mail" {
+  return value === "admin" || value === "auth" || value === "storefront" || value === "public-chat" || value === "mail" ? value : "website";
+}
+function domainVerification(value: unknown): "manual" | "dns-txt" | "dns-cname" {
+  return value === "dns-txt" || value === "dns-cname" ? value : "manual";
+}
 function layoutFromInput(input: unknown) {
   const value = objectInput(input);
   if ("layout" in value && value.layout && typeof value.layout === "object" && !Array.isArray(value.layout)) return value.layout as WorkspaceLayout;
@@ -166,7 +172,7 @@ async function platformSettingsAction(c: CoreContext, repo: CoreRepository, work
     case "platform.settings.plans.delete": return c.json({ status: "ok", data: await repo.deletePlan(String(objectInput(input).id ?? ""), c.get("user")?.id), error: null, approvalId: null, auditEventId: null });
     case "platform.settings.plans.assignment.upsert": { const value = objectInput(input); return c.json({ status: "ok", data: await repo.upsertUserPlanAssignment({ ...(typeof value.id === "string" ? { id: value.id } : {}), userId: String(value.userId ?? ""), planId: String(value.planId ?? ""), status: value.status === "scheduled" || value.status === "expired" || value.status === "disabled" ? value.status : "active", startsAt: normalizeEmptyString(value.startsAt) as string | null, endsAt: normalizeEmptyString(value.endsAt) as string | null }, c.get("user")?.id), error: null, approvalId: null, auditEventId: null }); }
     case "platform.settings.plans.assignment.delete": return c.json({ status: "ok", data: await repo.deleteUserPlanAssignment(String(objectInput(input).id ?? ""), c.get("user")?.id), error: null, approvalId: null, auditEventId: null });
-    case "platform.settings.domains.create": { const value = objectInput(input); return c.json({ status: "ok", data: await repo.createDomain(workspaceId, { hostname: String(value.hostname ?? ""), kind: String(value.kind ?? "website"), verificationMethod: String(value.verificationMethod ?? "manual"), isPrimary: value.isPrimary === true }, c.get("user")?.id), error: null, approvalId: null, auditEventId: null }); }
+    case "platform.settings.domains.create": { const value = objectInput(input); return c.json({ status: "ok", data: await repo.createDomain(workspaceId, { hostname: String(value.hostname ?? ""), kind: domainKind(value.kind), verificationMethod: domainVerification(value.verificationMethod), isPrimary: value.isPrimary === true }, c.get("user")?.id), error: null, approvalId: null, auditEventId: null }); }
     case "platform.settings.domains.activate": return c.json({ status: "ok", data: await repo.updateDomainStatus(workspaceId, String(objectInput(input).id ?? ""), "active", c.get("user")?.id), error: null, approvalId: null, auditEventId: null });
     case "platform.settings.domains.disable": return c.json({ status: "ok", data: await repo.updateDomainStatus(workspaceId, String(objectInput(input).id ?? ""), "disabled", c.get("user")?.id), error: null, approvalId: null, auditEventId: null });
     case "platform.settings.plugins.activate": return c.json({ status: "ok", data: await repo.activate(workspaceId, String(objectInput(input).id ?? "")), error: null, approvalId: null, auditEventId: null });
@@ -191,8 +197,6 @@ async function dispatchPluginOperation(c: CoreContext, request: { workspaceId: s
 
 coreApiRoutes.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
 coreApiRoutes.get("/session", (c) => { const user = c.get("user"); return c.json({ authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null }); });
-coreApiRoutes.get("/workspaces/:workspaceId/settings/tabs", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "workspace.settings.read"); if (denied) return denied; return c.json({ tabs: await new CoreRepository(c.env.CORE_DB).settingsTabsForWorkspace(workspaceId) }); });
-coreApiRoutes.get("/workspaces/:workspaceId/settings/tabs/:tabId", async (c) => { const workspaceId = c.req.param("workspaceId"); const denied = await requirePermission(c, workspaceId, "workspace.settings.read"); if (denied) return denied; const resolution = await new CoreRepository(c.env.CORE_DB).resolveSettingsTab(workspaceId, c.req.param("tabId")); return resolution ? c.json(resolution) : c.json(errorResponse(failure("not_found", "Settings tab is not available.")), 404); });
 coreApiRoutes.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => { const workspaceId = c.req.param("workspaceId"); const parsed = runtimeDataRequestSchema.safeParse(await c.req.json().catch(() => null)); if (!parsed.success || parsed.data.workspaceId !== workspaceId) return c.json(errorResponse(failure("validation_failed", "Valid settings runtime data input is required.")), 400); const result = await platformSettingsData(c, new CoreRepository(c.env.CORE_DB), workspaceId, parsed.data.dataSourceId); return result ?? c.json(errorResponse(failure("not_found", "Settings data source is not available.")), 404); });
 coreApiRoutes.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => { const workspaceId = c.req.param("workspaceId"); const parsed = runtimeActionRequestSchema.safeParse(await c.req.json().catch(() => null)); if (!parsed.success || parsed.data.workspaceId !== workspaceId) return c.json(errorResponse(failure("validation_failed", "Valid settings runtime action input is required.")), 400); const result = await platformSettingsAction(c, new CoreRepository(c.env.CORE_DB), workspaceId, parsed.data.actionId, parsed.data.input); return result ?? c.json(errorResponse(failure("not_found", "Settings action is not available.")), 404); });
 
