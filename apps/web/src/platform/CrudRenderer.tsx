@@ -1,11 +1,12 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { ActionDefinition, ColumnDefinition, CrudDefinition, FieldDefinition } from "@v2/ui-schema";
-import { Button, SurfaceCard } from "@v2/ui-kit";
+import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 
 type CrudRow = Record<string, unknown>;
 
 type CrudRendererProps = {
   title: string;
+  description?: string;
   status: string | undefined;
   busy?: boolean;
   rows: CrudRow[];
@@ -13,10 +14,10 @@ type CrudRendererProps = {
   fields: FieldDefinition[];
   crud: CrudDefinition;
   onRefresh?: () => void;
-  onCreate: (values: Record<string, unknown>) => Promise<void>;
-  onUpdate: (row: CrudRow, values: Record<string, unknown>) => Promise<void>;
-  onDelete: (row: CrudRow) => Promise<void>;
-  onRowAction?: (action: ActionDefinition, row: CrudRow) => Promise<void>;
+  onCreate: (values: Record<string, unknown>) => Promise<boolean>;
+  onUpdate: (row: CrudRow, values: Record<string, unknown>) => Promise<boolean>;
+  onDelete: (row: CrudRow) => Promise<boolean>;
+  onRowAction?: (action: ActionDefinition, row: CrudRow) => Promise<boolean>;
 };
 
 type DialogState =
@@ -57,34 +58,39 @@ function normalizeInput(fields: FieldDefinition[], form: HTMLFormElement) {
 function fieldDefaultValue(row: CrudRow | null, field: FieldDefinition) {
   const value = row ? row[field.id] : undefined;
   if (field.type === "boolean") return value === true || value === "true";
-  if (value === null || value === undefined) return field.type === "number" ? "" : "";
+  if (value === null || value === undefined) return "";
   return String(value);
 }
 
-export function CrudRenderer({ title, status, busy, rows, columns, fields, crud, onRefresh, onCreate, onUpdate, onDelete, onRowAction }: CrudRendererProps) {
+export function CrudRenderer({ title, description, status, busy, rows, columns, fields, crud, onRefresh, onCreate, onUpdate, onDelete, onRowAction }: CrudRendererProps) {
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const dialogTitle = useMemo(() => {
     if (!dialog) return "";
-    if (dialog.mode === "create") return `Create ${crud.entityLabel}`;
+    if (dialog.mode === "create") return `Add ${crud.entityLabel}`;
     if (dialog.mode === "edit") return `Edit ${crud.entityLabel}`;
-    return `Delete ${crud.entityLabel}`;
+    return `Remove ${crud.entityLabel}`;
   }, [crud.entityLabel, dialog]);
+
+  const openDialog = (next: DialogState) => {
+    setMessage(null);
+    setDialog(next);
+  };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!dialog || dialog.mode === "delete") return;
     setSubmitting(true);
+    setMessage(null);
     try {
       const values = normalizeInput(fields, event.currentTarget);
-      if (dialog.mode === "create") await onCreate(values);
-      else await onUpdate(dialog.row, values);
-      setDialog(null);
-      setMessage(null);
+      const saved = dialog.mode === "create" ? await onCreate(values) : await onUpdate(dialog.row, values);
+      if (saved) setDialog(null);
+      else setMessage("Changes were not saved. Review the error shown above and try again.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Action failed.");
+      setMessage(error instanceof Error ? error.message : "Changes could not be saved.");
     } finally {
       setSubmitting(false);
     }
@@ -93,58 +99,60 @@ export function CrudRenderer({ title, status, busy, rows, columns, fields, crud,
   const confirmDelete = async () => {
     if (!dialog || dialog.mode !== "delete") return;
     setSubmitting(true);
+    setMessage(null);
     try {
-      await onDelete(dialog.row);
-      setDialog(null);
-      setMessage(null);
+      const deleted = await onDelete(dialog.row);
+      if (deleted) setDialog(null);
+      else setMessage("This item was not removed. Review the error shown above and try again.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Delete failed.");
+      setMessage(error instanceof Error ? error.message : "This item could not be removed.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  return <SurfaceCard>
+  return <SurfaceCard className="settings-list-card">
     <div className="surface-header">
-      <div><small>generic crud</small><h3>{title}</h3><p>{status ?? message ?? ""}</p></div>
+      <div><h3>{title}</h3>{description ? <p>{description}</p> : null}{status ? <p className="settings-inline-error">{status}</p> : null}</div>
       <div className="plugin-actions">
-        {onRefresh ? <Button onClick={() => void onRefresh()} disabled={busy || submitting}>Refresh</Button> : null}
-        <Button className="primary" onClick={() => setDialog({ mode: "create", row: null })} disabled={busy || submitting}>Add {crud.entityLabel}</Button>
+        <Badge>{rows.length}</Badge>
+        {onRefresh ? <Button onClick={() => onRefresh()} disabled={busy || submitting}>Reload</Button> : null}
+        <Button className="primary" onClick={() => openDialog({ mode: "create", row: null })} disabled={busy || submitting}>Add {crud.entityLabel}</Button>
       </div>
     </div>
     <div className="template-table-wrap domain-table">
       <table>
         <thead>
-          <tr>{columns.map((column) => <th key={column.id}>{column.label}</th>)}<th /></tr>
+          <tr>{columns.map((column) => <th key={column.id}>{column.label}</th>)}<th>Actions</th></tr>
         </thead>
         <tbody>
           {rows.length ? rows.map((row) => <tr key={String(valueAt(row, crud.rowIdField))}>
-            {columns.map((column) => <td key={column.id}><strong>{String(valueAt(row, column.field))}</strong>{column.type === "badge" ? <small>{String(valueAt(row, column.field))}</small> : null}</td>)}
+            {columns.map((column) => <td key={column.id}>{column.type === "badge" ? <Badge>{String(valueAt(row, column.field))}</Badge> : <span>{String(valueAt(row, column.field))}</span>}</td>)}
             <td>
               <div className="plugin-actions">
-                <Button disabled={busy || submitting} onClick={() => setDialog({ mode: "edit", row })}>Edit</Button>
-                <Button disabled={busy || submitting} onClick={() => setDialog({ mode: "delete", row })}>Delete</Button>
+                <Button disabled={busy || submitting} onClick={() => openDialog({ mode: "edit", row })}>Edit</Button>
+                <Button className="danger" disabled={busy || submitting} onClick={() => openDialog({ mode: "delete", row })}>Remove</Button>
                 {onRowAction ? crud.rowActions.map((action) => <Button key={action.id} className={action.variant === "danger" ? "danger" : action.variant === "primary" ? "primary" : ""} disabled={busy || submitting} onClick={() => void onRowAction(action, row)}>{action.title}</Button>) : null}
               </div>
             </td>
-          </tr>) : <tr><td colSpan={columns.length + 1}>{crud.listEmptyMessage ?? `No ${crud.entityLabelPlural.toLowerCase()} available.`}</td></tr>}
+          </tr>) : <tr><td colSpan={columns.length + 1}>{crud.listEmptyMessage ?? `No ${crud.entityLabelPlural.toLowerCase()} found.`}</td></tr>}
         </tbody>
       </table>
     </div>
-    {dialog ? <div style={{ position: "fixed", inset: 0, background: "rgba(7, 11, 17, 0.72)", display: "grid", placeItems: "center", zIndex: 60, padding: "1rem" }}>
-      <SurfaceCard style={{ width: "min(960px, 100%)", maxHeight: "90vh", overflow: "auto" }}>
+    {dialog ? <div className="settings-dialog-backdrop">
+      <SurfaceCard className="settings-dialog">
         <div className="surface-header">
           <div><small>{crud.entityLabel}</small><h3>{dialogTitle}</h3></div>
           <Button onClick={() => setDialog(null)} disabled={submitting}>Close</Button>
         </div>
-        {message ? <p className="message">{message}</p> : null}
+        {message ? <p className="settings-inline-error" role="alert">{message}</p> : null}
         {dialog.mode === "delete" ? <div>
-          <p>Delete <strong>{rowTitle(dialog.row, crud)}</strong>?</p>
-          <div className="plugin-actions">
+          <p>Remove <strong>{rowTitle(dialog.row, crud)}</strong>? This action cannot be undone.</p>
+          <div className="plugin-actions settings-dialog-actions">
             <Button onClick={() => setDialog(null)} disabled={submitting}>Cancel</Button>
-            <Button className="primary" onClick={() => void confirmDelete()} disabled={submitting}>Delete</Button>
+            <Button className="danger" onClick={() => void confirmDelete()} disabled={submitting}>Remove</Button>
           </div>
-        </div> : <form className="mail-form" onSubmit={submit}>
+        </div> : <form className="mail-form" onSubmit={submit} key={`${dialog.mode}:${dialog.mode === "edit" ? String(dialog.row[crud.rowIdField]) : "new"}`}>
           {fields.map((field) => {
             const defaultValue = fieldDefaultValue(dialog.row, field);
             if (field.type === "boolean") {
@@ -153,11 +161,14 @@ export function CrudRenderer({ title, status, busy, rows, columns, fields, crud,
             if (field.type === "select") {
               return <label key={field.id}>{field.label}<select name={field.id} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
             }
+            if (field.type === "textarea") {
+              return <label key={field.id}>{field.label}<textarea name={field.id} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required} /></label>;
+            }
             return <label key={field.id}>{field.label}<input name={field.id} type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "password" ? "password" : field.type === "date" ? "date" : field.type === "color" ? "color" : "text"} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required} autoComplete={field.autocomplete} /></label>;
           })}
-          <div className="plugin-actions">
+          <div className="plugin-actions settings-dialog-actions">
             <Button onClick={() => setDialog(null)} disabled={submitting} type="button">Cancel</Button>
-            <Button className="primary" type="submit" disabled={submitting}>{dialog.mode === "create" ? "Create" : "Save"}</Button>
+            <Button className="primary" type="submit" disabled={submitting}>{submitting ? "Saving..." : dialog.mode === "create" ? "Add" : "Save changes"}</Button>
           </div>
         </form>}
       </SurfaceCard>
