@@ -45,8 +45,11 @@ export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: S
 
   useEffect(() => {
     if (!selectedTabId) return;
-    const nextUrl = `/settings?tab=${encodeURIComponent(selectedTabId)}`;
-    if (window.location.pathname !== "/settings" || window.location.search !== `?tab=${encodeURIComponent(selectedTabId)}`) window.history.replaceState(null, "", nextUrl);
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", selectedTabId);
+    const nextSearch = `?${params.toString()}`;
+    const nextUrl = `/settings${nextSearch}`;
+    if (window.location.pathname !== "/settings" || window.location.search !== nextSearch) window.history.replaceState(null, "", nextUrl);
     let alive = true;
     void loadSettingsTab(selectedTabId).then((loaded) => {
       if (!alive) return;
