@@ -1,5 +1,7 @@
 import { App } from "./App";
+import { GeneratedWorkspaceApp } from "./GeneratedWorkspaceApp";
 
 export function RootEntry() {
-  return <App />;
+  const path = window.location.pathname;
+  return path === "/setup/owner" || path.startsWith("/public/") ? <App /> : <GeneratedWorkspaceApp />;
 }
