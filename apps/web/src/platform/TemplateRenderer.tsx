@@ -166,19 +166,25 @@ export function TemplateRenderer(props: TemplateRendererProps) {
     return () => { alive = false; };
   }, [contributionId, dataSourceKey, props.data, props.page, props.runtime?.public, props.runtime?.workspaceId, routeParamsKey, refreshNonce]);
 
-  const dispatchAction = async (action: ActionDefinition, input?: unknown) => {
+  const dispatchAction = async (action: ActionDefinition, input?: unknown): Promise<boolean> => {
     if (props.callbacks?.onAction && input === undefined) {
       await props.callbacks.onAction(action);
-      return;
+      return true;
     }
-    setStatus("Running action...");
+    setStatus("Saving changes...");
     try {
       const result = props.runtime?.public
         ? await executePublicRuntimeAction(contributionId, action.id, input, routeParams, props.runtime.workspaceId)
         : await executeRuntimeAction(contributionId, action.id, input, routeParams);
-      setStatus(result.status === "ok" ? "Action completed" : result.approvalId ? `Approval required: ${result.approvalId.slice(0, 8)}` : result.error ?? result.status);
+      if (result.status === "ok") {
+        setStatus("Changes saved successfully.");
+        return true;
+      }
+      setStatus(result.approvalId ? `Approval required: ${result.approvalId.slice(0, 8)}` : result.error ?? result.status);
+      return false;
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Runtime action unavailable");
+      setStatus(error instanceof Error ? error.message : "Changes could not be saved.");
+      return false;
     }
   };
 
@@ -202,16 +208,19 @@ export function TemplateRenderer(props: TemplateRendererProps) {
         crud={crud}
         onRefresh={() => setRefreshNonce((value) => value + 1)}
         onCreate={async (values) => {
-          await dispatchAction(crudAction(crud.createActionId), values);
-          setRefreshNonce((value) => value + 1);
+          const succeeded = await dispatchAction(crudAction(crud.createActionId), values);
+          if (succeeded) setRefreshNonce((value) => value + 1);
+          return succeeded;
         }}
         onUpdate={async (row, values) => {
-          await dispatchAction(crudAction(crud.updateActionId), { ...values, [crud.rowIdField]: row[crud.rowIdField] });
-          setRefreshNonce((value) => value + 1);
+          const succeeded = await dispatchAction(crudAction(crud.updateActionId), { ...values, [crud.rowIdField]: row[crud.rowIdField] });
+          if (succeeded) setRefreshNonce((value) => value + 1);
+          return succeeded;
         }}
         onDelete={async (row) => {
-          await dispatchAction(crudAction(crud.deleteActionId), { [crud.rowIdField]: row[crud.rowIdField] });
-          setRefreshNonce((value) => value + 1);
+          const succeeded = await dispatchAction(crudAction(crud.deleteActionId), { [crud.rowIdField]: row[crud.rowIdField] });
+          if (succeeded) setRefreshNonce((value) => value + 1);
+          return succeeded;
         }}
       />
     </div>;
@@ -221,11 +230,11 @@ export function TemplateRenderer(props: TemplateRendererProps) {
     {status ? <p className="message">{status}</p> : null}
     <Template {...props} data={runtimeData} callbacks={{
       ...props.callbacks,
-      onAction: (action) => dispatchAction(action),
+      onAction: (action) => { void dispatchAction(action); },
       onSubmit: (page, values) => {
         if (props.callbacks?.onSubmit) return props.callbacks.onSubmit(page, values);
         const action = page.actions.find((item) => item.intent === "submit") ?? page.actions[0];
-        return action ? dispatchAction(action, values) : undefined;
+        if (action) void dispatchAction(action, values);
       },
     }} />
   </div>;
