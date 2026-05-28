@@ -992,7 +992,7 @@ export class CoreRepository {
         }),
       ];
     });
-    return [...surfaces, ...settingsTabs, ...settingsPanels, ...settingsSurfaceTabs];
+    return [...surfaces, ...settingsTabs, ...settingsPanels, ...settingsSurfaceTabs] as PluginUiContribution[];
   }
 
   private platformSettingsTabs(): SettingsTabResolution[] {
@@ -2018,19 +2018,20 @@ export class CoreRepository {
       .filter((row) => this.canSee(row.required_permission, permissions))
       .map((row) => {
         const icon = row.icon_override ?? row.icon;
-        return {
+        const item: RuntimeNavigationItem = {
           id: row.contribution_id,
           pluginId: row.plugin_id,
           path: normalizeShellPath(row.path_alias ?? row.default_path ?? "/"),
           label: row.label_override ?? row.label ?? row.contribution_id,
-          ...(icon ? { icon } : {}),
           section: row.navigation_section_override ?? row.navigation_section ?? "user",
           displayOrder: row.order_index || row.display_order,
           rendererMode: row.renderer_mode,
-          ...(row.component_id ? { componentId: row.component_id } : {}),
           source: row.source,
-          ...(row.required_permission ? { requiredPermission: row.required_permission } : {}),
         };
+        if (icon) item.icon = icon;
+        if (row.component_id) item.componentId = row.component_id;
+        if (row.required_permission) item.requiredPermission = row.required_permission;
+        return item;
       });
   }
 
@@ -2047,24 +2048,25 @@ export class CoreRepository {
       .all<{ plugin_id: string; contribution_id: string; contribution_type: string; source: UiSource; default_path: string | null; label: string | null; icon: string | null; navigation_section: NavigationSection | null; display_order: number; renderer_mode: UiRendererMode; component_id: string | null; required_permission: string | null; configurable_json: string; enabled: number; visible_in_navigation: number; label_override: string | null; icon_override: string | null; navigation_section_override: NavigationSection | null; path_alias: string | null; order_index: number }>();
     return rows.results.map((row) => {
       const icon = row.icon_override ?? row.icon;
-      return {
+      const item: InterfaceContributionRow = {
         id: row.contribution_id,
         pluginId: row.plugin_id,
         path: row.default_path ? normalizeShellPath(row.path_alias ?? row.default_path) : "",
         label: row.label_override ?? row.label ?? row.contribution_id,
-        ...(icon ? { icon } : {}),
         section: row.navigation_section_override ?? row.navigation_section ?? "user",
         displayOrder: row.order_index,
         rendererMode: row.renderer_mode,
-        ...(row.component_id ? { componentId: row.component_id } : {}),
         source: row.source,
-        ...(row.required_permission ? { requiredPermission: row.required_permission } : {}),
         kind: row.contribution_type,
         active: row.enabled === 1,
         visibleInNavigation: row.visible_in_navigation === 1,
         status: row.enabled === 1 ? "active" : "inactive",
         configurable: safeJson(row.configurable_json, defaultConfigurable),
       };
+      if (icon) item.icon = icon;
+      if (row.component_id) item.componentId = row.component_id;
+      if (row.required_permission) item.requiredPermission = row.required_permission;
+      return item;
     });
   }
 
@@ -2085,19 +2087,19 @@ export class CoreRepository {
         pluginId: row.plugin_id,
         path: row.default_path ? normalizeShellPath(row.path_alias ?? row.default_path) : "",
         label: row.label_override ?? row.label ?? row.contribution_id,
-        ...(icon ? { icon } : {}),
         section: row.navigation_section_override ?? row.navigation_section ?? "user",
         displayOrder: row.order_index,
         rendererMode: row.renderer_mode,
-        ...(row.component_id ? { componentId: row.component_id } : {}),
         source: row.source,
-        ...(row.required_permission ? { requiredPermission: row.required_permission } : {}),
         kind: row.contribution_type,
         active: row.enabled === 1,
         visibleInNavigation: row.visible_in_navigation === 1,
         status: row.enabled === 1 ? "active" : "inactive",
         configurable: safeJson(row.configurable_json, defaultConfigurable),
     };
+    if (icon) contribution.icon = icon;
+    if (row.component_id) contribution.componentId = row.component_id;
+    if (row.required_permission) contribution.requiredPermission = row.required_permission;
     return {
       contribution,
       page: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)),

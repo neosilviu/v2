@@ -11,6 +11,7 @@ import type { ShellState } from "@v2/ui-runtime";
 export type { CoreSession, StartupBootstrap, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary, InterfaceContribution, RuntimeNavigationItem } from "./platform-contracts";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
+type ResponseLike = Pick<Response, "ok" | "status" | "json" | "text">;
 export const coreApi = hc<CoreApi>(coreUrl, { init: { credentials: "include" } });
 
 let activeWorkspaceId: string | null = null;
@@ -64,7 +65,7 @@ export function invalidateApiCaches() {
   runtimeUiBootstrap = null;
 }
 
-async function parseCoreError(response: Response) {
+async function parseCoreError(response: ResponseLike) {
   const text = await response.text().catch(() => "");
   if (!text) return new CoreRequestError(response.status, undefined, `Core request failed: ${response.status}`);
   try {
@@ -85,7 +86,7 @@ function stripJsonContentType(headers: Headers) {
   headers.delete("content-type");
 }
 
-async function coreResponse<T>(request: Promise<Response>, schema: { parse(input: unknown): T }): Promise<T> {
+async function coreResponse<T>(request: Promise<ResponseLike>, schema: { parse(input: unknown): T }): Promise<T> {
   const response = await request;
   if (response.status === 401) throw new CoreAuthRequiredError();
   if (!response.ok) throw await parseCoreError(response);
