@@ -118,3 +118,5 @@ export function platformSettingsTabs() {
   const audit = ui.panel({ id: "platform.settings.audit", label: "Activity log", icon: "history", order: 70, permission: "audit.read", sections: [ui.table({ id: "audit.events", title: "Audit log", description: "Read-only workspace activity stream.", dataSourceId: "platform.settings.audit.events", columns: [column({ id: "actorId", label: "Actor", field: "actorId" }), column({ id: "action", label: "Action", field: "action" }), column({ id: "payload", label: "Target / result", field: "payload" }), column({ id: "createdAt", label: "Time", field: "createdAt", type: "date" })] })] });
   return [general, access, marketplace, domains, mail, appearance, audit];
 }
+
+export default platformSettingsTabs;
