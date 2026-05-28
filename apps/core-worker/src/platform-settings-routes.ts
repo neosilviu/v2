@@ -15,14 +15,15 @@ async function requirePermission(c: { env: CoreEnv; get: (name: "user") => User;
 }
 
 /**
- * Compact platform settings are source-controlled UI declarations. They do not
- * need the legacy contribution seed stored in D1. Plugin settings remain stored
- * and resolved through CoreRepository, so the runtime remains extensible.
+ * Platform settings are source-controlled compact UI declarations. This route
+ * deliberately uses /settings/schema so legacy seeded routes cannot intercept
+ * or silently replace the active schema consumed by the web application.
+ * Plugin tabs continue to be merged from runtime contributions.
  */
 export function createPlatformSettingsRoutes() {
   const routes = new Hono<{ Bindings: CoreEnv; Variables: Variables }>();
 
-  routes.get("/workspaces/:workspaceId/settings/tabs", async (c) => {
+  routes.get("/workspaces/:workspaceId/settings/schema/tabs", async (c) => {
     const workspaceId = c.req.param("workspaceId");
     const denied = await requirePermission(c, workspaceId, "workspace.settings.read");
     if (denied) return denied;
@@ -32,7 +33,7 @@ export function createPlatformSettingsRoutes() {
     return c.json({ tabs: [...compact, ...pluginTabs].sort((left, right) => left.displayOrder - right.displayOrder) });
   });
 
-  routes.get("/workspaces/:workspaceId/settings/tabs/:tabId", async (c) => {
+  routes.get("/workspaces/:workspaceId/settings/schema/tabs/:tabId", async (c) => {
     const workspaceId = c.req.param("workspaceId");
     const denied = await requirePermission(c, workspaceId, "workspace.settings.read");
     if (denied) return denied;
