@@ -275,6 +275,9 @@ importers:
         specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 'catalog:'
+        version: 4.20260525.1
       '@types/react':
         specifier: 'catalog:'
         version: 19.2.15
