@@ -11,6 +11,8 @@
     "dev": "node scripts/dev.mjs",
     "dev:stop": "node scripts/stop-dev.mjs",
     "dev:setup": "node scripts/bootstrap-workspace-dev.mjs",
+    "clean": "node scripts/clean.mjs clean",
+    "initialclean": "node scripts/clean.mjs initialclean",
     "typecheck": "turbo run typecheck",
     "build:analyze": "node scripts/analyze-build.mjs",
     "guard:architecture": "pnpm build:analyze -- --strict && pnpm test:generated -- --check-migrations",
