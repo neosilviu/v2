@@ -89,6 +89,8 @@ async function measure(name, base, path, iterations = 40) {
 async function main() {
   await prepareSession();
   const endpoints = [
+    ["app startup bootstrap", coreUrl, `/bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`],
+    ["session helper", coreUrl, "/session"],
     ["workspace bootstrap", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/bootstrap`],
     ["security bootstrap", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/auth/security-bootstrap`],
     ["settings plugin navigation", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/tabs`],

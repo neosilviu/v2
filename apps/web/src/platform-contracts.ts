@@ -113,9 +113,10 @@ export const shellBootstrapSchema = z.object({
   }),
 });
 
-export const entrySessionSchema = coreSessionSchema.extend({
-  bootstrap: shellBootstrapSchema.optional(),
-});
+export const startupBootstrapSchema = z.discriminatedUnion("authenticated", [
+  z.object({ authenticated: z.literal(false) }),
+  z.object({ authenticated: z.literal(true), bootstrap: shellBootstrapSchema }),
+]);
 
 export const runtimeResultEnvelopeSchema = uiRuntimeResultEnvelopeSchema;
 export const workspacePublicationListSchema = z.object({ publications: z.array(workspacePublicationSchema) });
@@ -124,7 +125,7 @@ export const auditEventListSchema = z.object({ events: z.array(auditEventSchema)
 export const approvalRequestListSchema = z.object({ approvals: z.array(approvalRequestSchema) });
 
 export type CoreSession = z.output<typeof coreSessionSchema>;
-export type EntrySession = z.output<typeof entrySessionSchema>;
+export type StartupBootstrap = z.output<typeof startupBootstrapSchema>;
 export type WorkspaceSummary = z.output<typeof workspaceSummarySchema>;
 export type RbacMe = z.output<typeof rbacMeSchema>;
 export type RuntimeSettingsTab = z.output<typeof runtimeSettingsTabSchema>;

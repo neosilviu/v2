@@ -50,12 +50,19 @@ test.describe("platform shell", () => {
 
     const anonymousRequests: string[] = [];
     page.on("request", (request) => {
-      if (request.url().startsWith(coreUrl) || request.url().startsWith(authUrl)) anonymousRequests.push(`${request.method()} ${new URL(request.url()).pathname}`);
+      if (request.url().startsWith(coreUrl) || request.url().startsWith(authUrl)) {
+        const url = new URL(request.url());
+        anonymousRequests.push(`${request.method()} ${url.pathname}${url.search}`);
+      }
     });
+    const anonymousBootstrapResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/bootstrap");
     await page.goto("/");
     await expect(page.getByRole("heading", { name: /sign in/i })).toBeVisible();
+    const anonymousBootstrap = await anonymousBootstrapResponse;
+    expect(await anonymousBootstrap.json()).toEqual({ authenticated: false });
+    expect(anonymousRequests.filter((item) => item.startsWith("GET /bootstrap")).length).toBeLessThanOrEqual(1);
     expect(anonymousRequests.some((item) => item.includes("/workspaces/current/bootstrap"))).toBe(false);
-    expect(anonymousRequests.some((item) => item.includes("/bootstrap"))).toBe(false);
+    expect(anonymousRequests.some((item) => item.includes("/session"))).toBe(false);
     expect(failures).toEqual([]);
 
     await page.goto("/login");
@@ -79,6 +86,7 @@ test.describe("platform shell", () => {
     await page.goto(`/?workspace=${encodeURIComponent(workspaceId)}`);
     await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
     expect(dashboardRequests.filter((item) => item.startsWith("OPTIONS "))).toEqual([]);
+    expect(dashboardRequests.some((item) => item.includes("/session"))).toBe(false);
     expect(dashboardRequests.filter((item) => item.includes("/bootstrap")).length).toBeLessThanOrEqual(1);
 
     const securityRequests: string[] = [];

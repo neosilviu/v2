@@ -1,0 +1,126 @@
+--- a/apps/web/src/api.ts
++++ b/apps/web/src/api.ts
+@@ -51,6 +51,24 @@
+ 
+ let activeWorkspaceId: string | null = null;
+ let shellBootstrap: Promise<ShellBootstrap> | null = null;
++const authenticatedSessionHintKey = "v2.authenticated-session";
++
++export function hasAuthenticatedSessionHint() {
++  try {
++    return window.sessionStorage.getItem(authenticatedSessionHintKey) === "1";
++  } catch {
++    return false;
++  }
++}
++
++export function setAuthenticatedSessionHint(authenticated: boolean) {
++  try {
++    if (authenticated) window.sessionStorage.setItem(authenticatedSessionHintKey, "1");
++    else window.sessionStorage.removeItem(authenticatedSessionHintKey);
++  } catch {
++    // Storage may be unavailable in restrictive browser modes; session validation remains server-side.
++  }
++}
+ 
+ function workspaceFromLocation() {
+   const params = new URLSearchParams(window.location.search);
+@@ -160,7 +178,9 @@
+ }
+ 
+ export async function loadEntrySession(): Promise<EntrySession> {
+-  return coreResponse(coreApi.session.$get(), entrySessionSchema);
++  const session = await coreResponse(coreApi.session.$get(), entrySessionSchema);
++  setAuthenticatedSessionHint(session.authenticated);
++  return session;
+ }
+ 
+ export async function loadCoreSession(): Promise<CoreSession> {
+--- a/apps/web/src/RootEntry.tsx
++++ b/apps/web/src/RootEntry.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useState } from "react";
+ import { App } from "./App";
+-import { invalidateApiCaches, loadEntrySession, type EntrySession } from "./api";
++import { hasAuthenticatedSessionHint, invalidateApiCaches, loadEntrySession, type EntrySession } from "./api";
+ import { LoginPage } from "./LoginPage";
+ import { SurfaceCard, Badge } from "@v2/ui-kit";
+ 
+@@ -36,10 +36,11 @@
+ 
+ export function RootEntry() {
+   const publicRoute = window.location.pathname === "/login" || window.location.pathname === "/setup/owner" || window.location.pathname.startsWith("/public/");
+-  const [state, setState] = useState<GateState>(publicRoute ? "authenticated" : "checking");
++  const authenticatedHint = !publicRoute && hasAuthenticatedSessionHint();
++  const [state, setState] = useState<GateState>(publicRoute || authenticatedHint ? "authenticated" : "checking");
+ 
+   useEffect(() => {
+-    if (publicRoute) return;
++    if (publicRoute || hasAuthenticatedSessionHint()) return;
+     const invalidate = () => { invalidatePublicSessionProbe(); };
+     window.addEventListener("v2-auth-changed", invalidate);
+     let alive = true;
+--- a/apps/web/src/App.tsx
++++ b/apps/web/src/App.tsx
+@@ -4,7 +4,7 @@
+ import type { Notification } from "@v2/rpc-contracts";
+ import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
+ import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
+-import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentImpersonation, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RbacMe, type WorkspaceSummary } from "./api";
++import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentImpersonation, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, setAuthenticatedSessionHint, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RbacMe, type WorkspaceSummary } from "./api";
+ import { AuthRequestError, ownerSetupSignUp, signInEmail, signOutAuth, updateAuthProfile } from "./auth-api";
+ import { composeShellFromSurfaces, emptyShell } from "./shell";
+ import { ApprovalsPanel } from "./platform/ApprovalsPanel";
+@@ -107,13 +107,26 @@
+   </div>;
+ }
+ 
+-function SessionCheckPage({ unavailable = false }: { unavailable?: boolean }) {
+-  return <main className="login-page">
++function WorkspaceLoadingShell({ unavailable = false }: { unavailable?: boolean }) {
++  if (unavailable) return <main className="login-page">
+     <SurfaceCard className="login-panel">
+-      <div className="surface-header"><div><small>core access</small><h2>{unavailable ? "Authentication unavailable" : "Checking session"}</h2></div><Badge>protected</Badge></div>
+-      <p className="login-status">{unavailable ? "The protected workspace cannot be shown until Core confirms the current session." : "Validating access before loading the workspace shell."}</p>
++      <div className="surface-header"><div><small>workspace</small><h2>Workspace unavailable</h2></div><Badge>offline</Badge></div>
++      <p className="login-status">The workspace could not be loaded. Check the Core service and retry.</p>
+     </SurfaceCard>
+   </main>;
++  return <div className="app-shell" aria-busy="true" aria-label="Loading workspace">
++    <header className="topbar">
++      <span className="brand"><strong>v2</strong><Badge>runtime</Badge></span>
++      <span className="search">Loading workspace…</span>
++    </header>
++    <aside className="sidebar">
++      <div className="sidebar-label">WORKSPACE</div>
++      <p className="message">Loading…</p>
++    </aside>
++    <main className="workspace">
++      <div className="workspace-header"><div><h1>Workspace</h1><p>Loading your workspace…</p></div></div>
++    </main>
++  </div>;
+ }
+ 
+ function ownerSetupErrorMessage(error: unknown, fallback: string) {
+@@ -394,9 +407,9 @@
+     }
+   };
+ 
+-  if (authStatus === "checking") return <SessionCheckPage />;
++  if (authStatus === "checking") return <WorkspaceLoadingShell />;
+   if (authStatus === "anonymous") return <LoginPage redirectTo={protectedRedirectTarget()} />;
+-  if (authStatus === "unavailable") return <SessionCheckPage unavailable />;
++  if (authStatus === "unavailable") return <WorkspaceLoadingShell unavailable />;
+ 
+   return <>
+     {impersonation ? <div role="status" style={{ position: "fixed", inset: "0 0 auto 0", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem", padding: "0.65rem 1rem", background: "#7c2d12", color: "#fff" }}>
+--- a/tests/e2e/platform-shell.spec.ts
++++ b/tests/e2e/platform-shell.spec.ts
+@@ -83,6 +83,7 @@
+     await page.goto(`/?workspace=${encodeURIComponent(workspaceId)}`);
+     await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+     expect(dashboardRequests.filter((item) => item.startsWith("OPTIONS "))).toEqual([]);
++    expect(dashboardRequests.some((item) => item.includes("/session"))).toBe(false);
+     expect(dashboardRequests.filter((item) => item.includes("/bootstrap")).length).toBeLessThanOrEqual(1);
+ 
+     const securityRequests: string[] = [];

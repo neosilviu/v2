@@ -4,7 +4,7 @@ import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentImpersonation, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RbacMe, type WorkspaceSummary } from "./api";
+import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentImpersonation, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadStartupBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RbacMe, type WorkspaceSummary } from "./api";
 import { AuthRequestError, ownerSetupSignUp, signInEmail, signOutAuth, updateAuthProfile } from "./auth-api";
 import { composeShellFromSurfaces, emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
@@ -107,13 +107,26 @@ function PluginPage({ plugin, surfaces }: { plugin: PluginManifest; surfaces: Su
   </div>;
 }
 
-function SessionCheckPage({ unavailable = false }: { unavailable?: boolean }) {
-  return <main className="login-page">
+function WorkspaceLoadingShell({ unavailable = false }: { unavailable?: boolean }) {
+  if (unavailable) return <main className="login-page">
     <SurfaceCard className="login-panel">
-      <div className="surface-header"><div><small>core access</small><h2>{unavailable ? "Authentication unavailable" : "Checking session"}</h2></div><Badge>protected</Badge></div>
-      <p className="login-status">{unavailable ? "The protected workspace cannot be shown until Core confirms the current session." : "Validating access before loading the workspace shell."}</p>
+      <div className="surface-header"><div><small>workspace</small><h2>Workspace unavailable</h2></div><Badge>offline</Badge></div>
+      <p className="login-status">The workspace could not be loaded. Check the Core service and retry.</p>
     </SurfaceCard>
   </main>;
+  return <div className="app-shell" aria-busy="true" aria-label="Loading workspace">
+    <header className="topbar">
+      <span className="brand"><strong>v2</strong><Badge>runtime</Badge></span>
+      <span className="search">Loading workspace…</span>
+    </header>
+    <aside className="sidebar">
+      <div className="sidebar-label">WORKSPACE</div>
+      <p className="message">Loading…</p>
+    </aside>
+    <main className="workspace">
+      <div className="workspace-header"><div><h1>Workspace</h1><p>Loading your workspace…</p></div></div>
+    </main>
+  </div>;
 }
 
 function ownerSetupErrorMessage(error: unknown, fallback: string) {
@@ -245,7 +258,12 @@ export function App() {
   const dismiss = (id: string) => setNotifications((current) => current.filter((item) => item.id !== id));
 
   useEffect(() => {
-    void loadShellBootstrap().then((bootstrap) => {
+    void loadStartupBootstrap().then((bootstrap) => {
+      if (!bootstrap) {
+        setSession(null);
+        setAuthStatus("anonymous");
+        return;
+      }
       const installed = bootstrap.plugins;
       const activeIds = bootstrap.active;
       const runtimeTools = bootstrap.tools;
@@ -394,9 +412,9 @@ export function App() {
     }
   };
 
-  if (authStatus === "checking") return <SessionCheckPage />;
+  if (authStatus === "checking") return <WorkspaceLoadingShell />;
   if (authStatus === "anonymous") return <LoginPage redirectTo={protectedRedirectTarget()} />;
-  if (authStatus === "unavailable") return <SessionCheckPage unavailable />;
+  if (authStatus === "unavailable") return <WorkspaceLoadingShell unavailable />;
 
   return <>
     {impersonation ? <div role="status" style={{ position: "fixed", inset: "0 0 auto 0", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem", padding: "0.65rem 1rem", background: "#7c2d12", color: "#fff" }}>

@@ -4,9 +4,9 @@ import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc-contracts";
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
-import { approvalRequestListSchema, coreSessionSchema, entrySessionSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, type CoreSession, type EntrySession, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary } from "./platform-contracts";
+import { approvalRequestListSchema, coreSessionSchema, startupBootstrapSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, type CoreSession, type StartupBootstrap, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary } from "./platform-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-export type { CoreSession, EntrySession, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary } from "./platform-contracts";
+export type { CoreSession, StartupBootstrap, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary } from "./platform-contracts";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 type HonoRequestArgs = {
@@ -23,6 +23,7 @@ type HonoRoute = {
   $delete(args?: HonoRequestArgs): Promise<Response>;
 };
 type CoreApiClient = {
+  bootstrap: HonoRoute;
   session: {
     $get(args?: HonoRequestArgs): Promise<Response>;
     impersonation: { $get(args?: HonoRequestArgs): Promise<Response>; stop: { $post(args?: HonoRequestArgs): Promise<Response> } };
@@ -51,6 +52,7 @@ export const coreApi = hc(coreUrl, { init: { credentials: "include" } }) as unkn
 
 let activeWorkspaceId: string | null = null;
 let shellBootstrap: Promise<ShellBootstrap> | null = null;
+let startupBootstrap: Promise<ShellBootstrap | null> | null = null;
 
 function workspaceFromLocation() {
   const params = new URLSearchParams(window.location.search);
@@ -90,6 +92,7 @@ export function isCoreAuthRequiredError(error: unknown): error is CoreAuthRequir
 
 export function invalidateApiCaches() {
   shellBootstrap = null;
+  startupBootstrap = null;
 }
 
 async function parseCoreError(response: Response) {
@@ -159,13 +162,23 @@ export function loadShellBootstrap(workspaceId = workspaceFromLocation()): Promi
   return shellBootstrap;
 }
 
-export async function loadEntrySession(): Promise<EntrySession> {
-  const entry = await coreResponse(coreApi.session.$get({ query: { includeBootstrap: "true" } }), entrySessionSchema);
-  if (entry.bootstrap) {
-    shellBootstrap = Promise.resolve(entry.bootstrap);
-    setCurrentWorkspaceId(entry.bootstrap.currentWorkspace.id);
+export function loadStartupBootstrap(): Promise<ShellBootstrap | null> {
+  if (!startupBootstrap) {
+    const workspaceId = workspaceFromLocation();
+    const request = workspaceId
+      ? coreApi.bootstrap.$get({ query: { workspaceId } })
+      : coreApi.bootstrap.$get();
+    startupBootstrap = coreResponse(request, startupBootstrapSchema).then((entry) => {
+      if (!entry.authenticated) return null;
+      shellBootstrap = Promise.resolve(entry.bootstrap);
+      setCurrentWorkspaceId(entry.bootstrap.currentWorkspace.id);
+      return entry.bootstrap;
+    }).catch((error) => {
+      startupBootstrap = null;
+      throw error;
+    });
   }
-  return entry;
+  return startupBootstrap;
 }
 
 export async function loadCoreSession(): Promise<CoreSession> {

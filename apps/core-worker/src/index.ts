@@ -21,7 +21,8 @@ const defaultWorkspaceId = "default";
 const readResponseCache = new Map<string, { expiresAt: number; status: number; headers: [string, string][]; body: string }>();
 const READ_RESPONSE_CACHE_TTL_MS = 5_000;
 function isCacheableRead(path: string) {
-  return /\/workspaces\/[^/]+\/bootstrap$/.test(path)
+  return path === "/bootstrap"
+    || /\/workspaces\/[^/]+\/bootstrap$/.test(path)
     || /\/workspaces\/current\/bootstrap$/.test(path)
     || /\/workspaces\/[^/]+\/auth\/security-bootstrap$/.test(path)
     || /\/workspaces\/[^/]+\/settings\/tabs$/.test(path)
@@ -663,13 +664,9 @@ async function dispatchPluginOperation(c: CoreContext, request: { workspaceId: s
   return c.json(pluginOperationEnvelope("ok", runtimeResult.body));
 }
 coreApiRoutes = coreApiRoutes.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
-coreApiRoutes = coreApiRoutes.get("/session", async (c) => {
+coreApiRoutes = coreApiRoutes.get("/session", (c) => {
   const user = c.get("user");
-  const session = { authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null };
-  if (!user || c.req.query("includeBootstrap") !== "true") return c.json(session);
-  const bootstrapResponse = await workspaceBootstrap(c);
-  if (!bootstrapResponse.ok) return c.json(session);
-  return c.json({ ...session, bootstrap: await bootstrapResponse.json() });
+  return c.json({ authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
 });
 coreApiRoutes = coreApiRoutes.get("/session/impersonation", async (c) => {
   const denied = requireRead(c);
@@ -741,6 +738,13 @@ async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string)
     },
   });
 }
+coreApiRoutes = coreApiRoutes.get("/bootstrap", async (c) => {
+  if (!c.get("user")) return c.json({ authenticated: false as const });
+  const requestedWorkspaceId = c.req.query("workspaceId") || undefined;
+  const response = await workspaceBootstrap(c, requestedWorkspaceId);
+  if (!response.ok) return response;
+  return c.json({ authenticated: true as const, bootstrap: await response.json() });
+});
 coreApiRoutes = coreApiRoutes.get("/workspaces/current/bootstrap", (c) => workspaceBootstrap(c));
 coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/bootstrap", (c) => workspaceBootstrap(c, c.req.param("workspaceId")));
 coreApiRoutes = coreApiRoutes.get("/runtime/ui/bootstrap", (c) => workspaceBootstrap(c, c.req.query("workspaceId") === "current" ? undefined : c.req.query("workspaceId")));

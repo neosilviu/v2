@@ -1,0 +1,77 @@
+--- a/apps/core-worker/src/index.ts
++++ b/apps/core-worker/src/index.ts
+@@ -663,13 +663,9 @@
+   return c.json(pluginOperationEnvelope("ok", runtimeResult.body));
+ }
+ coreApiRoutes = coreApiRoutes.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
+-coreApiRoutes = coreApiRoutes.get("/session", async (c) => {
++coreApiRoutes = coreApiRoutes.get("/session", (c) => {
+   const user = c.get("user");
+-  const session = { authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null };
+-  if (!user || c.req.query("includeBootstrap") !== "true") return c.json(session);
+-  const bootstrapResponse = await workspaceBootstrap(c);
+-  if (!bootstrapResponse.ok) return c.json(session);
+-  return c.json({ ...session, bootstrap: await bootstrapResponse.json() });
++  return c.json({ authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null });
+ });
+ coreApiRoutes = coreApiRoutes.get("/session/impersonation", async (c) => {
+   const denied = requireRead(c);
+--- a/apps/web/src/api.ts
++++ b/apps/web/src/api.ts
+@@ -160,12 +160,7 @@
+ }
+ 
+ export async function loadEntrySession(): Promise<EntrySession> {
+-  const entry = await coreResponse(coreApi.session.$get({ query: { includeBootstrap: "true" } }), entrySessionSchema);
+-  if (entry.bootstrap) {
+-    shellBootstrap = Promise.resolve(entry.bootstrap);
+-    setCurrentWorkspaceId(entry.bootstrap.currentWorkspace.id);
+-  }
+-  return entry;
++  return coreResponse(coreApi.session.$get(), entrySessionSchema);
+ }
+ 
+ export async function loadCoreSession(): Promise<CoreSession> {
+--- a/apps/web/src/platform-contracts.ts
++++ b/apps/web/src/platform-contracts.ts
+@@ -113,9 +113,7 @@
+   }),
+ });
+ 
+-export const entrySessionSchema = coreSessionSchema.extend({
+-  bootstrap: shellBootstrapSchema.optional(),
+-});
++export const entrySessionSchema = coreSessionSchema;
+ 
+ export const runtimeResultEnvelopeSchema = uiRuntimeResultEnvelopeSchema;
+ export const workspacePublicationListSchema = z.object({ publications: z.array(workspacePublicationSchema) });
+--- a/scripts/perf-local.mjs
++++ b/scripts/perf-local.mjs
+@@ -89,6 +89,7 @@
+ async function main() {
+   await prepareSession();
+   const endpoints = [
++    ["entry session gate", coreUrl, "/session"],
+     ["workspace bootstrap", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/bootstrap`],
+     ["security bootstrap", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/auth/security-bootstrap`],
+     ["settings plugin navigation", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/tabs`],
+--- a/tests/e2e/platform-shell.spec.ts
++++ b/tests/e2e/platform-shell.spec.ts
+@@ -50,12 +50,16 @@
+ 
+     const anonymousRequests: string[] = [];
+     page.on("request", (request) => {
+-      if (request.url().startsWith(coreUrl) || request.url().startsWith(authUrl)) anonymousRequests.push(`${request.method()} ${new URL(request.url()).pathname}`);
++      if (request.url().startsWith(coreUrl) || request.url().startsWith(authUrl)) {
++        const url = new URL(request.url());
++        anonymousRequests.push(`${request.method()} ${url.pathname}${url.search}`);
++      }
+     });
+     await page.goto("/");
+     await expect(page.getByRole("heading", { name: /sign in/i })).toBeVisible();
+     expect(anonymousRequests.some((item) => item.includes("/workspaces/current/bootstrap"))).toBe(false);
+     expect(anonymousRequests.some((item) => item.includes("/bootstrap"))).toBe(false);
++    expect(anonymousRequests.some((item) => item.includes("includeBootstrap=true"))).toBe(false);
+     expect(failures).toEqual([]);
+ 
+     await page.goto("/login");
