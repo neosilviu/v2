@@ -243,9 +243,10 @@ authApiRoutes = authApiRoutes.post("/internal/auth/impersonation/stop", async (c
   return c.json({ impersonation: ended.impersonation, restored: Boolean(ended.actorToken), reauthenticationRequired: !ended.actorToken });
 });
 authApiRoutes = authApiRoutes.post("/api/auth/sign-up/email", async (c) => {
-  const parsed = await resolveAuthConfig(c.env);
+  const workspaceId = c.req.query("workspaceId");
+  const parsed = await resolveAuthConfig(c.env, workspaceId ?? undefined);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
-  const policy = await new AuthRuntimeRepository(parsed.config.db).publicPolicy(null);
+  const policy = await new AuthRuntimeRepository(parsed.config.db).publicPolicy(workspaceId ?? parsed.config.workspaceId);
   if (policy.registrationMode !== "open") return c.json(errorResponse(failure("not_authorized", "Password registration is not open.")), 403);
   return createAuth(parsed.config).handler(new Request(new URL("/api/auth/sign-up/email", parsed.config.baseURL).toString(), {
     method: "POST",
