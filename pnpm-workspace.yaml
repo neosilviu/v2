@@ -24,3 +24,5 @@ catalog:
 
 onlyBuiltDependencies:
   - esbuild
+  - sharp
+  - workerd

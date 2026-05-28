@@ -4,9 +4,9 @@ import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc-contracts";
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
-import { approvalRequestListSchema, coreSessionSchema, startupBootstrapSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, type CoreSession, type StartupBootstrap, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary } from "./platform-contracts";
+import { approvalRequestListSchema, coreSessionSchema, startupBootstrapSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, interfaceContributionSchema, type CoreSession, type StartupBootstrap, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary, type InterfaceContribution } from "./platform-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-export type { CoreSession, StartupBootstrap, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary } from "./platform-contracts";
+export type { CoreSession, StartupBootstrap, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary, InterfaceContribution, RuntimeNavigationItem } from "./platform-contracts";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 type HonoRequestArgs = {
@@ -33,6 +33,12 @@ type CoreApiClient = {
     ":workspaceId": {
       bootstrap: HonoRoute;
       rbac: { me: HonoRoute };
+      interface: {
+        navigation: HonoRoute;
+        layout: HonoRoute;
+        pages: HonoRoute & { ":contributionId": HonoRoute };
+        contributions: HonoRoute & { ":contributionId": HonoRoute };
+      };
       settings: { tabs: { $get(args?: HonoRequestArgs): Promise<Response>; ":tabId": HonoRoute }; runtime: { data: HonoRoute; actions: HonoRoute } };
       "approval-requests": HonoRoute;
       "tool-approvals": HonoRoute;
@@ -125,11 +131,7 @@ async function coreResponse<T>(request: Promise<Response>, schema: { parse(input
 }
 
 async function resolvePluginOperation(operationId: string): Promise<{ pluginId: string; operation: PluginOperation } | null> {
-  const bootstrap = await loadShellBootstrap();
-  for (const plugin of bootstrap.plugins) {
-    const operation = plugin.api.operations.find((item) => item.id === operationId);
-    if (operation) return { pluginId: plugin.id, operation };
-  }
+  void operationId;
   return null;
 }
 
@@ -253,12 +255,51 @@ export async function saveLayout(state: ShellState): Promise<void> {
   resetShellBootstrap();
 }
 
+export async function loadInterfaceContributions(): Promise<InterfaceContribution[]> {
+  return (await coreResponse(
+    coreApi.workspaces[":workspaceId"].interface.contributions.$get({ param: { workspaceId: currentWorkspaceId() } }),
+    z.object({ contributions: z.array(interfaceContributionSchema) }),
+  )).contributions;
+}
+
+export async function updateInterfaceContribution(contributionId: string, input: Record<string, unknown>): Promise<void> {
+  await coreResponse(
+    coreApi.workspaces[":workspaceId"].interface.contributions[":contributionId"].$put({ param: { workspaceId: currentWorkspaceId(), contributionId }, json: input }),
+    { parse: () => undefined },
+  );
+  invalidateApiCaches();
+}
+
+export async function createManualInterfacePage(input: Record<string, unknown>): Promise<{ contributionId: string; path: string }> {
+  const response = await coreResponse(
+    coreApi.workspaces[":workspaceId"].interface.pages.$post({ param: { workspaceId: currentWorkspaceId() }, json: input }),
+    z.object({ page: z.object({ contributionId: z.string(), path: z.string() }) }),
+  );
+  invalidateApiCaches();
+  return response.page;
+}
+
+export async function deleteManualInterfacePage(contributionId: string): Promise<void> {
+  await coreResponse(
+    coreApi.workspaces[":workspaceId"].interface.pages[":contributionId"].$delete({ param: { workspaceId: currentWorkspaceId(), contributionId } }),
+    { parse: () => undefined },
+  );
+  invalidateApiCaches();
+}
+
+export async function loadRuntimePage(contributionId: string): Promise<{ contribution: InterfaceContribution; page: DeclarativePageContribution }> {
+  return coreResponse(
+    coreApi.workspaces[":workspaceId"].interface.pages[":contributionId"].$get({ param: { workspaceId: currentWorkspaceId(), contributionId } }),
+    z.object({ contribution: interfaceContributionSchema, page: z.any() as z.ZodType<DeclarativePageContribution> }),
+  );
+}
+
 export async function loadActivePlugins(): Promise<string[]> {
-  return (await loadShellBootstrap()).active;
+  return [];
 }
 
 export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> {
-  return (await loadShellBootstrap()).surfaces;
+  return [];
 }
 
 export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> {
@@ -288,20 +329,14 @@ export async function loadRuntimeData(contributionId: string, dataSourceId: stri
   if (isPlatformSettingsOperation(dataSourceId)) {
     return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.data.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, dataSourceId, routeParams, queryParams: {} } }), runtimeResultEnvelopeSchema);
   }
-  const workspace = await loadShellBootstrap();
-  const plugin = workspace.plugins.find((candidate) => candidate.api.operations.some((operation) => operation.id === dataSourceId || operation.id === contributionId));
-  if (!plugin) throw new CoreRequestError(404, "not_found", `No plugin declares the ${dataSourceId} operation.`);
-  return invokePluginOperation(workspace.currentWorkspace.id, dataSourceId, { contributionId, routeParams }, routeParams);
+  return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.data.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, dataSourceId, routeParams, queryParams: {} } }), runtimeResultEnvelopeSchema);
 }
 
 export async function executeRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> {
   if (isPlatformSettingsOperation(actionId)) {
     return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, actionId, input, routeParams, approvalId: undefined } }), runtimeResultEnvelopeSchema);
   }
-  const workspace = await loadShellBootstrap();
-  const plugin = workspace.plugins.find((candidate) => candidate.api.operations.some((operation) => operation.id === actionId));
-  if (!plugin) throw new CoreRequestError(404, "not_found", `No plugin declares the ${actionId} operation.`);
-  return invokePluginOperation(workspace.currentWorkspace.id, actionId, input, routeParams);
+  return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, actionId, input, routeParams, approvalId: undefined } }), runtimeResultEnvelopeSchema);
 }
 
 export async function loadPublicRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}, publicWorkspaceId = currentWorkspaceId()): Promise<RuntimeResultEnvelope> {
@@ -358,7 +393,7 @@ export async function decideApprovalRequest(approvalId: string, decision: "appro
 }
 
 export async function loadInstalledPlugins(): Promise<PluginManifest[]> {
-  return (await loadShellBootstrap()).plugins;
+  return [];
 }
 
 export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> {
@@ -372,7 +407,7 @@ export async function installMarketplacePlugin(pluginId: string, approvalId?: st
 }
 
 export async function loadRuntimeTools(): Promise<ToolContribution[]> {
-  return (await loadShellBootstrap()).tools;
+  return [];
 }
 
 export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }> {

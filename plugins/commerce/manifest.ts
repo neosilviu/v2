@@ -62,9 +62,9 @@ export const commerceManifest = definePlugin({
         { id: "price", label: "Price", field: "price" },
         { id: "status", label: "Status", field: "status", type: "badge" }
       ],
-      data: { rows: [{ name: "Starter product", price: "0.00", status: "draft" }] },
+      data: { rows: [] },
       actions: [{ id: "commerce.products.refresh", title: "List products", commandId: "commerce.listProducts", variant: "primary" }],
-      slots: [{ id: "commerce.products.header", slot: "header", blocks: [{ type: "text", text: "Catalog scaffolding rendered by the generic admin.table template.", tone: "muted" }] }]
+      slots: [{ id: "commerce.products.header", slot: "header", blocks: [{ type: "text", text: "Catalog data is loaded from the Commerce runtime. Demo data is not installed by workspace bootstrap.", tone: "muted" }] }]
     } } }],
     tools: [
       { id: "commerce.listProducts", title: "List products", permissions: ["commerce.catalog.read"], risk: "safe", exposure: ["agent-ai", "mcp", "command"] },

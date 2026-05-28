@@ -30,6 +30,33 @@ export const rbacMeSchema = z.object({
 
 export const runtimeSettingsTabSchema = settingsTabContributionSchema.extend({ ownerName: z.string(), orderIndex: z.number().int() });
 export const runtimeSettingsTabResolutionSchema = z.object({ tab: runtimeSettingsTabSchema, panel: settingsPanelContributionSchema });
+export const runtimeNavigationItemSchema = z.object({
+  id: z.string(),
+  pluginId: z.string(),
+  path: z.string(),
+  label: z.string(),
+  icon: z.string().optional(),
+  section: z.enum(["user", "administration"]),
+  displayOrder: z.number().int(),
+  rendererMode: z.enum(["native", "declarative", "sandbox-frame"]),
+  componentId: z.string().optional(),
+  source: z.enum(["platform", "plugin", "manual"]),
+  requiredPermission: z.string().optional(),
+});
+export const interfaceContributionSchema = runtimeNavigationItemSchema.extend({
+  kind: z.string(),
+  active: z.boolean(),
+  visibleInNavigation: z.boolean(),
+  status: z.string(),
+  configurable: z.object({
+    canHide: z.boolean(),
+    canRename: z.boolean(),
+    canReorder: z.boolean(),
+    canChangeIcon: z.boolean(),
+    canMoveSection: z.boolean(),
+    canDelete: z.boolean(),
+  }),
+});
 
 export const ownerSetupStatusSchema = z.object({ setup: z.object({ workspaceId: z.string(), ownerEmail: z.string(), status: z.string(), expiresAt: z.string() }) });
 export const ownerSetupConsumeResponseSchema = z.object({ status: z.literal("consumed"), workspaceId: z.string() });
@@ -100,11 +127,7 @@ export const shellBootstrapSchema = z.object({
   currentWorkspace: workspaceSummarySchema,
   membership: rbacMeSchema,
   layout: workspaceLayoutSchema.nullable(),
-  plugins: z.array(pluginManifestSchema),
-  active: z.array(z.string()),
-  tools: z.array(toolSchema),
-  surfaces: z.array(surfaceSchema),
-  settingsNavigation: z.object({ pluginTabs: z.array(runtimeSettingsTabSchema), tabs: z.array(runtimeSettingsTabResolutionSchema).default([]) }),
+  navigation: z.array(runtimeNavigationItemSchema),
   featureAvailability: z.object({
     canReadMarketplace: z.boolean(),
     canInstallPlugins: z.boolean(),
@@ -130,6 +153,8 @@ export type WorkspaceSummary = z.output<typeof workspaceSummarySchema>;
 export type RbacMe = z.output<typeof rbacMeSchema>;
 export type RuntimeSettingsTab = z.output<typeof runtimeSettingsTabSchema>;
 export type RuntimeSettingsTabResolution = z.output<typeof runtimeSettingsTabResolutionSchema>;
+export type RuntimeNavigationItem = z.output<typeof runtimeNavigationItemSchema>;
+export type InterfaceContribution = z.output<typeof interfaceContributionSchema>;
 export type OwnerSetupStatus = z.output<typeof ownerSetupStatusSchema>;
 export type OwnerSetupConsumeResponse = z.output<typeof ownerSetupConsumeResponseSchema>;
 export type MarketplacePlugin = z.output<typeof marketplacePluginSchema>;

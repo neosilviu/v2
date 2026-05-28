@@ -25,6 +25,8 @@ function isCacheableRead(path: string) {
     || /\/workspaces\/[^/]+\/bootstrap$/.test(path)
     || /\/workspaces\/current\/bootstrap$/.test(path)
     || /\/workspaces\/[^/]+\/auth\/security-bootstrap$/.test(path)
+    || /\/workspaces\/[^/]+\/interface\/(?:navigation|layout|pages|contributions)$/.test(path)
+    || /\/workspaces\/[^/]+\/interface\/pages\/[^/]+$/.test(path)
     || /\/workspaces\/[^/]+\/settings\/tabs$/.test(path)
     || /\/workspaces\/[^/]+\/settings\/general$/.test(path)
     || /\/workspaces\/[^/]+\/publications$/.test(path)
@@ -430,8 +432,8 @@ async function platformSettingsData(c: CoreContext, repo: CoreRepository, worksp
       const active = new Set(await repo.activePlugins(workspaceId));
       return c.json({ status: "ok", data: { rows: await Promise.all(installed.map(async (manifest) => ({ id: manifest.id, version: manifest.version, active: active.has(manifest.id), workerIsolation: (await repo.activePluginRuntime(workspaceId, manifest.id))?.runtimeKind ?? "none" }))) }, error: null, approvalId: null, auditEventId: null });
     }
-    case "platform.settings.interface.layout":
-      return c.json({ status: "ok", data: await repo.getLayout(workspaceId) ?? { zones: [], placements: [] }, error: null, approvalId: null, auditEventId: null });
+    case "platform.settings.interface.summary":
+      return c.json({ status: "ok", data: { navigation: await repo.interfaceContributions(workspaceId), layout: await repo.getLayout(workspaceId) ?? { zones: [], placements: [] } }, error: null, approvalId: null, auditEventId: null });
     default:
       return null;
   }
@@ -461,7 +463,7 @@ async function platformSettingsAction(c: CoreContext, repo: CoreRepository, work
     "platform.settings.domains.disable": "domains.write",
     "platform.settings.plugins.activate": "plugin.activate",
     "platform.settings.plugins.deactivate": "plugin.activate",
-    "platform.settings.interface.save": "layout.write",
+    "platform.settings.interface.save": "interface.write",
   };
   const requiredPermission = actionPermissions[actionId];
   if (requiredPermission) {
@@ -709,27 +711,18 @@ async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string)
   const workspaceId = currentWorkspace.id;
   const permissions = new Set(currentWorkspace.permissions);
   await repo.ensureWorkspaceRbac(workspaceId);
-  const [installed, activeIds, layout, surfaces] = await Promise.all([
-    repo.workspaceInstalled(workspaceId),
-    repo.activePlugins(workspaceId),
+  await repo.ensurePlatformShellContributions(workspaceId);
+  const [layout, navigation] = await Promise.all([
     repo.getLayout(workspaceId),
-    repo.workspaceUiSurfaces(workspaceId),
+    repo.navigation(workspaceId, permissions),
   ]);
-  const active = new Set(activeIds);
-  const runtime = new RuntimeKernel();
-  for (const manifest of installed) await runtime.registerPlugin(manifest);
-  const activePlugins = runtime.plugins.all().filter((plugin) => active.has(plugin.id));
   return c.json({
     session: { authenticated: true, impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null },
     workspaces,
     currentWorkspace,
     membership: { user: currentWorkspace ? { id: user!.id, email: user!.email, name: user!.name ?? null } : null, roles: currentWorkspace.roles, permissions: currentWorkspace.permissions, recoveryAdmin: false },
     layout: layout ?? null,
-    plugins: installed,
-    active: activeIds,
-    tools: activePlugins.flatMap((plugin) => plugin.contributes.tools),
-    surfaces: surfaces.filter((surface) => !surface.id.startsWith("platform.settings.")),
-    settingsNavigation: { pluginTabs: [], tabs: [] },
+    navigation,
     featureAvailability: {
       canReadMarketplace: permissions.has("marketplace.read") || permissions.has("workspace.admin"),
       canInstallPlugins: permissions.has("plugin.install") || permissions.has("workspace.admin"),
@@ -748,6 +741,79 @@ coreApiRoutes = coreApiRoutes.get("/bootstrap", async (c) => {
 coreApiRoutes = coreApiRoutes.get("/workspaces/current/bootstrap", (c) => workspaceBootstrap(c));
 coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/bootstrap", (c) => workspaceBootstrap(c, c.req.param("workspaceId")));
 coreApiRoutes = coreApiRoutes.get("/runtime/ui/bootstrap", (c) => workspaceBootstrap(c, c.req.query("workspaceId") === "current" ? undefined : c.req.query("workspaceId")));
+coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/interface/navigation", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "interface.read");
+  if (denied) return denied;
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const permissions = new Set((await repo.memberSummary(workspaceId, c.get("user"))).permissions);
+  return c.json({ navigation: await repo.navigation(workspaceId, permissions) });
+});
+coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/interface/layout", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "interface.read");
+  if (denied) return denied;
+  return c.json({ layout: await new CoreRepository(c.env.CORE_DB).getLayout(workspaceId) ?? null });
+});
+coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/interface/contributions", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "interface.read");
+  if (denied) return denied;
+  return c.json({ contributions: await new CoreRepository(c.env.CORE_DB).interfaceContributions(workspaceId) });
+});
+coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/interface/pages", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "interface.read");
+  if (denied) return denied;
+  const contributions = await new CoreRepository(c.env.CORE_DB).interfaceContributions(workspaceId);
+  return c.json({ pages: contributions.filter((item) => item.kind === "page") });
+});
+coreApiRoutes = coreApiRoutes.get("/workspaces/:workspaceId/interface/pages/:contributionId", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "workspace.read");
+  if (denied) return denied;
+  const repo = new CoreRepository(c.env.CORE_DB);
+  const resolved = await repo.runtimePage(workspaceId, c.req.param("contributionId"));
+  if (!resolved) return c.json(errorResponse(failure("not_found", "Page is not available.")), 404);
+  if (resolved.contribution.requiredPermission) {
+    const permissions = new Set((await repo.memberSummary(workspaceId, c.get("user"))).permissions);
+    if (!permissions.has(resolved.contribution.requiredPermission) && !permissions.has("workspace.admin")) return c.json(errorResponse(failure("not_authorized", "Page permission is required.")), 403);
+  }
+  return c.json(resolved);
+});
+coreApiRoutes = coreApiRoutes.put("/workspaces/:workspaceId/interface/contributions/:contributionId", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "interface.write");
+  if (denied) return denied;
+  try {
+    await new CoreRepository(c.env.CORE_DB).updateInterfaceContribution(workspaceId, c.req.param("contributionId"), objectInput(await c.req.json()), c.get("user")?.id);
+    return c.json({ saved: true });
+  } catch (error) {
+    return c.json(errorResponse(failure("validation_failed", error instanceof Error ? error.message : "Interface contribution could not be updated.")), 400);
+  }
+});
+coreApiRoutes = coreApiRoutes.post("/workspaces/:workspaceId/interface/pages", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "interface.write");
+  if (denied) return denied;
+  try {
+    const page = await new CoreRepository(c.env.CORE_DB).createManualPage(workspaceId, objectInput(await c.req.json()) as { title: string; slug: string }, c.get("user")?.id);
+    return c.json({ page });
+  } catch (error) {
+    return c.json(errorResponse(failure("validation_failed", error instanceof Error ? error.message : "Manual page could not be created.")), 400);
+  }
+});
+coreApiRoutes = coreApiRoutes.delete("/workspaces/:workspaceId/interface/pages/:contributionId", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "interface.write");
+  if (denied) return denied;
+  try {
+    await new CoreRepository(c.env.CORE_DB).deleteManualPage(workspaceId, c.req.param("contributionId"), c.get("user")?.id);
+    return c.json({ deleted: true });
+  } catch (error) {
+    return c.json(errorResponse(failure("validation_failed", error instanceof Error ? error.message : "Manual page could not be deleted.")), 400);
+  }
+});
 coreApiRoutes = coreApiRoutes.get("/setup/owner", async (c) => {
   const token = c.req.query("token");
   if (!token || token.length < 24) return c.json(errorResponse(failure("not_found", "Owner setup link is not available.")), 404);

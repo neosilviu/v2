@@ -242,6 +242,47 @@ function testReadRoutesDoNotSeedPlatformSettings() {
   pass("Core/Web read paths avoid implicit D1 writes and unnecessary GET preflight headers");
 }
 
+function testSeedAndDemoContracts(manifests) {
+  const manifestIds = new Set(manifests.map((item) => item.manifest.id));
+  const syncSource = fs.readFileSync(path.join(root, "scripts/sync-plugin-catalog.mjs"), "utf8");
+  const bootstrapSource = fs.readFileSync(path.join(root, "scripts/bootstrap-workspace-dev.mjs"), "utf8");
+  const cleanSource = fs.readFileSync(path.join(root, "scripts/clean.mjs"), "utf8");
+  const coreSchema = fs.readFileSync(path.join(root, "apps/core-worker/src/db/schema.ts"), "utf8");
+  const repoSource = fs.readFileSync(path.join(root, "apps/core-worker/src/repository.ts"), "utf8");
+
+  const catalogEntries = [...syncSource.matchAll(/\{\s*module:\s*"(?<module>[^"]+)",\s*exportName:\s*"(?<exportName>[^"]+)",\s*category:\s*"(?<category>[^"]+)",\s*demoAvailable:\s*(?<demo>true|false)\s*\}/g)]
+    .map((match) => ({ module: match.groups.module, exportName: match.groups.exportName, category: match.groups.category, demoAvailable: match.groups.demo === "true" }));
+  if (!catalogEntries.length) fail("Marketplace catalog seed does not declare plugin entries");
+
+  for (const item of manifests) {
+    const relative = relativePath(root, item.file);
+    if (!catalogEntries.some((entry) => path.normalize(path.join("scripts", entry.module)).endsWith(relative))) fail(`Marketplace catalog seed is missing ${item.manifest.id}`);
+  }
+
+  for (const entry of catalogEntries) {
+    const manifestPath = path.resolve(root, "scripts", entry.module);
+    const manifestSource = fs.readFileSync(manifestPath, "utf8");
+    const pluginId = manifests.find((item) => item.exportName === entry.exportName)?.manifest.id ?? entry.exportName;
+    if (!manifestIds.has(pluginId)) fail(`Marketplace catalog entry ${entry.exportName} does not map to a discovered plugin manifest`);
+    const hasDemoOperation = /installDemoData|demo\.install|Install demo/i.test(manifestSource);
+    if (entry.demoAvailable && !hasDemoOperation) fail(`Marketplace catalog marks ${pluginId} demoAvailable but the plugin manifest has no explicit demo action`);
+    if (!entry.demoAvailable && hasDemoOperation) fail(`Plugin ${pluginId} exposes a demo action but catalog demoAvailable is false`);
+
+    const workerPath = path.join(path.dirname(manifestPath), "server/worker.ts");
+    if (entry.demoAvailable && fs.existsSync(workerPath)) {
+      const workerSource = fs.readFileSync(workerPath, "utf8");
+      if (!/installDemo|installDemoData|demo:\s*true/.test(workerSource)) fail(`Plugin ${pluginId} declares demoAvailable but its worker has no demo installer`);
+    }
+  }
+
+  if (!bootstrapSource.includes("marketplace:sync")) fail("dev setup does not sync the local Marketplace catalog seed");
+  if (!bootstrapSource.includes("--skip-marketplace-sync") || !bootstrapSource.includes("V2_DEV_SKIP_MARKETPLACE_SYNC")) fail("dev setup Marketplace sync cannot be intentionally skipped for focused setup");
+  if (!coreSchema.includes("pluginCatalog") || !coreSchema.includes("demoAvailable")) fail("Generated Core schema is missing plugin catalog demo metadata");
+  if (!repoSource.includes("ensurePlatformShellContributions") || !repoSource.includes("ensurePlatformSettingsContributions")) fail("Core repository is missing platform seed/materialization entry points");
+  if (/["']migrations["']/.test(cleanSource)) fail("clean/initialclean must not remove migration history");
+  pass("Seed/demo contracts are discoverable, schema-backed and plugin-owned");
+}
+
 function testProductionRuntimeHardening() {
   const coreIndex = fs.readFileSync(path.join(root, "apps/core-worker/src/index.ts"), "utf8");
   const repoSource = fs.readFileSync(path.join(root, "apps/core-worker/src/repository.ts"), "utf8");
@@ -322,6 +363,7 @@ testPlatformSeparationGuards();
 testAuthRuntimeBootstrapPolicy();
 testNoImplicitWorkspaceOwnerBootstrap();
 testReadRoutesDoNotSeedPlatformSettings();
+testSeedAndDemoContracts(manifests);
 testProductionRuntimeHardening();
 testMigrationDrift();
 await testHttpScenarios();

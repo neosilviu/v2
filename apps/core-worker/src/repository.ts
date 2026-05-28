@@ -67,8 +67,17 @@ export type PluginUiContribution = {
   pluginId: string;
   contributionId: string;
   contributionType: "surface" | "page" | "route" | "slot" | "menu";
+  source: UiSource;
   accessMode: AccessMode;
   zoneId: string | null;
+  defaultPath: string | null;
+  label: string | null;
+  icon: string | null;
+  navigationSection: NavigationSection | null;
+  displayOrder: number;
+  rendererMode: UiRendererMode;
+  componentId: string | null;
+  configurable: UiConfigurable;
   templateId: string;
   schema: DeclarativePageContribution;
   requiredPermission: string | null;
@@ -196,7 +205,7 @@ export const workspacePermissions = [
   "domains.read", "domains.write", "domains.verify",
   "mail.read", "mail.configure", "mail.test", "mail.template.write",
   "marketplace.read", "marketplace.publish", "plugin.install", "plugin.activate", "plugin.update", "plugin.uninstall", "plugin.grantCapability",
-  "approval.read", "tool.approve", "audit.read", "layout.read", "layout.write", "publication.read", "publication.publish",
+  "approval.read", "tool.approve", "audit.read", "layout.read", "layout.write", "interface.read", "interface.write", "publication.read", "publication.publish",
   "plan.read", "plan.write",
   "agent.read", "agent.use", "provider.read", "provider.configure",
   "localnode.read", "localnode.configure", "localnode.execute", "production.read", "production.execute", "production.approve",
@@ -356,7 +365,81 @@ function matchRoutePattern(pattern: string, path: string): Record<string, string
 }
 
 const WORKSPACE_RBAC_SEED_VERSION = "workspace-rbac:v1";
-const PLATFORM_SETTINGS_SEED_VERSION = "platform-settings:v1";
+const PLATFORM_SETTINGS_SEED_VERSION = "platform-settings:v2";
+const PLATFORM_SHELL_SEED_VERSION = "platform-shell:v1";
+const protectedPlatformPages = new Set(["platform.home", "platform.account", "platform.settings"]);
+const reservedShellPaths = new Set(["/login", "/setup/owner", "/bootstrap"]);
+
+type NavigationSection = "user" | "administration";
+type UiSource = "platform" | "plugin" | "manual";
+type UiRendererMode = "native" | "declarative" | "sandbox-frame";
+type UiConfigurable = {
+  canHide: boolean;
+  canRename: boolean;
+  canReorder: boolean;
+  canChangeIcon: boolean;
+  canMoveSection: boolean;
+  canDelete: boolean;
+};
+export type RuntimeNavigationItem = {
+  id: string;
+  pluginId: string;
+  path: string;
+  label: string;
+  icon?: string;
+  section: NavigationSection;
+  displayOrder: number;
+  rendererMode: UiRendererMode;
+  componentId?: string;
+  source: UiSource;
+  requiredPermission?: string;
+};
+export type InterfaceContributionRow = RuntimeNavigationItem & {
+  kind: string;
+  active: boolean;
+  visibleInNavigation: boolean;
+  status: string;
+  configurable: UiConfigurable;
+};
+export type ManualPageInput = {
+  title: string;
+  slug: string;
+  label?: string;
+  icon?: string;
+  navigationSection?: NavigationSection;
+  enabled?: boolean;
+  visibleInNavigation?: boolean;
+  displayOrder?: number;
+  blocks?: Array<{ type: "heading" | "text"; text: string }>;
+};
+
+const defaultConfigurable: UiConfigurable = {
+  canHide: true,
+  canRename: true,
+  canReorder: true,
+  canChangeIcon: true,
+  canMoveSection: true,
+  canDelete: false,
+};
+
+function config(canDelete = false, overrides: Partial<UiConfigurable> = {}): UiConfigurable {
+  return { ...defaultConfigurable, canDelete, ...overrides };
+}
+
+function safeJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+
+function normalizeShellPath(path: string) {
+  const trimmed = path.trim();
+  const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return withSlash.replaceAll(/\/+/g, "/").replace(/\/$/, "") || "/";
+}
+
+function manualContributionId(workspaceId: string, slug: string) {
+  return `manual.${workspaceId}.${slug.replaceAll(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-|-$/g, "").toLowerCase()}`;
+}
 
 export class CoreRepository {
   constructor(private readonly db: D1Database, private readonly env?: Pick<CoreEnv, "ENVIRONMENT" | "MAIL_PROVIDER_CONFIGS_JSON">) {}
@@ -797,10 +880,22 @@ export class CoreRepository {
   }
 
   private uiContributionsFor(manifest: PluginManifest): PluginUiContribution[] {
+    const complete = (contribution: Omit<PluginUiContribution, "source" | "defaultPath" | "label" | "icon" | "navigationSection" | "displayOrder" | "rendererMode" | "componentId" | "configurable">): PluginUiContribution => ({
+      ...contribution,
+      source: "plugin",
+      defaultPath: null,
+      label: contribution.schema.title,
+      icon: null,
+      navigationSection: null,
+      displayOrder: 0,
+      rendererMode: "declarative",
+      componentId: null,
+      configurable: config(false),
+    });
     const surfaces = manifest.contributes.surfaces.flatMap((surface) => {
       const page = this.declarativeSurfacePage(manifest, surface);
       if (!page) return [];
-      return [{
+      return [complete({
         pluginId: manifest.id,
         contributionId: surface.id,
         contributionType: "surface" as const,
@@ -810,9 +905,9 @@ export class CoreRepository {
         schema: page,
         requiredPermission: typeof page.data.requiredPermission === "string" ? page.data.requiredPermission : null,
         version: manifest.version,
-      }];
+      })];
     });
-    const settingsTabs = manifest.contributes.settingsTabs.map((tab) => ({
+    const settingsTabs = manifest.contributes.settingsTabs.map((tab) => complete({
       pluginId: manifest.id,
       contributionId: tab.id,
       contributionType: "menu" as const,
@@ -829,7 +924,7 @@ export class CoreRepository {
       requiredPermission: tab.requiredPermission ?? null,
       version: manifest.version,
     }));
-    const settingsPanels = manifest.contributes.settingsPanels.map((panel) => ({
+    const settingsPanels = manifest.contributes.settingsPanels.map((panel) => complete({
       pluginId: manifest.id,
       contributionId: panel.id,
       contributionType: "page" as const,
@@ -867,7 +962,7 @@ export class CoreRepository {
         actions: page.actions,
       });
       return [
-        {
+        complete({
           pluginId: manifest.id,
           contributionId: tab.id,
           contributionType: "menu" as const,
@@ -883,8 +978,8 @@ export class CoreRepository {
           }),
           requiredPermission: null,
           version: manifest.version,
-        },
-        {
+        }),
+        complete({
           pluginId: manifest.id,
           contributionId: panel.id,
           contributionType: "page" as const,
@@ -894,7 +989,7 @@ export class CoreRepository {
           schema: page,
           requiredPermission: null,
           version: manifest.version,
-        },
+        }),
       ];
     });
     return [...surfaces, ...settingsTabs, ...settingsPanels, ...settingsSurfaceTabs];
@@ -1173,21 +1268,21 @@ export class CoreRepository {
       ],
       interface: [
         section({
-          id: "interface.shell",
-          title: "Shell layout",
-          description: "Workspace chrome, zones and placements.",
+          id: "interface.builder",
+          title: "Interface builder",
+          description: "Navigation, layout, manual pages and UI contributions.",
           kind: "summary",
-          dataSourceId: "platform.settings.interface.layout",
+          dataSourceId: "platform.settings.interface.summary",
           actions: [
             action({
               id: "platform.settings.interface.save",
-              title: "Save layout",
+              title: "Save interface",
               commandId: "platform.settings.interface.save",
               intent: "submit",
               variant: "primary",
               placement: "form",
               access: "permission-gated",
-              requiredPermission: "layout.write",
+              requiredPermission: "interface.write",
             }),
           ],
         }),
@@ -1200,8 +1295,7 @@ export class CoreRepository {
       { id: "platform.settings.audit", label: "Audit", icon: "history" as const, order: 40, permission: "audit.read" as const, sections: sectionsByTab.audit },
       { id: "platform.settings.plans", label: "Plans & Limits", icon: "badge-dollar-sign" as const, order: 50, permission: "plan.read" as const, sections: sectionsByTab.plans },
       { id: "platform.settings.domains", label: "Domains", icon: "globe", order: 60, permission: "domains.read" as const, sections: sectionsByTab.domains },
-      { id: "platform.settings.plugins", label: "Plugins", icon: "package", order: 70, permission: "marketplace.read" as const, sections: sectionsByTab.plugins },
-      { id: "platform.settings.interface", label: "Interface", icon: "layout", order: 80, permission: "layout.read" as const, sections: sectionsByTab.interface },
+      { id: "platform.settings.interface", label: "Interface", icon: "layout", order: 70, permission: "interface.read" as const, sections: sectionsByTab.interface },
     ];
     return specs.map((spec) => {
       const panelId = `${spec.id}.panel`;
@@ -1234,15 +1328,15 @@ export class CoreRepository {
     const statements = [];
     for (const item of this.platformSettingsTabs()) {
       statements.push(this.db.prepare(`INSERT INTO plugin_ui_contributions
-        (id, plugin_id, contribution_id, contribution_type, access_mode, zone_id, template_id, schema_json, required_permission, version, updated_at)
-        VALUES (?, 'platform', ?, 'menu', 'private', 'settings.tabs', 'admin.settings', ?, ?, '0.0.0', CURRENT_TIMESTAMP)
+        (id, plugin_id, contribution_id, contribution_type, source, access_mode, zone_id, label, icon, display_order, configurable_json, template_id, schema_json, required_permission, version, updated_at)
+        VALUES (?, 'platform', ?, 'menu', 'platform', 'private', 'settings.tabs', ?, ?, ?, ?, 'admin.settings', ?, ?, '0.0.0', CURRENT_TIMESTAMP)
         ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET schema_json = excluded.schema_json, updated_at = CURRENT_TIMESTAMP`)
-        .bind(`platform:${item.tab.id}:0.0.0`, item.tab.id, JSON.stringify(item.tab), item.tab.requiredPermission ?? null));
+        .bind(`platform:${item.tab.id}:0.0.0`, item.tab.id, item.tab.label, item.tab.icon ?? null, item.tab.displayOrder, JSON.stringify(config(false, { canDelete: false, canMoveSection: false })), JSON.stringify(item.tab), item.tab.requiredPermission ?? null));
       statements.push(this.db.prepare(`INSERT INTO plugin_ui_contributions
-        (id, plugin_id, contribution_id, contribution_type, access_mode, zone_id, template_id, schema_json, required_permission, version, updated_at)
-        VALUES (?, 'platform', ?, 'page', 'private', ?, ?, ?, ?, '0.0.0', CURRENT_TIMESTAMP)
+        (id, plugin_id, contribution_id, contribution_type, source, access_mode, zone_id, label, display_order, configurable_json, template_id, schema_json, required_permission, version, updated_at)
+        VALUES (?, 'platform', ?, 'page', 'platform', 'private', ?, ?, ?, ?, ?, ?, ?, '0.0.0', CURRENT_TIMESTAMP)
         ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET schema_json = excluded.schema_json, template_id = excluded.template_id, updated_at = CURRENT_TIMESTAMP`)
-        .bind(`platform:${item.panel.id}:0.0.0`, item.panel.id, `settings.panel.${item.tab.id}`, item.panel.templateId, JSON.stringify(item.panel), item.panel.requiredPermission ?? null));
+        .bind(`platform:${item.panel.id}:0.0.0`, item.panel.id, `settings.panel.${item.tab.id}`, item.panel.schema.title, item.tab.displayOrder, JSON.stringify(config(false, { canHide: false, canRename: false, canMoveSection: false, canChangeIcon: false })), item.panel.templateId, JSON.stringify(item.panel), item.panel.requiredPermission ?? null));
       statements.push(this.db.prepare(`INSERT OR IGNORE INTO workspace_ui_activations
         (workspace_id, plugin_id, contribution_id, enabled, zone_override, order_index, configuration_json)
         VALUES (?, 'platform', ?, 1, 'settings.tabs', ?, NULL)`)
@@ -1253,6 +1347,79 @@ export class CoreRepository {
         .bind(workspaceId, item.panel.id, `settings.panel.${item.tab.id}`, item.tab.displayOrder));
     }
     statements.push(this.internalSeedStatement(workspaceId, "settings.seed", PLATFORM_SETTINGS_SEED_VERSION));
+    await this.db.batch(statements);
+  }
+
+  private platformShellPages(): Array<{
+    contributionId: string;
+    label: string;
+    icon: string;
+    path: string;
+    section: NavigationSection;
+    order: number;
+    requiredPermission: string | null;
+    componentId: string;
+    configurable: UiConfigurable;
+  }> {
+    return [
+      { contributionId: "platform.home", label: "Home", icon: "home", path: "/", section: "user", order: 10, requiredPermission: "workspace.read", componentId: "platform.home", configurable: config(false, { canDelete: false }) },
+      { contributionId: "platform.workspaces", label: "Workspaces", icon: "layers", path: "/workspaces", section: "user", order: 20, requiredPermission: "workspace.read", componentId: "platform.workspaces", configurable: config(false) },
+      { contributionId: "platform.account", label: "My Account", icon: "user", path: "/account", section: "user", order: 30, requiredPermission: "workspace.read", componentId: "platform.account", configurable: config(false, { canDelete: false, canMoveSection: false }) },
+      { contributionId: "platform.approvals", label: "Approvals", icon: "check-circle", path: "/approvals", section: "administration", order: 110, requiredPermission: "approval.read", componentId: "platform.approvals", configurable: config(false) },
+      { contributionId: "platform.settings", label: "Settings", icon: "settings", path: "/settings", section: "administration", order: 120, requiredPermission: "workspace.settings.read", componentId: "platform.settings", configurable: config(false, { canDelete: false, canMoveSection: false }) },
+    ];
+  }
+
+  private platformShellPageSchema(page: ReturnType<CoreRepository["platformShellPages"]>[number]) {
+    return declarativePageContributionSchema.parse({
+      id: page.contributionId,
+      title: page.label,
+      templateId: "admin.dashboard",
+      access: "permission-gated",
+      slots: [{ id: `${page.contributionId}.header`, slot: "header", blocks: [{ type: "heading", text: page.label, level: "h2" }] }],
+      data: {},
+    });
+  }
+
+  async ensurePlatformShellContributions(workspaceId: string) {
+    if (await this.internalSeedCurrent(workspaceId, "shell.seed", PLATFORM_SHELL_SEED_VERSION)) return;
+    await this.ensurePlatformSettingsContributions(workspaceId);
+    const statements = this.platformShellPages().flatMap((page) => [
+      this.db.prepare(`INSERT INTO plugin_ui_contributions
+        (id, plugin_id, contribution_id, contribution_type, source, access_mode, zone_id, default_path, label, icon, navigation_section, display_order, renderer_mode, component_id, configurable_json, template_id, schema_json, required_permission, version, updated_at)
+        VALUES (?, 'platform', ?, 'page', 'platform', 'permission-gated', 'workspace.main', ?, ?, ?, ?, ?, 'native', ?, ?, 'admin.dashboard', ?, ?, '0.0.0', CURRENT_TIMESTAMP)
+        ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET
+          source = excluded.source,
+          default_path = excluded.default_path,
+          label = excluded.label,
+          icon = excluded.icon,
+          navigation_section = excluded.navigation_section,
+          display_order = excluded.display_order,
+          renderer_mode = excluded.renderer_mode,
+          component_id = excluded.component_id,
+          configurable_json = excluded.configurable_json,
+          schema_json = excluded.schema_json,
+          required_permission = excluded.required_permission,
+          updated_at = CURRENT_TIMESTAMP`)
+        .bind(
+          `platform:${page.contributionId}:0.0.0`,
+          page.contributionId,
+          page.path,
+          page.label,
+          page.icon,
+          page.section,
+          page.order,
+          page.componentId,
+          JSON.stringify(page.configurable),
+          JSON.stringify(this.platformShellPageSchema(page)),
+          page.requiredPermission,
+        ),
+      this.db.prepare(`INSERT OR IGNORE INTO workspace_ui_activations
+        (workspace_id, plugin_id, contribution_id, enabled, visible_in_navigation, zone_override, order_index)
+        VALUES (?, 'platform', ?, 1, 1, 'workspace.main', ?)`)
+        .bind(workspaceId, page.contributionId, page.order),
+    ]);
+    statements.push(this.internalSeedStatement(workspaceId, "shell.seed", PLATFORM_SHELL_SEED_VERSION));
     await this.db.batch(statements);
   }
 
@@ -1294,17 +1461,19 @@ export class CoreRepository {
       ...manifest.capabilities.map((capability) => this.db.prepare("INSERT INTO plugin_permissions (plugin_id, permission, description, risk) VALUES (?, ?, ?, ?)")
         .bind(manifest.id, capability.id, capability.description ?? null, capability.risk)),
       ...uiContributions.map((contribution) => this.db.prepare(`INSERT INTO plugin_ui_contributions
-        (id, plugin_id, contribution_id, contribution_type, access_mode, zone_id, template_id, schema_json, required_permission, version, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        (id, plugin_id, contribution_id, contribution_type, source, access_mode, zone_id, label, display_order, renderer_mode, configurable_json, template_id, schema_json, required_permission, version, updated_at)
+        VALUES (?, ?, ?, ?, 'plugin', ?, ?, ?, 0, 'declarative', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET
           contribution_type = excluded.contribution_type,
+          source = excluded.source,
           access_mode = excluded.access_mode,
           zone_id = excluded.zone_id,
+          label = excluded.label,
           template_id = excluded.template_id,
           schema_json = excluded.schema_json,
           required_permission = excluded.required_permission,
           updated_at = CURRENT_TIMESTAMP`)
-        .bind(`${manifest.id}:${contribution.contributionId}:${manifest.version}`, manifest.id, contribution.contributionId, contribution.contributionType, contribution.accessMode, contribution.zoneId, contribution.templateId, JSON.stringify(contribution.schema), contribution.requiredPermission, contribution.version)),
+        .bind(`${manifest.id}:${contribution.contributionId}:${manifest.version}`, manifest.id, contribution.contributionId, contribution.contributionType, contribution.accessMode, contribution.zoneId, contribution.schema.title, JSON.stringify(config(false)), contribution.templateId, JSON.stringify(contribution.schema), contribution.requiredPermission, contribution.version)),
     ];
     if (packageData) {
       statements.push(this.db.prepare("INSERT OR IGNORE INTO plugin_packages (id, plugin_id, version, object_key, sha256, size_bytes, format) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -1314,14 +1483,33 @@ export class CoreRepository {
   }
 
   async pluginUiContribution(pluginId: string, contributionId: string): Promise<PluginUiContribution | undefined> {
-    const row = await this.db.prepare(`SELECT plugin_id, contribution_id, contribution_type, access_mode, zone_id, template_id, schema_json, required_permission, version
+    const row = await this.db.prepare(`SELECT plugin_id, contribution_id, contribution_type, source, access_mode, zone_id, default_path, label, icon, navigation_section, display_order, renderer_mode, component_id, configurable_json, template_id, schema_json, required_permission, version
       FROM plugin_ui_contributions
       WHERE plugin_id = ? AND contribution_id = ?
       ORDER BY updated_at DESC
       LIMIT 1`)
       .bind(pluginId, contributionId)
-      .first<{ plugin_id: string; contribution_id: string; contribution_type: PluginUiContribution["contributionType"]; access_mode: AccessMode; zone_id: string | null; template_id: string; schema_json: string; required_permission: string | null; version: string }>();
-    return row ? { pluginId: row.plugin_id, contributionId: row.contribution_id, contributionType: row.contribution_type, accessMode: row.access_mode, zoneId: row.zone_id, templateId: row.template_id, schema: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)), requiredPermission: row.required_permission, version: row.version } : undefined;
+      .first<{ plugin_id: string; contribution_id: string; contribution_type: PluginUiContribution["contributionType"]; source: UiSource; access_mode: AccessMode; zone_id: string | null; default_path: string | null; label: string | null; icon: string | null; navigation_section: NavigationSection | null; display_order: number; renderer_mode: UiRendererMode; component_id: string | null; configurable_json: string; template_id: string; schema_json: string; required_permission: string | null; version: string }>();
+    return row ? {
+      pluginId: row.plugin_id,
+      contributionId: row.contribution_id,
+      contributionType: row.contribution_type,
+      source: row.source,
+      accessMode: row.access_mode,
+      zoneId: row.zone_id,
+      defaultPath: row.default_path,
+      label: row.label,
+      icon: row.icon,
+      navigationSection: row.navigation_section,
+      displayOrder: row.display_order,
+      rendererMode: row.renderer_mode,
+      componentId: row.component_id,
+      configurable: safeJson(row.configurable_json, defaultConfigurable),
+      templateId: row.template_id,
+      schema: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)),
+      requiredPermission: row.required_permission,
+      version: row.version,
+    } : undefined;
   }
 
   async installed(): Promise<PluginManifest[]> {
@@ -1797,6 +1985,203 @@ export class CoreRepository {
         renderer: { mode: "declarative", schema },
       } satisfies SurfaceContribution;
     });
+  }
+
+  private async ensureManualPlugin(workspaceId: string) {
+    const manifest = pluginManifestSchema.parse({ id: "manual", name: "Manual Pages", version: "0.0.0", builtIn: true, contributes: {} });
+    await this.db.batch([
+      this.db.prepare(`INSERT INTO installed_plugins (id, name, version, manifest_json, worker_isolation, ui_mode, updated_at)
+        VALUES ('manual', 'Manual Pages', '0.0.0', ?, 'none', 'declarative', CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET manifest_json = excluded.manifest_json, updated_at = CURRENT_TIMESTAMP`).bind(JSON.stringify(manifest)),
+      this.db.prepare(`INSERT INTO workspace_plugins (workspace_id, plugin_id, active, activated_at, updated_at)
+        VALUES (?, 'manual', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(workspace_id, plugin_id) DO UPDATE SET active = 1, updated_at = CURRENT_TIMESTAMP`).bind(workspaceId),
+    ]);
+  }
+
+  private canSee(requiredPermission: string | null, permissions: Set<string>) {
+    return !requiredPermission || permissions.has(requiredPermission) || permissions.has("workspace.admin");
+  }
+
+  async navigation(workspaceId: string, permissions: Set<string>): Promise<RuntimeNavigationItem[]> {
+    await this.ensurePlatformShellContributions(workspaceId);
+    const rows = await this.db.prepare(`SELECT c.plugin_id, c.contribution_id, c.source, c.default_path, c.label, c.icon, c.navigation_section, c.display_order, c.renderer_mode, c.component_id, c.required_permission,
+        a.visible_in_navigation, a.label_override, a.icon_override, a.navigation_section_override, a.path_alias, a.order_index
+      FROM workspace_ui_activations a
+      INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
+      INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
+      WHERE a.workspace_id = ? AND a.enabled = 1 AND a.visible_in_navigation = 1 AND c.contribution_type = 'page' AND c.access_mode != 'public-candidate' AND c.default_path IS NOT NULL
+      ORDER BY a.order_index, c.display_order, c.contribution_id`)
+      .bind(workspaceId)
+      .all<{ plugin_id: string; contribution_id: string; source: UiSource; default_path: string | null; label: string | null; icon: string | null; navigation_section: NavigationSection | null; display_order: number; renderer_mode: UiRendererMode; component_id: string | null; required_permission: string | null; visible_in_navigation: number; label_override: string | null; icon_override: string | null; navigation_section_override: NavigationSection | null; path_alias: string | null; order_index: number }>();
+    return rows.results
+      .filter((row) => this.canSee(row.required_permission, permissions))
+      .map((row) => {
+        const icon = row.icon_override ?? row.icon;
+        return {
+          id: row.contribution_id,
+          pluginId: row.plugin_id,
+          path: normalizeShellPath(row.path_alias ?? row.default_path ?? "/"),
+          label: row.label_override ?? row.label ?? row.contribution_id,
+          ...(icon ? { icon } : {}),
+          section: row.navigation_section_override ?? row.navigation_section ?? "user",
+          displayOrder: row.order_index || row.display_order,
+          rendererMode: row.renderer_mode,
+          ...(row.component_id ? { componentId: row.component_id } : {}),
+          source: row.source,
+          ...(row.required_permission ? { requiredPermission: row.required_permission } : {}),
+        };
+      });
+  }
+
+  async interfaceContributions(workspaceId: string): Promise<InterfaceContributionRow[]> {
+    await this.ensurePlatformShellContributions(workspaceId);
+    const rows = await this.db.prepare(`SELECT c.plugin_id, c.contribution_id, c.contribution_type, c.source, c.default_path, c.label, c.icon, c.navigation_section, c.display_order, c.renderer_mode, c.component_id, c.required_permission, c.configurable_json,
+        COALESCE(a.enabled, 0) AS enabled, COALESCE(a.visible_in_navigation, 0) AS visible_in_navigation, a.label_override, a.icon_override, a.navigation_section_override, a.path_alias, COALESCE(a.order_index, c.display_order) AS order_index
+      FROM plugin_ui_contributions c
+      INNER JOIN workspace_plugins wp ON wp.plugin_id = c.plugin_id AND wp.workspace_id = ? AND wp.active = 1
+      LEFT JOIN workspace_ui_activations a ON a.workspace_id = ? AND a.plugin_id = c.plugin_id AND a.contribution_id = c.contribution_id
+      WHERE c.contribution_type IN ('page', 'surface', 'menu')
+      ORDER BY c.source, order_index, c.contribution_id`)
+      .bind(workspaceId, workspaceId)
+      .all<{ plugin_id: string; contribution_id: string; contribution_type: string; source: UiSource; default_path: string | null; label: string | null; icon: string | null; navigation_section: NavigationSection | null; display_order: number; renderer_mode: UiRendererMode; component_id: string | null; required_permission: string | null; configurable_json: string; enabled: number; visible_in_navigation: number; label_override: string | null; icon_override: string | null; navigation_section_override: NavigationSection | null; path_alias: string | null; order_index: number }>();
+    return rows.results.map((row) => {
+      const icon = row.icon_override ?? row.icon;
+      return {
+        id: row.contribution_id,
+        pluginId: row.plugin_id,
+        path: row.default_path ? normalizeShellPath(row.path_alias ?? row.default_path) : "",
+        label: row.label_override ?? row.label ?? row.contribution_id,
+        ...(icon ? { icon } : {}),
+        section: row.navigation_section_override ?? row.navigation_section ?? "user",
+        displayOrder: row.order_index,
+        rendererMode: row.renderer_mode,
+        ...(row.component_id ? { componentId: row.component_id } : {}),
+        source: row.source,
+        ...(row.required_permission ? { requiredPermission: row.required_permission } : {}),
+        kind: row.contribution_type,
+        active: row.enabled === 1,
+        visibleInNavigation: row.visible_in_navigation === 1,
+        status: row.enabled === 1 ? "active" : "inactive",
+        configurable: safeJson(row.configurable_json, defaultConfigurable),
+      };
+    });
+  }
+
+  async runtimePage(workspaceId: string, contributionId: string): Promise<{ contribution: InterfaceContributionRow; page: DeclarativePageContribution } | undefined> {
+    const row = await this.db.prepare(`SELECT c.plugin_id, c.contribution_id, c.contribution_type, c.source, c.default_path, c.label, c.icon, c.navigation_section, c.display_order, c.renderer_mode, c.component_id, c.required_permission, c.configurable_json, c.schema_json,
+        a.enabled, a.visible_in_navigation, a.label_override, a.icon_override, a.navigation_section_override, a.path_alias, a.order_index
+      FROM workspace_ui_activations a
+      INNER JOIN workspace_plugins wp ON wp.workspace_id = a.workspace_id AND wp.plugin_id = a.plugin_id AND wp.active = 1
+      INNER JOIN plugin_ui_contributions c ON c.plugin_id = a.plugin_id AND c.contribution_id = a.contribution_id
+      WHERE a.workspace_id = ? AND a.enabled = 1 AND c.contribution_id = ? AND c.contribution_type = 'page'
+      LIMIT 1`)
+      .bind(workspaceId, contributionId)
+      .first<{ plugin_id: string; contribution_id: string; contribution_type: string; source: UiSource; default_path: string | null; label: string | null; icon: string | null; navigation_section: NavigationSection | null; display_order: number; renderer_mode: UiRendererMode; component_id: string | null; required_permission: string | null; configurable_json: string; schema_json: string; enabled: number; visible_in_navigation: number; label_override: string | null; icon_override: string | null; navigation_section_override: NavigationSection | null; path_alias: string | null; order_index: number }>();
+    if (!row) return undefined;
+    const icon = row.icon_override ?? row.icon;
+    const contribution: InterfaceContributionRow = {
+        id: row.contribution_id,
+        pluginId: row.plugin_id,
+        path: row.default_path ? normalizeShellPath(row.path_alias ?? row.default_path) : "",
+        label: row.label_override ?? row.label ?? row.contribution_id,
+        ...(icon ? { icon } : {}),
+        section: row.navigation_section_override ?? row.navigation_section ?? "user",
+        displayOrder: row.order_index,
+        rendererMode: row.renderer_mode,
+        ...(row.component_id ? { componentId: row.component_id } : {}),
+        source: row.source,
+        ...(row.required_permission ? { requiredPermission: row.required_permission } : {}),
+        kind: row.contribution_type,
+        active: row.enabled === 1,
+        visibleInNavigation: row.visible_in_navigation === 1,
+        status: row.enabled === 1 ? "active" : "inactive",
+        configurable: safeJson(row.configurable_json, defaultConfigurable),
+    };
+    return {
+      contribution,
+      page: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)),
+    };
+  }
+
+  async updateInterfaceContribution(workspaceId: string, contributionId: string, input: Record<string, unknown>, actorId?: string) {
+    await this.ensurePlatformShellContributions(workspaceId);
+    const current = (await this.interfaceContributions(workspaceId)).find((item) => item.id === contributionId);
+    if (!current) throw new Error("Contribution not found");
+    const configurable = current.configurable;
+    if (protectedPlatformPages.has(contributionId) && input.enabled === false) throw new Error("Protected platform page cannot be disabled.");
+    const section = input.section === "user" || input.section === "administration" ? input.section : undefined;
+    if (section === "user" && current.requiredPermission && current.section === "administration") throw new Error("Administrative pages cannot be moved to user navigation.");
+    const label = configurable.canRename && typeof input.label === "string" ? input.label.trim().slice(0, 80) : undefined;
+    const icon = configurable.canChangeIcon && typeof input.icon === "string" ? input.icon.trim().slice(0, 40) : undefined;
+    const visible = configurable.canHide && typeof input.visibleInNavigation === "boolean" ? input.visibleInNavigation : undefined;
+    const order = configurable.canReorder && typeof input.displayOrder === "number" ? Math.trunc(input.displayOrder) : undefined;
+    const nextSection = configurable.canMoveSection ? section : undefined;
+    await this.db.prepare(`UPDATE workspace_ui_activations SET
+        visible_in_navigation = COALESCE(?, visible_in_navigation),
+        label_override = COALESCE(?, label_override),
+        icon_override = COALESCE(?, icon_override),
+        navigation_section_override = COALESCE(?, navigation_section_override),
+        order_index = COALESCE(?, order_index),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE workspace_id = ? AND contribution_id = ?`)
+      .bind(
+        visible === undefined ? null : visible ? 1 : 0,
+        label || null,
+        icon || null,
+        nextSection ?? null,
+        order ?? null,
+        workspaceId,
+        contributionId,
+      ).run();
+    await this.audit(workspaceId, "interface.contribution.update", { contributionId, input }, actorId);
+  }
+
+  async createManualPage(workspaceId: string, input: ManualPageInput, actorId?: string) {
+    await this.ensureManualPlugin(workspaceId);
+    const slug = input.slug.trim().toLowerCase().replaceAll(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "");
+    if (!slug) throw new Error("A page slug is required.");
+    const path = normalizeShellPath(slug);
+    if (reservedShellPaths.has(path) || path.startsWith("/public/") || path.startsWith("/setup/owner")) throw new Error("This path is reserved.");
+    const existing = (await this.interfaceContributions(workspaceId)).find((item) => item.path === path);
+    if (existing) throw new Error("A page already uses this path.");
+    const contributionId = manualContributionId(workspaceId, slug);
+    const title = input.title.trim().slice(0, 100) || "Manual page";
+    const label = (input.label?.trim() || title).slice(0, 80);
+    const section = input.navigationSection ?? "user";
+    const blocks = (input.blocks?.length ? input.blocks : [{ type: "heading" as const, text: title }, { type: "text" as const, text: "Add content from Interface settings." }]).map((block, index) => block.type === "heading"
+      ? { type: "heading" as const, text: block.text.slice(0, 160), level: index === 0 ? "h1" as const : "h2" as const }
+      : { type: "text" as const, text: block.text.slice(0, 1000), tone: "default" as const });
+    const page = declarativePageContributionSchema.parse({
+      id: contributionId,
+      title,
+      templateId: "public.contentPage",
+      access: "private",
+      slots: [{ id: `${contributionId}.body`, slot: "body", blocks }],
+      data: {},
+    });
+    await this.db.batch([
+      this.db.prepare(`INSERT INTO plugin_ui_contributions
+        (id, plugin_id, contribution_id, contribution_type, source, access_mode, zone_id, default_path, label, icon, navigation_section, display_order, renderer_mode, configurable_json, template_id, schema_json, required_permission, version, updated_at)
+        VALUES (?, 'manual', ?, 'page', 'manual', 'private', 'workspace.main', ?, ?, ?, ?, ?, 'declarative', ?, ?, ?, NULL, '0.0.0', CURRENT_TIMESTAMP)`)
+        .bind(`manual:${contributionId}:0.0.0`, contributionId, path, label, input.icon ?? null, section, input.displayOrder ?? 500, JSON.stringify(config(true)), page.templateId, JSON.stringify(page)),
+      this.db.prepare(`INSERT INTO workspace_ui_activations
+        (workspace_id, plugin_id, contribution_id, enabled, visible_in_navigation, zone_override, order_index)
+        VALUES (?, 'manual', ?, ?, ?, 'workspace.main', ?)`)
+        .bind(workspaceId, contributionId, input.enabled === false ? 0 : 1, input.visibleInNavigation === false ? 0 : 1, input.displayOrder ?? 500),
+    ]);
+    await this.audit(workspaceId, "interface.manual_page.create", { contributionId, path, title }, actorId);
+    return { contributionId, path };
+  }
+
+  async deleteManualPage(workspaceId: string, contributionId: string, actorId?: string) {
+    const current = (await this.interfaceContributions(workspaceId)).find((item) => item.id === contributionId);
+    if (!current || current.source !== "manual" || !current.configurable.canDelete) throw new Error("Only manual pages can be deleted.");
+    await this.db.batch([
+      this.db.prepare("DELETE FROM workspace_ui_activations WHERE workspace_id = ? AND plugin_id = 'manual' AND contribution_id = ?").bind(workspaceId, contributionId),
+      this.db.prepare("DELETE FROM plugin_ui_contributions WHERE plugin_id = 'manual' AND contribution_id = ?").bind(contributionId),
+    ]);
+    await this.audit(workspaceId, "interface.manual_page.delete", { contributionId }, actorId);
   }
 
   async privateRuntimeContribution(workspaceId: string, contributionId: string): Promise<RuntimeContributionResolution | undefined> {

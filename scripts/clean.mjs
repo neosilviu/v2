@@ -26,6 +26,7 @@ const modes = {
       "reports",
       "playwright-report",
       "test-results",
+      "migrations",
     ]),
   },
 };

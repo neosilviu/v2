@@ -5,6 +5,7 @@ import { executeRuntimeAction, loadRuntimeData } from "../api";
 import { CrudRenderer } from "./CrudRenderer";
 import { TemplateRenderer } from "./TemplateRenderer";
 import { RuntimeShellEditor } from "./RuntimeShellEditor";
+import { ShellBuilder } from "./ShellBuilder";
 
 type SectionPayload = Record<string, unknown> | { rows?: unknown[] } | unknown[] | null;
 type LoadedSection = { data: SectionPayload; error: string | null };
@@ -151,11 +152,11 @@ export function SettingsRenderer({ panel, shell, onShellChange }: { panel: Setti
       {panel.sections.map((section) => {
         const sectionData = loaded[section.id]?.data ?? null;
         const sectionError = loaded[section.id]?.error;
-        if (section.id === "interface.shell") {
+        if (section.id === "interface.builder") {
           return <section className="settings-subpanel" key={section.id}>
             <div className="surface-header"><div>{sectionTitle(section)}</div></div>
             {sectionError ? <p className="message">{sectionError}</p> : null}
-            <RuntimeShellEditor state={shell} onChange={onShellChange} />
+            <ShellBuilder />
             {section.actions.length ? <div className="plugin-actions" style={{ marginTop: "0.75rem" }}>{section.actions.map((action) => <Button key={action.id} className={action.variant === "primary" ? "primary" : action.variant === "danger" ? "danger" : ""} onClick={() => action.confirmation ? setPendingAction({ section, action }) : void runAction(action, null, { layout: shell })}>{action.title}</Button>)}</div> : null}
           </section>;
         }

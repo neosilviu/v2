@@ -15,7 +15,7 @@ const catalog = [
   { module: "../plugins/theme-studio/manifest.ts", exportName: "themeStudioPlugin", category: "design", demoAvailable: false },
   { module: "../plugins/local-node/manifest.ts", exportName: "localNodeManifest", category: "operations", demoAvailable: false },
   { module: "../plugins/website-studio/manifest.ts", exportName: "websiteStudioManifest", category: "site", demoAvailable: true },
-  { module: "../plugins/commerce/manifest.ts", exportName: "commerceManifest", category: "commerce", demoAvailable: true },
+  { module: "../plugins/commerce/manifest.ts", exportName: "commerceManifest", category: "commerce", demoAvailable: false },
 ];
 
 function readJsonc(file) {

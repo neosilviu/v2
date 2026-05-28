@@ -9,6 +9,7 @@ const workspaceId = process.env.V2_DEV_WORKSPACE_ID ?? "default";
 const email = process.env.V2_DEV_OWNER_EMAIL ?? "owner@example.local";
 const password = process.env.V2_DEV_OWNER_PASSWORD ?? "LocalDevPassword123!";
 const resetOwner = args.has("--reset-local-owner");
+const skipMarketplaceSync = args.has("--skip-marketplace-sync") || process.env.V2_DEV_SKIP_MARKETPLACE_SYNC === "1";
 const cookies = new Map();
 
 function run(name, command, commandArgs) {
@@ -25,6 +26,11 @@ function applyLocalMigrations() {
   for (const [directory, database] of [["apps/auth-worker", "v2-auth"], ["apps/core-worker", "v2-core"], ["plugins/website-studio", "v2-website-studio"]]) {
     run(`migrations ${database}`, "pnpm", ["--dir", directory, "exec", "wrangler", "d1", "migrations", "apply", database, "--local"]);
   }
+}
+
+function syncMarketplaceCatalog() {
+  if (skipMarketplaceSync) return;
+  run("Marketplace catalog sync", "pnpm", ["marketplace:sync"]);
 }
 
 function authSql(sql) {
@@ -142,6 +148,7 @@ async function ensureOwner() {
 async function main() {
   if (resetOwner) resetLocalOwner();
   applyLocalMigrations();
+  syncMarketplaceCatalog();
   await waitFor("Core", coreUrl, "/health");
   await waitFor("Auth", authUrl, "/health");
   await ensureOwner();

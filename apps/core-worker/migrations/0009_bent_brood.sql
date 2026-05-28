@@ -1,1 +1,0 @@
-ALTER TABLE `workspaces` ADD `status` text DEFAULT 'unprovisioned' NOT NULL;

@@ -1,44 +1,21 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { notification } from "@v2/feedback-runtime";
-import type { PluginManifest, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
 import type { Notification } from "@v2/rpc-contracts";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
-import { surfacesInZone, type ShellState } from "@v2/ui-runtime";
-import { consumeOwnerSetup, currentWorkspaceId, decideToolApproval, executeTool, invalidateApiCaches, isCoreAuthRequiredError, loadActivePlugins, loadCoreSession, loadCurrentImpersonation, loadCurrentRbac, loadInstalledPlugins, loadOwnerSetup, loadRuntimeTools, loadShellBootstrap, loadStartupBootstrap, loadWorkspaceUiSurfaces, runtimeSurfaceUrl, saveLayout, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RbacMe, type WorkspaceSummary } from "./api";
+import type { ShellState } from "@v2/ui-runtime";
+import { consumeOwnerSetup, currentWorkspaceId, invalidateApiCaches, isCoreAuthRequiredError, loadCoreSession, loadCurrentImpersonation, loadOwnerSetup, loadRuntimePage, loadStartupBootstrap, saveLayout, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RuntimeNavigationItem, type ShellBootstrap, type WorkspaceSummary } from "./api";
 import { AuthRequestError, ownerSetupSignUp, signInEmail, signOutAuth, updateAuthProfile } from "./auth-api";
-import { composeShellFromSurfaces, emptyShell } from "./shell";
+import { emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
-import { CommandPalette } from "./platform/CommandPalette";
-import { PluginManagerPanel } from "./platform/PluginManagerPanel";
-import { DeclarativeSurface } from "./platform/DeclarativeSurface";
-import { hasTrustedNativeSurface, TrustedNativeSurface } from "./platform/TrustedNativeSurface";
-import { ToolApprovalDialog } from "./platform/ToolApprovalDialog";
+import { TemplateRenderer } from "./platform/TemplateRenderer";
 import { LoginPage } from "./LoginPage";
 import { PublicPage } from "./PublicPage";
 import { SettingsPage } from "./SettingsPage";
 
-type Page = "overview" | "plugins" | "approvals" | "settings" | "profile" | `plugin:${string}`;
-type PendingApproval = { tool: ToolContribution; approvalId: string };
 type AuthStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
 
 function protectedRedirectTarget() {
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
-}
-
-function initialPage(): Page {
-  if (window.location.pathname === "/settings" || window.location.pathname === "/marketplace") return "settings";
-  if (window.location.pathname === "/profile") return "profile";
-  return "overview";
-}
-
-function RuntimeSurface({ surface }: { surface: SurfaceContribution }) {
-  if (surface.renderer.mode === "declarative" && surface.renderer.schema) return <DeclarativeSurface surface={surface} schema={surface.renderer.schema} />;
-  if (hasTrustedNativeSurface(surface.id)) return <TrustedNativeSurface surface={surface} />;
-  if (surface.renderer.mode === "sandbox-frame") return <SurfaceCard className="runtime-frame-surface">
-    <div className="surface-header"><div><small>external isolated extension</small><h2>{surface.title}</h2></div><Badge>{surface.kind}</Badge></div>
-    <iframe className="runtime-frame" title={surface.title} src={runtimeSurfaceUrl(surface.id)} sandbox="allow-scripts" loading="lazy" referrerPolicy="no-referrer" />
-  </SurfaceCard>;
-  return <SurfaceCard><small>runtime surface</small><h2>{surface.title}</h2><p>{surface.id}</p><Badge>{surface.kind}</Badge></SurfaceCard>;
 }
 
 function displayUser(session: CoreSession | null) {
@@ -50,7 +27,12 @@ function userInitial(session: CoreSession | null) {
   return displayUser(session).slice(0, 1).toUpperCase() || "W";
 }
 
-function UserMenu({ session, workspace, onOpenProfile, onOpenSettings, onSignOut }: { session: CoreSession | null; workspace: WorkspaceSummary | null; onOpenProfile: () => void; onOpenSettings: () => void; onSignOut: () => void }) {
+function shellFromBootstrap(bootstrap: ShellBootstrap): ShellState {
+  if (!bootstrap.layout) return emptyShell;
+  return { ...emptyShell, zones: bootstrap.layout.zones, placements: bootstrap.layout.placements };
+}
+
+function UserMenu({ session, workspace, accountPath, settingsPath, onOpenPath, onSignOut }: { session: CoreSession | null; workspace: WorkspaceSummary | null; accountPath?: string; settingsPath?: string; onOpenPath: (path: string) => void; onSignOut: () => void }) {
   const [open, setOpen] = useState(false);
   const closeAndRun = (action: () => void) => {
     setOpen(false);
@@ -64,8 +46,8 @@ function UserMenu({ session, workspace, onOpenProfile, onOpenSettings, onSignOut
       <strong>{displayUser(session)}</strong>
       {session?.user?.email ? <small>{session.user.email}</small> : null}
       <small>{workspace?.name ?? workspace?.id ?? "No workspace"}</small>
-      <button type="button" onClick={() => closeAndRun(onOpenProfile)}>Edit profile</button>
-      <button type="button" onClick={() => closeAndRun(onOpenSettings)}>Settings</button>
+      {accountPath ? <button type="button" onClick={() => closeAndRun(() => onOpenPath(accountPath))}>My Account</button> : null}
+      {settingsPath ? <button type="button" onClick={() => closeAndRun(() => onOpenPath(settingsPath))}>Settings</button> : null}
       <button type="button" onClick={() => closeAndRun(onSignOut)}>Sign out</button>
     </div> : null}
   </div>;
@@ -80,158 +62,94 @@ function WorkspaceSwitcher({ workspaces, workspaceId, onChange }: { workspaces: 
   </label>;
 }
 
-function OverviewPage({ plugins, activePluginIds, tools, surfaces, workspace, permissions, onOpenPlugins, onOpenSettings }: { plugins: PluginManifest[]; activePluginIds: Set<string>; tools: ToolContribution[]; surfaces: SurfaceContribution[]; workspace: WorkspaceSummary | null; permissions: string[]; onOpenPlugins: () => void; onOpenSettings: () => void }) {
-  return <>
-    <div className="metric-grid">
-      <SurfaceCard><small>workspace</small><h2>{workspace?.name ?? "No workspace"}</h2><p>{workspace?.status ?? "No active membership"}</p></SurfaceCard>
-      <SurfaceCard><small>capabilities</small><h2>{activePluginIds.size} active</h2><p>{plugins.length} installed feature plugins</p></SurfaceCard>
-      <SurfaceCard><small>access</small><h2>{permissions.length} grants</h2><p>{tools.length} runtime tools available from active plugins</p></SurfaceCard>
-    </div>
-    <div className="section-title"><h2>Setup</h2><Badge>{surfaces.length ? "extended" : "core"}</Badge></div>
-    <div className="cards">{surfaces.length ? surfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <SurfaceCard>
-      <small>platform dashboard</small>
-      <h2>Core workspace is ready</h2>
-      <p>Configure security, domains, mail delivery and interface settings before enabling feature plugins.</p>
-      <div className="actions"><Button onClick={onOpenSettings}>Open Settings</Button><Button onClick={onOpenPlugins}>Open Plugins</Button></div>
-    </SurfaceCard>}</div>
-  </>;
-}
-
-function PluginPage({ plugin, surfaces }: { plugin: PluginManifest; surfaces: SurfaceContribution[] }) {
+function DashboardPage({ bootstrap, onOpenPath }: { bootstrap: ShellBootstrap; onOpenPath: (path: string) => void }) {
+  const role = bootstrap.currentWorkspace.roles[0]?.name ?? "Member";
+  const account = bootstrap.navigation.find((item) => item.id === "platform.account");
+  const workspaces = bootstrap.navigation.find((item) => item.id === "platform.workspaces");
+  const settings = bootstrap.navigation.find((item) => item.id === "platform.settings");
   return <div className="page-stack">
-    <SurfaceCard className="plugin-profile">
-      <div className="surface-header"><div><small>{plugin.id}</small><h2>{plugin.name}</h2></div><Badge>{plugin.builtIn ? "trusted" : "installed"}</Badge></div>
-      <p>{plugin.version} · {plugin.capabilities.length} capabilities · {plugin.contributes.tools.length} tools</p>
+    <SurfaceCard>
+      <div className="surface-header">
+        <div><small>home</small><h2>Welcome, {displayUser(bootstrap.session)}</h2><p>{bootstrap.currentWorkspace.name} · {role}</p></div>
+        <Badge>{bootstrap.currentWorkspace.status}</Badge>
+      </div>
+      <div className="actions">
+        {workspaces ? <Button onClick={() => onOpenPath(workspaces.path)}>Switch workspace</Button> : null}
+        {account ? <Button onClick={() => onOpenPath(account.path)}>My Account</Button> : null}
+        {settings ? <Button className="primary" onClick={() => onOpenPath(settings.path)}>Settings</Button> : null}
+      </div>
     </SurfaceCard>
-    <div className="cards">{surfaces.length ? surfaces.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <SurfaceCard><small>plugin</small><h2>No native page</h2><p>This plugin contributes tools or settings without a workspace page.</p></SurfaceCard>}</div>
+    <div className="metric-grid">
+      <SurfaceCard><small>workspace</small><h2>{bootstrap.currentWorkspace.name}</h2><p>Active workspace context</p></SurfaceCard>
+      <SurfaceCard><small>role</small><h2>{role}</h2><p>{bootstrap.membership.permissions.length} permitted actions</p></SurfaceCard>
+      <SurfaceCard><small>access</small><h2>{bootstrap.workspaces.length}</h2><p>Workspace{bootstrap.workspaces.length === 1 ? "" : "s"} available</p></SurfaceCard>
+    </div>
   </div>;
 }
 
-function WorkspaceLoadingShell({ unavailable = false }: { unavailable?: boolean }) {
-  if (unavailable) return <main className="login-page">
-    <SurfaceCard className="login-panel">
-      <div className="surface-header"><div><small>workspace</small><h2>Workspace unavailable</h2></div><Badge>offline</Badge></div>
-      <p className="login-status">The workspace could not be loaded. Check the Core service and retry.</p>
-    </SurfaceCard>
-  </main>;
-  return <div className="app-shell" aria-busy="true" aria-label="Loading workspace">
-    <header className="topbar">
-      <span className="brand"><strong>v2</strong><Badge>runtime</Badge></span>
-      <span className="search">Loading workspace…</span>
-    </header>
-    <aside className="sidebar">
-      <div className="sidebar-label">WORKSPACE</div>
-      <p className="message">Loading…</p>
-    </aside>
-    <main className="workspace">
-      <div className="workspace-header"><div><h1>Workspace</h1><p>Loading your workspace…</p></div></div>
-    </main>
-  </div>;
+function WorkspacesPage({ bootstrap, onSwitchWorkspace }: { bootstrap: ShellBootstrap; onSwitchWorkspace: (workspaceId: string) => void }) {
+  return <SurfaceCard>
+    <div className="surface-header"><div><small>workspaces</small><h2>Workspaces</h2><p>Choose the workspace you want to use.</p></div><Badge>{bootstrap.workspaces.length}</Badge></div>
+    <div className="template-table-wrap domain-table">
+      <table>
+        <thead><tr><th>Workspace</th><th>Status</th><th>Role</th><th>Action</th></tr></thead>
+        <tbody>{bootstrap.workspaces.map((workspace) => <tr key={workspace.id}>
+          <td><strong>{workspace.name}</strong><small>{workspace.id}</small></td>
+          <td><Badge>{workspace.status}</Badge></td>
+          <td>{workspace.roles.map((role) => role.name).join(", ") || "Member"}</td>
+          <td><Button disabled={workspace.id === bootstrap.currentWorkspace.id} onClick={() => onSwitchWorkspace(workspace.id)}>{workspace.id === bootstrap.currentWorkspace.id ? "Current" : "Open"}</Button></td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </SurfaceCard>;
 }
 
-function ownerSetupErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof AuthRequestError) {
-    const code = (error.code ?? "").toLowerCase();
-    if (code.includes("expired")) return "This setup token expired. Ask an administrator to issue a new provisioning request.";
-    if (code.includes("revoked")) return "This setup token was revoked. Use the latest owner setup email.";
-    if (code.includes("consumed") || code.includes("replay")) return "This setup token was already consumed. Sign in to the workspace owner account.";
-    if (code.includes("mismatch") || code.includes("email")) return "This setup link only authorizes the owner email shown above.";
-    if (code.includes("account") || code.includes("user_exists") || error.status === 409) return "That owner account already exists. Sign in below and activate the setup link.";
-    if (code.includes("mail") || code.includes("setup_unavailable")) return "Owner setup mail or provisioning is unavailable. Retry after Core Mail is configured.";
-    return error.message || fallback;
-  }
-  return fallback;
-}
-
-function ProfilePage({ session, workspaces, currentWorkspace, onSessionChanged, onOpenSecurity, emit }: { session: CoreSession | null; workspaces: WorkspaceSummary[]; currentWorkspace: WorkspaceSummary | null; onSessionChanged: (session: CoreSession) => void; onOpenSecurity: () => void; emit: (item: Notification) => void }) {
+function MyAccountPage({ session, bootstrap, onSessionChanged, onSignOut }: { session: CoreSession | null; bootstrap: ShellBootstrap; onSessionChanged: (session: CoreSession) => void; onSignOut: () => void }) {
   const [name, setName] = useState(session?.user?.name ?? "");
-  const [rbac, setRbac] = useState<RbacMe | null>(null);
-  const [status, setStatus] = useState("Profile ready");
+  const [status, setStatus] = useState("Account ready");
   const [saving, setSaving] = useState(false);
-
   useEffect(() => setName(session?.user?.name ?? ""), [session?.user?.name]);
-
-  useEffect(() => {
-    let alive = true;
-    void loadCurrentRbac().then((loaded) => {
-      if (!alive) return;
-      setRbac(loaded);
-    }).catch(() => {
-      if (alive) setStatus("RBAC summary unavailable");
-    });
-    return () => { alive = false; };
-  }, []);
-
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaving(true);
-    setStatus("Saving profile...");
     try {
       await updateAuthProfile({ name });
-      const nextSession = await loadCoreSession();
-      onSessionChanged(nextSession);
+      onSessionChanged(await loadCoreSession());
       setStatus("Profile saved");
-      emit(notification("success", "Profile saved", "Your account display name was updated."));
     } catch {
       setStatus("Profile could not be saved");
-      emit(notification("error", "Profile not saved", "Auth profile update failed."));
     } finally {
       setSaving(false);
     }
   };
-
   return <div className="page-stack">
     <SurfaceCard>
-      <div className="surface-header">
-        <div><small>account</small><h2>Edit profile</h2><p>{status}</p></div>
-        <Badge>{session?.isAdmin ? "admin" : "member"}</Badge>
-      </div>
+      <div className="surface-header"><div><small>account</small><h2>My Account</h2><p>{status}</p></div><Badge>{session?.isAdmin ? "admin" : "member"}</Badge></div>
       <form className="profile-form" onSubmit={submit}>
         <label className="field">Display name<input value={name} onChange={(event) => setName(event.currentTarget.value)} placeholder="Your name" /></label>
-        <div className="actions"><Button className="primary" type="submit" disabled={saving}>{saving ? "Saving..." : "Save profile"}</Button><Button type="button" onClick={onOpenSecurity}>Security settings</Button></div>
+        <div className="actions"><Button className="primary" type="submit" disabled={saving}>{saving ? "Saving..." : "Save profile"}</Button><Button type="button" onClick={onSignOut}>Sign out</Button></div>
       </form>
     </SurfaceCard>
     <div className="settings-grid">
-      <section className="settings-subpanel">
-        <h3>Account</h3>
-        <p>Email: {session?.user?.email ?? "unknown"}</p>
-        <p>User ID: {session?.user?.id ?? "unknown"}</p>
-        <p>Name: {session?.user?.name ?? "unset"}</p>
-      </section>
-      <section className="settings-subpanel">
-        <h3>Workspace access</h3>
-        <p>Roles: {rbac?.roles.map((role) => typeof role === "string" ? role : role.name).join(", ") || "none"}</p>
-        <p>Permissions: {rbac?.permissions.length ?? 0}</p>
-        {rbac?.recoveryAdmin ? <p className="message">Recovery admin is active for this user.</p> : null}
-      </section>
+      <section className="settings-subpanel"><h3>Email</h3><p>{session?.user?.email ?? "unknown"}</p></section>
+      <section className="settings-subpanel"><h3>Workspace access</h3><p>{bootstrap.currentWorkspace.name}</p><p>{bootstrap.currentWorkspace.roles.map((role) => role.name).join(", ") || "Member"}</p></section>
+      <section className="settings-subpanel"><h3>Passkeys</h3><p>Manage passkeys from Security settings when enabled by your workspace.</p></section>
+      <section className="settings-subpanel"><h3>Active sessions</h3><p>Current browser session is active.</p></section>
     </div>
-    <SurfaceCard>
-      <div className="surface-header">
-        <div><small>workspace directory</small><h2>Accessible workspaces</h2><p>{workspaces.length ? `${workspaces.length} workspace(s) available` : "No accessible workspaces"}</p></div>
-        <Badge>{currentWorkspace?.id ?? "none"}</Badge>
-      </div>
-      <div className="template-table-wrap domain-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Workspace</th>
-              <th>Status</th>
-              <th>Roles</th>
-              <th>Permissions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {workspaces.length ? workspaces.map((workspace) => <tr key={workspace.id}>
-              <td><strong>{workspace.name}</strong><small>{workspace.id}{workspace.id === currentWorkspace?.id ? " · current" : ""}</small></td>
-              <td><Badge>{workspace.status}</Badge></td>
-              <td>{workspace.roles.map((role) => role.name).join(", ") || "none"}</td>
-              <td>{workspace.permissions.length}</td>
-            </tr>) : <tr><td colSpan={4}>No accessible workspaces were returned by Core.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </SurfaceCard>
   </div>;
+}
+
+function WorkspaceLoadingShell({ unavailable = false }: { unavailable?: boolean }) {
+  if (unavailable) return <main className="login-page"><SurfaceCard className="login-panel"><div className="surface-header"><div><small>workspace</small><h2>Workspace unavailable</h2></div><Badge>offline</Badge></div><p className="login-status">The workspace could not be loaded. Check the Core service and retry.</p></SurfaceCard></main>;
+  return <div className="app-shell" aria-busy="true" aria-label="Loading workspace">
+    <header className="topbar"><span className="brand"><strong>v2</strong><Badge>runtime</Badge></span><span className="search">Loading workspace...</span></header>
+    <aside className="sidebar"><div className="sidebar-label">WORKSPACE</div><p className="message">Loading...</p></aside>
+    <main className="workspace"><div className="workspace-header"><div><h1>Workspace</h1><p>Loading your workspace...</p></div></div></main>
+  </div>;
+}
+
+function NotFoundPage() {
+  return <SurfaceCard><small>navigation</small><h2>Page unavailable</h2><p>This page is not active for your workspace or your current access level.</p></SurfaceCard>;
 }
 
 export function App() {
@@ -239,86 +157,69 @@ export function App() {
   if (window.location.pathname === "/login") return <LoginPage />;
   if (window.location.pathname.startsWith("/public/")) return <PublicPage />;
 
-  const [plugins, setPlugins] = useState<PluginManifest[]>([]);
-  const [activePluginIds, setActivePluginIds] = useState<Set<string>>(new Set());
-  const [tools, setTools] = useState<ToolContribution[]>([]);
-  const [shell, setShell] = useState<ShellState>(emptyShell);
-  const [activePage, setActivePage] = useState<Page>(initialPage());
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
+  const [bootstrap, setBootstrap] = useState<ShellBootstrap | null>(null);
   const [session, setSession] = useState<CoreSession | null>(null);
   const [impersonation, setImpersonation] = useState<ImpersonationContext | null>(null);
-  const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
-  const [permissions, setPermissions] = useState<string[]>([]);
-  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
-  const [notice, setNotice] = useState("runtime ready · no feature plugin required");
+  const [activePath, setActivePath] = useState(window.location.pathname || "/");
+  const [shell, setShell] = useState<ShellState>(emptyShell);
+  const [notice, setNotice] = useState("runtime ready");
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [runtimePage, setRuntimePage] = useState<Awaited<ReturnType<typeof loadRuntimePage>> | null>(null);
   const emit = (item: Notification) => setNotifications((current) => [...current, item].slice(-5));
   const dismiss = (id: string) => setNotifications((current) => current.filter((item) => item.id !== id));
 
   useEffect(() => {
-    void loadStartupBootstrap().then((bootstrap) => {
-      if (!bootstrap) {
+    void loadStartupBootstrap().then((loaded) => {
+      if (!loaded) {
         setSession(null);
         setAuthStatus("anonymous");
         return;
       }
-      const installed = bootstrap.plugins;
-      const activeIds = bootstrap.active;
-      const runtimeTools = bootstrap.tools;
-      const layout = bootstrap.layout;
-      const runtimeSurfaces = bootstrap.surfaces;
-      const active = new Set(activeIds);
-      const composed = composeShellFromSurfaces(runtimeSurfaces);
-      setSession(bootstrap.session);
-      setWorkspace(bootstrap.currentWorkspace);
-      setWorkspaces(bootstrap.workspaces);
-      setPermissions(bootstrap.membership.permissions);
+      setBootstrap(loaded);
+      setSession(loaded.session);
+      setShell(shellFromBootstrap(loaded));
       setAuthStatus("authenticated");
-      setPlugins(installed);
-      setActivePluginIds(active);
-      setTools(runtimeTools);
-      setShell(layout ? { ...composed, zones: layout.zones, placements: layout.placements } : composed);
-      if (bootstrap.session.impersonated) {
-        void loadCurrentImpersonation().then(setImpersonation).catch(() => setImpersonation(null));
-      } else {
-        setImpersonation(null);
-      }
+      if (loaded.session.impersonated) void loadCurrentImpersonation().then(setImpersonation).catch(() => setImpersonation(null));
     }).catch((error) => {
       if (isCoreAuthRequiredError(error)) {
-        setSession(null);
         setAuthStatus("anonymous");
-        setNotice("auth required · workspace runtime data locked");
         return;
       }
       setAuthStatus("unavailable");
-      setNotice("core offline · protected shell locked");
+      setNotice("core offline");
     });
   }, []);
 
-  const assistant = useMemo(() => surfacesInZone(shell, "assistant.right"), [shell]);
-  const workspaceSurfaces = useMemo(() => surfacesInZone(shell, "workspace.main"), [shell]);
-  const activePlugins = useMemo(() => plugins.filter((plugin) => activePluginIds.has(plugin.id)), [activePluginIds, plugins]);
-  const pluginId = activePage.startsWith("plugin:") ? activePage.slice(7) : null;
-  const selectedPlugin = activePlugins.find((plugin) => plugin.id === pluginId) ?? null;
-  const selectedPluginSurfaces = selectedPlugin ? shell.surfaces.filter((surface) => surface.id.startsWith(`${selectedPlugin.id}.`)) : [];
-  const title = selectedPlugin?.name ?? (activePage === "plugins" ? "Plugins" : activePage === "approvals" ? "Approvals" : activePage === "settings" ? "Settings" : activePage === "profile" ? "Profile" : "Dashboard");
-  const subtitle = selectedPlugin ? "Active plugin workspace" : activePage === "approvals" ? "Approval queue for runtime tool execution" : activePage === "settings" ? "Platform and plugin administration" : activePage === "profile" ? "Account profile and workspace access" : "Workspace status and setup";
-  const headerContext = selectedPlugin ? `Plugin ${selectedPlugin.id}` : activePage === "settings" ? "Administration hub" : activePage === "approvals" ? "Approval queue" : activePage === "profile" ? "Account area" : "Workspace overview";
-  const headerPills = [
-    { label: workspace?.id ?? "no-workspace", value: "workspace" },
-    { label: `${activePluginIds.size}/${plugins.length}`, value: "plugins" },
-    { label: `${tools.length}`, value: "tools" },
-    { label: `${workspaces.length}`, value: "workspaces" },
-  ];
+  useEffect(() => {
+    const onPop = () => setActivePath(window.location.pathname || "/");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
-  const openPage = (page: Page, path = "/") => {
-    setActivePage(page);
-    window.history.replaceState(null, "", path);
+  const navigation = useMemo(() => [...(bootstrap?.navigation ?? [])].sort((left, right) => left.displayOrder - right.displayOrder), [bootstrap?.navigation]);
+  const selected = navigation.find((item) => item.path === activePath) ?? navigation.find((item) => item.path === "/" && activePath === "") ?? null;
+  const userNavigation = navigation.filter((item) => item.section === "user");
+  const adminNavigation = navigation.filter((item) => item.section === "administration");
+  const accountPath = navigation.find((item) => item.id === "platform.account")?.path;
+  const settingsPath = navigation.find((item) => item.id === "platform.settings")?.path;
+
+  useEffect(() => {
+    let alive = true;
+    setRuntimePage(null);
+    if (!selected || selected.rendererMode !== "declarative") return () => { alive = false; };
+    void loadRuntimePage(selected.id).then((page) => {
+      if (alive) setRuntimePage(page);
+    }).catch((error) => {
+      if (alive) setNotice(error instanceof Error ? error.message : "Page unavailable");
+    });
+    return () => { alive = false; };
+  }, [selected?.id, selected?.rendererMode]);
+
+  const openPath = (path: string) => {
+    setActivePath(path);
+    window.history.pushState(null, "", path);
   };
-
-  const openSecuritySettings = () => openPage("settings", "/settings?tab=platform.settings.security");
 
   const switchWorkspace = (workspaceId: string) => {
     setCurrentWorkspaceId(workspaceId);
@@ -327,67 +228,13 @@ export function App() {
     window.location.assign(`${url.pathname}${url.search}${url.hash}`);
   };
 
-  const runTool = async (tool: ToolContribution, approvalId?: string) => {
-    setPaletteOpen(false);
-    try {
-      const result = await executeTool(tool.id, approvalId);
-      if (result.status === "approval-required") {
-        setPendingApproval({ tool, approvalId: result.approvalId });
-        emit(notification("warning", "Approval required", `${tool.title} requires stored confirmation before execution.`));
-        return;
-      }
-      setPendingApproval(null);
-      setNotice(`${result.status}: ${tool.id}`);
-      emit(notification(result.status === "executed" ? "success" : "warning", tool.title, `Result: ${result.status}`, "runtime"));
-    } catch {
-      setNotice("core offline · tool unavailable");
-      emit(notification("error", "Tool unavailable", `${tool.title} could not be executed.`, "runtime"));
-    }
-  };
-
-  const approvePending = async () => {
-    if (!pendingApproval) return;
-    try {
-      await decideToolApproval(pendingApproval.approvalId, "approved");
-      await runTool(pendingApproval.tool, pendingApproval.approvalId);
-    } catch {
-      emit(notification("error", "Approval failed", "The approval could not be recorded or consumed."));
-    }
-  };
-
-  const persistLayout = async () => {
-    try {
-      await saveLayout(shell);
-      setNotice(`layout saved: ${currentWorkspaceId()}`);
-      emit(notification("success", "Layout saved", "Workspace layout was updated."));
-    } catch {
-      setNotice("core offline · layout not saved");
-      emit(notification("error", "Layout not saved", "The core service is unavailable."));
-    }
-  };
-
-  const refreshPlugins = async () => {
-    try {
-      const installed = await loadInstalledPlugins();
-      const activeIds = await loadActivePlugins();
-      const active = new Set(activeIds);
-      setPlugins(installed);
-      setActivePluginIds(active);
-      setShell(composeShellFromSurfaces(await loadWorkspaceUiSurfaces()));
-      setTools(await loadRuntimeTools());
-      emit(notification("success", "Plugins refreshed", "Runtime contributions have been reloaded."));
-    } catch {
-      emit(notification("error", "Refresh failed", "Installed plugins could not be loaded."));
-    }
-  };
-
   const signOut = async () => {
     try {
       await signOutAuth();
       invalidateApiCaches();
-      window.dispatchEvent(new Event("v2-auth-changed"));
       setSession(null);
       setImpersonation(null);
+      setBootstrap(null);
       setAuthStatus("anonymous");
       window.history.replaceState(null, "", "/login");
       emit(notification("success", "Signed out", "The current Auth session was closed."));
@@ -412,9 +259,38 @@ export function App() {
     }
   };
 
+  const persistLayout = async () => {
+    try {
+      await saveLayout(shell);
+      setNotice(`layout saved: ${currentWorkspaceId()}`);
+      emit(notification("success", "Layout saved", "Workspace layout was updated."));
+    } catch {
+      setNotice("core offline · layout not saved");
+      emit(notification("error", "Layout not saved", "The core service is unavailable."));
+    }
+  };
+
   if (authStatus === "checking") return <WorkspaceLoadingShell />;
   if (authStatus === "anonymous") return <LoginPage redirectTo={protectedRedirectTarget()} />;
-  if (authStatus === "unavailable") return <WorkspaceLoadingShell unavailable />;
+  if (authStatus === "unavailable" || !bootstrap) return <WorkspaceLoadingShell unavailable />;
+
+  const title = selected?.label ?? "Page unavailable";
+  const subtitle = selected ? `${selected.source} ${selected.rendererMode} page` : "This workspace page is not visible to your account";
+
+  const platformNativePages: Record<string, () => JSX.Element> = {
+    "platform.home": () => <DashboardPage bootstrap={bootstrap} onOpenPath={openPath} />,
+    "platform.workspaces": () => <WorkspacesPage bootstrap={bootstrap} onSwitchWorkspace={switchWorkspace} />,
+    "platform.account": () => <MyAccountPage session={session} bootstrap={bootstrap} onSessionChanged={setSession} onSignOut={() => void signOut()} />,
+    "platform.approvals": () => <ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} />,
+    "platform.settings": () => <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={() => undefined} />,
+  };
+  const renderSelected = () => {
+    if (!selected) return <NotFoundPage />;
+    if (selected.rendererMode === "native" && platformNativePages[selected.componentId ?? selected.id]) return platformNativePages[selected.componentId ?? selected.id]!();
+    if (selected.rendererMode === "declarative" && runtimePage) return <TemplateRenderer page={runtimePage.page} runtime={{ contributionId: selected.id }} />;
+    if (selected.rendererMode === "declarative") return <SurfaceCard><small>{selected.source}</small><h2>{selected.label}</h2><p>Loading page...</p></SurfaceCard>;
+    return <NotFoundPage />;
+  };
 
   return <>
     {impersonation ? <div role="status" style={{ position: "fixed", inset: "0 0 auto 0", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem", padding: "0.65rem 1rem", background: "#7c2d12", color: "#fff" }}>
@@ -424,47 +300,48 @@ export function App() {
     </div> : null}
     <div className="app-shell" style={impersonation ? { paddingTop: "3.25rem" } : undefined}>
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => openPage("overview")}><strong>v2</strong><Badge>runtime</Badge></button>
-        <button className="search" type="button" onClick={() => setPaletteOpen(true)}>Search commands or tools</button>
-        <WorkspaceSwitcher workspaces={workspaces} workspaceId={workspace?.id ?? currentWorkspaceId()} onChange={switchWorkspace} />
-        <UserMenu session={session} workspace={workspace} onOpenProfile={() => openPage("profile", "/profile")} onOpenSettings={() => openPage("settings", "/settings")} onSignOut={() => void signOut()} />
+        <button className="brand" type="button" onClick={() => openPath(navigation[0]?.path ?? "/")}><strong>v2</strong><Badge>runtime</Badge></button>
+        <span className="search">{title}</span>
+        <WorkspaceSwitcher workspaces={bootstrap.workspaces} workspaceId={bootstrap.currentWorkspace.id} onChange={switchWorkspace} />
+        <UserMenu session={session} workspace={bootstrap.currentWorkspace} {...(accountPath ? { accountPath } : {})} {...(settingsPath ? { settingsPath } : {})} onOpenPath={openPath} onSignOut={() => void signOut()} />
       </header>
       <aside className="sidebar">
-        <div className="sidebar-label">WORKSPACE</div>
-        <button className={activePage === "overview" ? "nav active" : "nav"} onClick={() => openPage("overview")}>Dashboard</button>
-        <button className={activePage === "plugins" ? "nav active" : "nav"} onClick={() => openPage("plugins", "/plugins")}>Plugins</button>
-        <button className={activePage === "approvals" ? "nav active" : "nav"} onClick={() => openPage("approvals", "/approvals")}>Approvals</button>
-        <button className={activePage === "settings" ? "nav active" : "nav"} onClick={() => openPage("settings", "/settings")}>Settings</button>
-        <div className="sidebar-label">APPS</div>
-        {activePlugins.length ? activePlugins.map((plugin) => <button key={plugin.id} className={activePage === `plugin:${plugin.id}` ? "nav active" : "nav"} onClick={() => openPage(`plugin:${plugin.id}`, `/plugins/${encodeURIComponent(plugin.id)}`)}>{plugin.name}</button>) : <p className="message">No active plugins</p>}
-        <div className="sidebar-account"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>{workspace?.name ?? workspace?.id ?? "no-workspace"}</small></div></div>
+        <div className="sidebar-label">USER</div>
+        {userNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}
+        {adminNavigation.length ? <div className="sidebar-label">ADMINISTRATION</div> : null}
+        {adminNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}
+        <div className="sidebar-account"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>{bootstrap.currentWorkspace.name}</small></div></div>
       </aside>
       <main className="workspace">
         <div className="workspace-header">
           <div>
             <h1>{title}</h1>
             <p>{subtitle}</p>
-            <div className="header-meta">
-              <Badge>{headerContext}</Badge>
-              {headerPills.map((pill) => <Badge key={pill.value}>{pill.label}</Badge>)}
-            </div>
+            <div className="header-meta"><Badge>{bootstrap.currentWorkspace.name}</Badge><Badge>{selected?.section ?? "none"}</Badge></div>
           </div>
-          <div className="header-actions"><Badge>{workspace?.id ?? "no-workspace"}</Badge><Button onClick={persistLayout}>Save layout</Button></div>
+          <div className="header-actions"><Badge>{bootstrap.currentWorkspace.status}</Badge><Button onClick={persistLayout}>Save layout</Button></div>
         </div>
-        {activePage === "overview" ? <OverviewPage plugins={plugins} activePluginIds={activePluginIds} tools={tools} surfaces={workspaceSurfaces} workspace={workspace} permissions={permissions} onOpenPlugins={() => setActivePage("plugins")} onOpenSettings={() => openPage("settings", "/settings")} /> : null}
-        {activePage === "plugins" ? <div className="cards"><PluginManagerPanel plugins={plugins} activePluginIds={activePluginIds} permissions={permissions} onChanged={() => void refreshPlugins()} /></div> : null}
-        {activePage === "approvals" ? <div className="cards"><ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} /></div> : null}
-        {activePage === "settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(installed, activeIds, runtimeShell) => { setPlugins(installed); setActivePluginIds(activeIds); setShell(runtimeShell); }} /> : null}
-        {activePage === "profile" ? <ProfilePage session={session} workspaces={workspaces} currentWorkspace={workspace} onSessionChanged={setSession} onOpenSecurity={openSecuritySettings} emit={emit} /> : null}
-        {selectedPlugin ? <PluginPage plugin={selectedPlugin} surfaces={selectedPluginSurfaces} /> : null}
+        {renderSelected()}
       </main>
-      <aside className="assistant">{assistant.length ? assistant.map((surface) => <RuntimeSurface key={surface.id} surface={surface} />) : <div className="message">No assistant plugin surface installed.</div>}</aside>
-    <footer className="statusbar"><span>{notice}</span><span>{activePluginIds.size}/{plugins.length} plugins active</span><span>Core {workspace?.id ?? "no-workspace"}</span></footer>
+      <aside className="assistant"><div className="message">Secondary workspace area is ready for active panel contributions.</div></aside>
+      <footer className="statusbar"><span>{notice}</span><span>{navigation.length} navigation items</span><span>Core {bootstrap.currentWorkspace.id}</span></footer>
     </div>
     <NotificationCenter notifications={notifications} onDismiss={dismiss} />
-    <CommandPalette tools={tools} open={paletteOpen} onClose={() => setPaletteOpen(false)} onExecute={(tool) => void runTool(tool)} />
-    <ToolApprovalDialog tool={pendingApproval?.tool ?? null} approvalId={pendingApproval?.approvalId ?? null} onCancel={() => setPendingApproval(null)} onApprove={() => void approvePending()} />
   </>;
+}
+
+function ownerSetupErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof AuthRequestError) {
+    const code = (error.code ?? "").toLowerCase();
+    if (code.includes("expired")) return "This setup token expired. Ask an administrator to issue a new provisioning request.";
+    if (code.includes("revoked")) return "This setup token was revoked. Use the latest owner setup email.";
+    if (code.includes("consumed") || code.includes("replay")) return "This setup token was already consumed. Sign in to the workspace owner account.";
+    if (code.includes("mismatch") || code.includes("email")) return "This setup link only authorizes the owner email shown above.";
+    if (code.includes("account") || code.includes("user_exists") || error.status === 409) return "That owner account already exists. Sign in below and activate the setup link.";
+    if (code.includes("mail") || code.includes("setup_unavailable")) return "Owner setup mail or provisioning is unavailable. Retry after Core Mail is configured.";
+    return error.message || fallback;
+  }
+  return fallback;
 }
 
 function OwnerSetupPage() {
@@ -494,7 +371,7 @@ function OwnerSetupPage() {
       setStatus("Activating workspace owner...");
       const result = await consumeOwnerSetup(token);
       setStatus("Owner activated. Opening Security administration...");
-      window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(result.workspaceId)}`);
+      window.location.assign(`/settings?workspace=${encodeURIComponent(result.workspaceId)}`);
     } catch (error) {
       setStatus(ownerSetupErrorMessage(error, "Owner setup could not be consumed by the current session."));
     }
@@ -515,8 +392,8 @@ function OwnerSetupPage() {
     try {
       setStatus("Creating owner account...");
       await ownerSetupSignUp({ token, email: setup.ownerEmail, name: name.trim() || setup.ownerEmail, password });
-      setStatus("Owner account created. Opening Security administration...");
-      window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(setup.workspaceId)}`);
+      setStatus("Owner account created. Opening workspace...");
+      window.location.assign(`/?workspace=${encodeURIComponent(setup.workspaceId)}`);
     } catch (error) {
       setStatus(ownerSetupErrorMessage(error, "Owner account could not be created. If the account already exists, sign in below and activate the setup link."));
     } finally {
@@ -534,8 +411,8 @@ function OwnerSetupPage() {
       const nextSession = await loadCoreSession();
       setSession(nextSession);
       await consumeOwnerSetup(token);
-      setStatus("Owner activated. Opening Security administration...");
-      window.location.assign(`/settings?tab=platform.settings.security&workspace=${encodeURIComponent(setup.workspaceId)}`);
+      setStatus("Owner activated. Opening workspace...");
+      window.location.assign(`/?workspace=${encodeURIComponent(setup.workspaceId)}`);
     } catch (error) {
       setStatus(ownerSetupErrorMessage(error, "Existing owner account could not activate this setup link."));
     } finally {
@@ -551,14 +428,7 @@ function OwnerSetupPage() {
     <SurfaceCard className="login-panel">
       <div className="surface-header"><div><small>workspace provisioning</small><h2>Owner setup</h2></div><Badge>{setup?.status ?? "checking"}</Badge></div>
       <p className="login-status">{status}</p>
-      {setup ? <div className="settings-subpanel">
-        <p>Workspace: {setup.workspaceId}</p>
-        <p>Owner email: {setup.ownerEmail}</p>
-        <p>Expires: {new Date(setup.expiresAt).toLocaleString()}</p>
-      </div> : null}
-      {setup?.status === "expired" ? <p className="login-status">This setup token expired. Ask an administrator to issue a new provisioning request.</p> : null}
-      {setup?.status === "consumed" ? <p className="login-status">This setup token was already consumed. Sign in to the workspace owner account.</p> : null}
-      {setup?.status === "revoked" ? <p className="login-status">This setup token was revoked. Use the latest owner setup email.</p> : null}
+      {setup ? <div className="settings-subpanel"><p>Workspace: {setup.workspaceId}</p><p>Owner email: {setup.ownerEmail}</p><p>Expires: {new Date(setup.expiresAt).toLocaleString()}</p></div> : null}
       {setup?.status === "pending" && !session?.authenticated ? <form className="profile-form" onSubmit={(event) => void createOwner(event)}>
         <label className="field">Authorized email<input type="email" value={setup.ownerEmail} readOnly /></label>
         <label className="field">Name<input value={name} onChange={(event) => setName(event.currentTarget.value)} autoComplete="name" /></label>
@@ -572,7 +442,6 @@ function OwnerSetupPage() {
         <div className="actions"><Button type="submit" disabled={busy}>Sign in and activate</Button><Button type="button" onClick={() => window.location.assign(loginTarget)}>Use full sign-in page</Button></div>
       </form> : null}
       {session?.authenticated ? <p className="login-status">Signed in as {signedInEmail}</p> : null}
-      {session?.authenticated && setup && signedInEmail.toLowerCase() !== setup.ownerEmail.toLowerCase() ? <p className="login-status">Sign in with the invited owner email to activate this workspace.</p> : null}
       <div className="actions"><Button className="primary" disabled={!canConsume} onClick={() => void consume()}>Activate owner access</Button></div>
     </SurfaceCard>
   </main>;
