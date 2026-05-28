@@ -70,7 +70,10 @@ async function authAdminJson<T>(c: CoreContext, path: string, init?: { method?: 
   if (cookie) headers.set("cookie", cookie);
   if (authorization) headers.set("authorization", authorization);
   if (init?.body) headers.set("content-type", "application/json");
-  const response = await c.env.AUTH.fetch(`https://auth.internal${path}`, { method: init?.method, body: init?.body, headers });
+  const requestInit = init?.body
+    ? { ...(init.method ? { method: init.method } : {}), body: init.body, headers }
+    : { ...(init?.method ? { method: init.method } : {}), headers };
+  const response = await c.env.AUTH.fetch(`https://auth.internal${path}`, requestInit);
   if (!response.ok) throw new Error(`Auth administration failed: ${response.status}`);
   return response.json() as Promise<T>;
 }
