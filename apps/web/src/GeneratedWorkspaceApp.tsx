@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { notification } from "@v2/feedback-runtime";
 import type { Notification } from "@v2/rpc-contracts";
 import { declarativePageContributionSchema, type ActionDefinition, type DeclarativePageContribution } from "@v2/ui-schema";
@@ -52,7 +52,7 @@ function platformPage(selected: RuntimeNavigationItem, bootstrap: ShellBootstrap
     actions: [{ id: "platform.account.save", title: "Save profile", commandId: "platform.account.save", intent: "submit", variant: "primary" }],
     slots: [{ id: "platform.account.header", slot: "header", blocks: [{ type: "text", text: "Profile fields are rendered from the platform page schema.", tone: "muted" }] }],
   });
-  return schema({ id: selected.id, title: selected.label, templateId: "admin.detail", access: "private", slots: [{ id: `${selected.id}.header`, slot: "header", blocks: [{ type: "text", text: "This platform contribution is awaiting a runtime schema.", tone: "muted" }] }] });
+  return schema({ id: selected.id, title: selected.label, templateId: "admin.detail", access: "private", slots: [{ id: `${selected.id}.header`, slot: "header", blocks: [{ type: "text", text: "This platform contribution is rendered through the generic runtime outlet.", tone: "muted" }] }] });
 }
 
 function loading(unavailable = false) {
@@ -110,13 +110,18 @@ export function GeneratedWorkspaceApp() {
   if (authStatus === "unavailable" || !bootstrap) return loading(true);
   const userNavigation = navigation.filter((item) => item.section === "user");
   const adminNavigation = navigation.filter((item) => item.section === "administration");
+  const pageOutput = selected?.id === "platform.settings"
+    ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(_, __, nextShell) => setShell(nextShell)} />
+    : selected && runtimePage
+      ? <TemplateRenderer page={runtimePage} runtime={{ contributionId: selected.id }} callbacks={{ onSubmit: submitPage, onAction: actionPage }} />
+      : <SurfaceCard><p className="message">Loading generated page...</p></SurfaceCard>;
 
   return <>
     {impersonation ? <div role="status" className="impersonation-bar"><strong>Impersonating {session?.user?.email ?? impersonation.subjectUserId}</strong><Button onClick={() => void stopImpersonating()}>Stop impersonation</Button></div> : null}
     <div className="app-shell">
       <header className="topbar"><button className="brand" type="button" onClick={() => openPath(navigation[0]?.path ?? "/")}><strong>v2</strong><Badge>generated runtime</Badge></button><span className="search">{selected?.label ?? "Workspace"}</span><label className="workspace-switcher"><small>Workspace</small><select value={bootstrap.currentWorkspace.id} onChange={(event) => switchWorkspace(event.currentTarget.value)}>{bootstrap.workspaces.map((workspace: WorkspaceSummary) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label><button className="user-button" type="button" onClick={() => void signOut()}><span className="avatar">{userInitial(session)}</span><span>{displayUser(session)}</span></button></header>
       <aside className="sidebar"><div className="sidebar-label">USER</div>{userNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}{adminNavigation.length ? <div className="sidebar-label">ADMINISTRATION</div> : null}{adminNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}</aside>
-      <main className="workspace"><div className="workspace-header"><div><h1>{selected?.label ?? "Workspace"}</h1><p>{selected ? `${selected.source} generated page` : "Page unavailable"}</p></div><div className="header-actions"><Badge>{bootstrap.currentWorkspace.status}</Badge><Button onClick={() => void persistLayout()}>Save layout</Button></div></div>{selected?.id === "platform.settings" ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(_, __, nextShell) => setShell(nextShell)} /> : runtimePage ? <TemplateRenderer page={runtimePage} runtime={{ contributionId: selected?.id }} callbacks={{ onSubmit: submitPage, onAction: actionPage }} /> : <SurfaceCard><p className="message">Loading generated page...</p></SurfaceCard>}</main>
+      <main className="workspace"><div className="workspace-header"><div><h1>{selected?.label ?? "Workspace"}</h1><p>{selected ? `${selected.source} generated page` : "Page unavailable"}</p></div><div className="header-actions"><Badge>{bootstrap.currentWorkspace.status}</Badge><Button onClick={() => void persistLayout()}>Save layout</Button></div></div>{pageOutput}{selected?.id === "platform.home" ? <RuntimeSurfaceZone surfaces={shell.surfaces} zoneId="workspace.main" /> : null}</main>
       <aside className="assistant"><RuntimeSurfaceZone surfaces={shell.surfaces} zoneId="assistant.right" emptyMessage="No active assistant panel contribution." /></aside>
       <footer className="statusbar"><span>{notice}</span><span>{navigation.length} navigation items</span><span>Core {bootstrap.currentWorkspace.id}</span></footer>
     </div>
