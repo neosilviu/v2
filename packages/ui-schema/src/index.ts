@@ -211,3 +211,98 @@ export type PlatformSettingsTabId = z.output<typeof platformSettingsTabIdSchema>
 export type RuntimeDataRequest = z.output<typeof runtimeDataRequestSchema>;
 export type RuntimeActionRequest = z.output<typeof runtimeActionRequestSchema>;
 export type RuntimeResultEnvelope = z.output<typeof runtimeResultEnvelopeSchema>;
+
+/**
+ * Lightweight builders compile terse UI declarations into the validated runtime schema.
+ * Storage, permission enforcement and execution remain backend responsibilities.
+ */
+export const ui = {
+  field(value: z.input<typeof fieldDefinitionSchema>): FieldDefinition {
+    return fieldDefinitionSchema.parse(value);
+  },
+  column(value: z.input<typeof columnDefinitionSchema>): ColumnDefinition {
+    return columnDefinitionSchema.parse(value);
+  },
+  action(value: z.input<typeof actionDefinitionSchema>): ActionDefinition {
+    return actionDefinitionSchema.parse(value);
+  },
+  submit(commandId: string, permission?: string, title = "Save"): ActionDefinition {
+    return actionDefinitionSchema.parse({
+      id: commandId,
+      title,
+      commandId,
+      intent: "submit",
+      variant: "primary",
+      placement: "form",
+      ...(permission ? { access: "permission-gated", requiredPermission: permission } : {}),
+      effects: [{ type: "toast", message: `${title} successful` }, { type: "refresh" }],
+    });
+  },
+  rowAction(commandId: string, title: string, options: Partial<z.input<typeof actionDefinitionSchema>> = {}): ActionDefinition {
+    return actionDefinitionSchema.parse({ id: commandId, commandId, title, placement: "row", ...options });
+  },
+  form(value: Omit<z.input<typeof settingsSectionSchema>, "kind">): SettingsSection {
+    return settingsSectionSchema.parse({ ...value, kind: "form" });
+  },
+  table(value: Omit<z.input<typeof settingsSectionSchema>, "kind">): SettingsSection {
+    return settingsSectionSchema.parse({ ...value, kind: "table" });
+  },
+  crud(value: Omit<z.input<typeof settingsSectionSchema>, "kind" | "crud"> & { entity: { singular: string; plural?: string; rowId?: string; titleField?: string }; operations: { create: string; update?: string; delete: string } }): SettingsSection {
+    const { entity, operations, ...section } = value;
+    return settingsSectionSchema.parse({
+      ...section,
+      kind: "crud",
+      crud: {
+        entityLabel: entity.singular,
+        entityLabelPlural: entity.plural ?? `${entity.singular}s`,
+        rowIdField: entity.rowId ?? "id",
+        ...(entity.titleField ? { rowTitleField: entity.titleField } : {}),
+        createActionId: operations.create,
+        updateActionId: operations.update ?? operations.create,
+        deleteActionId: operations.delete,
+      },
+    });
+  },
+  panel(value: {
+    id: string;
+    pluginId?: string;
+    label: string;
+    icon?: string;
+    order: number;
+    permission?: string;
+    sections: SettingsSection[];
+    category?: "platform" | "plugin";
+  }): { tab: SettingsTabContribution & { ownerName: string; orderIndex: number }; panel: SettingsPanelContribution } {
+    const pluginId = value.pluginId ?? "platform";
+    const panelId = `${value.id}.panel`;
+    const tab = settingsTabContributionSchema.parse({
+      id: value.id,
+      pluginId,
+      label: value.label,
+      ...(value.icon ? { icon: value.icon } : {}),
+      displayOrder: value.order,
+      category: value.category ?? "platform",
+      ...(value.permission ? { requiredPermission: value.permission } : {}),
+      panelContributionId: panelId,
+      status: "active",
+    });
+    const schema = declarativePageContributionSchema.parse({
+      id: panelId,
+      title: value.label,
+      templateId: "admin.settings",
+      access: value.permission ? "permission-gated" : "private",
+      slots: [{ id: `${value.id}.header`, slot: "header", blocks: [{ type: "text", text: `Manage ${value.label.toLowerCase()} for this workspace.`, tone: "muted" }] }],
+      data: {},
+    });
+    const panel = settingsPanelContributionSchema.parse({
+      id: panelId,
+      pluginId,
+      tabId: value.id,
+      templateId: "admin.settings",
+      schema,
+      sections: value.sections,
+      ...(value.permission ? { requiredPermission: value.permission } : {}),
+    });
+    return { tab: { ...tab, ownerName: pluginId === "platform" ? "Platform" : pluginId, orderIndex: value.order }, panel };
+  },
+};
