@@ -1,4 +1,5 @@
 import { hc } from "hono/client";
+import type { CoreApi } from "@v2/core-worker";
 import { z } from "zod";
 import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc-contracts";
@@ -10,58 +11,7 @@ import type { ShellState } from "@v2/ui-runtime";
 export type { CoreSession, StartupBootstrap, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary, InterfaceContribution, RuntimeNavigationItem } from "./platform-contracts";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
-type HonoRequestArgs = {
-  param?: Record<string, string>;
-  query?: Record<string, unknown>;
-  json?: unknown;
-  body?: BodyInit | null;
-  headers?: HeadersInit;
-};
-type HonoRoute = {
-  $get(args?: HonoRequestArgs): Promise<Response>;
-  $post(args?: HonoRequestArgs): Promise<Response>;
-  $put(args?: HonoRequestArgs): Promise<Response>;
-  $delete(args?: HonoRequestArgs): Promise<Response>;
-};
-type CoreApiClient = {
-  bootstrap: HonoRoute;
-  runtime: {
-    ui: { bootstrap: HonoRoute; surfaces: HonoRoute };
-    plugins: HonoRoute;
-    tools: HonoRoute;
-  };
-  session: {
-    $get(args?: HonoRequestArgs): Promise<Response>;
-    impersonation: { $get(args?: HonoRequestArgs): Promise<Response>; stop: { $post(args?: HonoRequestArgs): Promise<Response> } };
-  };
-  workspaces: {
-    current: { bootstrap: HonoRoute };
-    ":workspaceId": {
-      bootstrap: HonoRoute;
-      rbac: { me: HonoRoute };
-      interface: {
-        navigation: HonoRoute;
-        layout: HonoRoute;
-        pages: HonoRoute & { ":contributionId": HonoRoute };
-        contributions: HonoRoute & { ":contributionId": HonoRoute };
-      };
-      settings: { tabs: { $get(args?: HonoRequestArgs): Promise<Response>; ":tabId": HonoRoute }; runtime: { data: HonoRoute; actions: HonoRoute } };
-      "approval-requests": HonoRoute;
-      "tool-approvals": HonoRoute;
-      plugins: HonoRoute & { ":pluginId": { operations: { ":operationId": HonoRoute } } };
-      ui: { surfaces: HonoRoute };
-    };
-  };
-  setup: { owner: { $get(args?: HonoRequestArgs): Promise<Response>; consume: { $post(args?: HonoRequestArgs): Promise<Response> } } };
-  layouts: { $put(args?: HonoRequestArgs): Promise<Response> };
-  public: { ":workspaceId": { runtime: { data: HonoRoute; actions: HonoRoute } } };
-  plugins: { installed: HonoRoute; deactivate: { $post(args?: HonoRequestArgs): Promise<Response> }; upload: { $post(args?: HonoRequestArgs): Promise<Response> }; install: { $post(args?: HonoRequestArgs): Promise<Response> } };
-  "tool-approvals": { decision: { $post(args?: HonoRequestArgs): Promise<Response> } };
-  "approval-requests": { ":approvalId": { decision: { $post(args?: HonoRequestArgs): Promise<Response> } } };
-  marketplace: { plugins: { $get(args?: HonoRequestArgs): Promise<Response>; ":pluginId": { install: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
-  tools: { execute: { $post(args?: HonoRequestArgs): Promise<Response> } };
-};
-export const coreApi = hc(coreUrl, { init: { credentials: "include" } }) as unknown as CoreApiClient;
+export const coreApi = hc<CoreApi>(coreUrl, { init: { credentials: "include" } });
 
 let activeWorkspaceId: string | null = null;
 let shellBootstrap: Promise<ShellBootstrap> | null = null;
@@ -371,7 +321,7 @@ export async function loadRuntimeData(contributionId: string, dataSourceId: stri
 
 export async function executeRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> {
   if (isPlatformSettingsOperation(actionId)) {
-    return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, actionId, input, routeParams, approvalId: undefined } }), runtimeResultEnvelopeSchema);
+    return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, actionId, input, routeParams } }), runtimeResultEnvelopeSchema);
   }
   return invokePluginOperation(currentWorkspaceId(), actionId, input, routeParams);
 }
@@ -390,7 +340,7 @@ export async function executePublicRuntimeAction(contributionId: string, actionI
   return coreResponse(
     coreApi.public[":workspaceId"].runtime.actions.$post({
       param: { workspaceId: publicWorkspaceId },
-      json: { workspaceId: publicWorkspaceId, contributionId, actionId, input, routeParams, approvalId: undefined },
+      json: { workspaceId: publicWorkspaceId, contributionId, actionId, input, routeParams },
     }),
     runtimeResultEnvelopeSchema,
   );
