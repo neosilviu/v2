@@ -9,6 +9,7 @@ import { signOutAuth, updateAuthProfile } from "./auth-api";
 import { LoginPage } from "./LoginPage";
 import { SettingsPage } from "./SettingsPage";
 import { emptyShell, composeShellFromSurfaces } from "./shell";
+import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { TemplateRenderer } from "./platform/TemplateRenderer";
 import { RuntimeSurfaceZone } from "./platform/RuntimeSurfaceZone";
 import { loadRuntimeSurfaces } from "./platform/runtime-ui";
@@ -89,7 +90,7 @@ export function GeneratedWorkspaceApp() {
   useEffect(() => {
     let alive = true;
     setRuntimePage(null);
-    if (!selected || !bootstrap || selected.id === "platform.settings") return () => { alive = false; };
+    if (!selected || !bootstrap || selected.id === "platform.settings" || selected.id === "platform.approvals") return () => { alive = false; };
     if (selected.source === "platform" && selected.rendererMode === "native") { setRuntimePage(platformPage(selected, bootstrap, session)); return () => { alive = false; }; }
     void loadRuntimePage(selected.id).then((result) => { if (alive) setRuntimePage(result.page); }).catch(() => { if (alive) setRuntimePage(platformPage(selected, bootstrap, session)); });
     return () => { alive = false; };
@@ -112,9 +113,11 @@ export function GeneratedWorkspaceApp() {
   const adminNavigation = navigation.filter((item) => item.section === "administration");
   const pageOutput = selected?.id === "platform.settings"
     ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(_, __, nextShell) => setShell(nextShell)} />
-    : selected && runtimePage
-      ? <TemplateRenderer page={runtimePage} runtime={{ contributionId: selected.id }} callbacks={{ onSubmit: submitPage, onAction: actionPage }} />
-      : <SurfaceCard><p className="message">Loading generated page...</p></SurfaceCard>;
+    : selected?.id === "platform.approvals"
+      ? <ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} />
+      : selected && runtimePage
+        ? <TemplateRenderer page={runtimePage} runtime={{ contributionId: selected.id }} callbacks={{ onSubmit: submitPage, onAction: actionPage }} />
+        : <SurfaceCard><p className="message">Loading generated page...</p></SurfaceCard>;
 
   return <>
     {impersonation ? <div role="status" className="impersonation-bar"><strong>Impersonating {session?.user?.email ?? impersonation.subjectUserId}</strong><Button onClick={() => void stopImpersonating()}>Stop impersonation</Button></div> : null}
