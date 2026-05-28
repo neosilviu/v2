@@ -3,6 +3,7 @@ import { z } from "zod";
 import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc-contracts";
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
+import { pluginManifestSchema, surfaceSchema, toolSchema } from "@v2/plugin-contracts";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
 import { approvalRequestListSchema, coreSessionSchema, startupBootstrapSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, interfaceContributionSchema, type CoreSession, type StartupBootstrap, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary, type InterfaceContribution } from "./platform-contracts";
 import type { ShellState } from "@v2/ui-runtime";
@@ -24,6 +25,11 @@ type HonoRoute = {
 };
 type CoreApiClient = {
   bootstrap: HonoRoute;
+  runtime: {
+    ui: { bootstrap: HonoRoute; surfaces: HonoRoute };
+    plugins: HonoRoute;
+    tools: HonoRoute;
+  };
   session: {
     $get(args?: HonoRequestArgs): Promise<Response>;
     impersonation: { $get(args?: HonoRequestArgs): Promise<Response>; stop: { $post(args?: HonoRequestArgs): Promise<Response> } };
@@ -42,13 +48,14 @@ type CoreApiClient = {
       settings: { tabs: { $get(args?: HonoRequestArgs): Promise<Response>; ":tabId": HonoRoute }; runtime: { data: HonoRoute; actions: HonoRoute } };
       "approval-requests": HonoRoute;
       "tool-approvals": HonoRoute;
-      plugins: { ":pluginId": { operations: { ":operationId": HonoRoute } } };
+      plugins: HonoRoute & { ":pluginId": { operations: { ":operationId": HonoRoute } } };
+      ui: { surfaces: HonoRoute };
     };
   };
   setup: { owner: { $get(args?: HonoRequestArgs): Promise<Response>; consume: { $post(args?: HonoRequestArgs): Promise<Response> } } };
   layouts: { $put(args?: HonoRequestArgs): Promise<Response> };
   public: { ":workspaceId": { runtime: { data: HonoRoute; actions: HonoRoute } } };
-  plugins: { deactivate: { $post(args?: HonoRequestArgs): Promise<Response> }; upload: { $post(args?: HonoRequestArgs): Promise<Response> }; install: { $post(args?: HonoRequestArgs): Promise<Response> } };
+  plugins: { installed: HonoRoute; deactivate: { $post(args?: HonoRequestArgs): Promise<Response> }; upload: { $post(args?: HonoRequestArgs): Promise<Response> }; install: { $post(args?: HonoRequestArgs): Promise<Response> } };
   "tool-approvals": { decision: { $post(args?: HonoRequestArgs): Promise<Response> } };
   "approval-requests": { ":approvalId": { decision: { $post(args?: HonoRequestArgs): Promise<Response> } } };
   marketplace: { plugins: { $get(args?: HonoRequestArgs): Promise<Response>; ":pluginId": { install: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
@@ -59,6 +66,7 @@ export const coreApi = hc(coreUrl, { init: { credentials: "include" } }) as unkn
 let activeWorkspaceId: string | null = null;
 let shellBootstrap: Promise<ShellBootstrap> | null = null;
 let startupBootstrap: Promise<ShellBootstrap | null> | null = null;
+let runtimeUiBootstrap: Promise<RuntimeUiBootstrap> | null = null;
 
 function workspaceFromLocation() {
   const params = new URLSearchParams(window.location.search);
@@ -92,6 +100,10 @@ function resetShellBootstrap() {
   shellBootstrap = null;
 }
 
+function resetRuntimeUiBootstrap() {
+  runtimeUiBootstrap = null;
+}
+
 export function isCoreAuthRequiredError(error: unknown): error is CoreAuthRequiredError {
   return error instanceof CoreAuthRequiredError;
 }
@@ -99,6 +111,7 @@ export function isCoreAuthRequiredError(error: unknown): error is CoreAuthRequir
 export function invalidateApiCaches() {
   shellBootstrap = null;
   startupBootstrap = null;
+  runtimeUiBootstrap = null;
 }
 
 async function parseCoreError(response: Response) {
@@ -131,7 +144,11 @@ async function coreResponse<T>(request: Promise<Response>, schema: { parse(input
 }
 
 async function resolvePluginOperation(operationId: string): Promise<{ pluginId: string; operation: PluginOperation } | null> {
-  void operationId;
+  const plugins = await loadInstalledPlugins();
+  for (const plugin of plugins) {
+    const operation = plugin.api.operations.find((item) => item.id === operationId);
+    if (operation) return { pluginId: plugin.id, operation };
+  }
   return null;
 }
 
@@ -230,7 +247,6 @@ export async function stopCurrentImpersonation(): Promise<{ restored: boolean; r
   return { restored: response.restored, reauthenticationRequired: response.reauthenticationRequired };
 }
 
-
 export async function loadOwnerSetup(token: string): Promise<{ setup: { workspaceId: string; ownerEmail: string; status: string; expiresAt: string } }> {
   return coreResponse(coreApi.setup.owner.$get({ query: { token } }), ownerSetupStatusSchema);
 }
@@ -238,7 +254,7 @@ export async function loadOwnerSetup(token: string): Promise<{ setup: { workspac
 export async function consumeOwnerSetup(token: string): Promise<{ status: "consumed"; workspaceId: string }> {
   const result = await coreResponse(coreApi.setup.owner.consume.$post({ json: { token } }), ownerSetupConsumeResponseSchema);
   setCurrentWorkspaceId(result.workspaceId);
-  resetShellBootstrap();
+  invalidateApiCaches();
   return result;
 }
 
@@ -252,7 +268,7 @@ export function runtimeSurfaceUrl(surfaceId: string): string {
 
 export async function saveLayout(state: ShellState): Promise<void> {
   await coreResponse(coreApi.layouts.$put({ json: { workspaceId: currentWorkspaceId(), layout: { zones: state.zones, placements: state.placements } } }), { parse: () => undefined });
-  resetShellBootstrap();
+  invalidateApiCaches();
 }
 
 export async function loadInterfaceContributions(): Promise<InterfaceContribution[]> {
@@ -294,12 +310,33 @@ export async function loadRuntimePage(contributionId: string): Promise<{ contrib
   );
 }
 
+const runtimeUiBootstrapSchema = z.object({
+  plugins: z.array(pluginManifestSchema),
+  active: z.array(z.string()),
+  tools: z.array(toolSchema),
+  surfaces: z.array(surfaceSchema),
+});
+type RuntimeUiBootstrap = z.output<typeof runtimeUiBootstrapSchema>;
+
+async function loadRuntimeUiBootstrap() {
+  if (!runtimeUiBootstrap) {
+    runtimeUiBootstrap = coreResponse(
+      coreApi.runtime.ui.bootstrap.$get({ query: { workspaceId: currentWorkspaceId() } }),
+      runtimeUiBootstrapSchema,
+    ).catch((error) => {
+      resetRuntimeUiBootstrap();
+      throw error;
+    });
+  }
+  return runtimeUiBootstrap;
+}
+
 export async function loadActivePlugins(): Promise<string[]> {
-  return [];
+  return (await loadRuntimeUiBootstrap()).active;
 }
 
 export async function loadWorkspaceUiSurfaces(): Promise<SurfaceContribution[]> {
-  return [];
+  return (await loadRuntimeUiBootstrap()).surfaces;
 }
 
 export async function loadSettingsTabs(): Promise<RuntimeSettingsTab[]> {
@@ -329,14 +366,14 @@ export async function loadRuntimeData(contributionId: string, dataSourceId: stri
   if (isPlatformSettingsOperation(dataSourceId)) {
     return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.data.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, dataSourceId, routeParams, queryParams: {} } }), runtimeResultEnvelopeSchema);
   }
-  return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.data.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, dataSourceId, routeParams, queryParams: {} } }), runtimeResultEnvelopeSchema);
+  return invokePluginOperation(currentWorkspaceId(), dataSourceId, undefined, routeParams);
 }
 
 export async function executeRuntimeAction(contributionId: string, actionId: string, input?: unknown, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> {
   if (isPlatformSettingsOperation(actionId)) {
     return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, actionId, input, routeParams, approvalId: undefined } }), runtimeResultEnvelopeSchema);
   }
-  return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, actionId, input, routeParams, approvalId: undefined } }), runtimeResultEnvelopeSchema);
+  return invokePluginOperation(currentWorkspaceId(), actionId, input, routeParams);
 }
 
 export async function loadPublicRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}, publicWorkspaceId = currentWorkspaceId()): Promise<RuntimeResultEnvelope> {
@@ -361,7 +398,7 @@ export async function executePublicRuntimeAction(contributionId: string, actionI
 
 export async function deactivatePlugin(pluginId: string): Promise<void> {
   await coreResponse(coreApi.plugins.deactivate.$post({ json: { workspaceId: currentWorkspaceId(), pluginId } }), { parse: () => undefined });
-  resetShellBootstrap();
+  invalidateApiCaches();
 }
 
 export async function executeTool(toolId: string, approvalId?: string): Promise<ToolExecutionResult> {
@@ -393,7 +430,7 @@ export async function decideApprovalRequest(approvalId: string, decision: "appro
 }
 
 export async function loadInstalledPlugins(): Promise<PluginManifest[]> {
-  return [];
+  return (await loadRuntimeUiBootstrap()).plugins;
 }
 
 export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> {
@@ -402,24 +439,24 @@ export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> {
 
 export async function installMarketplacePlugin(pluginId: string, approvalId?: string): Promise<PluginInstallResult> {
   const result = await coreResponse(coreApi.marketplace.plugins[":pluginId"].install.$post({ param: { pluginId }, query: { workspaceId: currentWorkspaceId() }, json: approvalId ? { approvalId } : {} }), pluginInstallResultSchema);
-  resetShellBootstrap();
+  invalidateApiCaches();
   return result;
 }
 
 export async function loadRuntimeTools(): Promise<ToolContribution[]> {
-  return [];
+  return (await loadRuntimeUiBootstrap()).tools;
 }
 
 export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }> {
   const body = new FormData();
   body.append("file", file);
   const result = await coreResponse(coreApi.plugins.upload.$post({ query: { workspaceId: currentWorkspaceId() }, body }), { parse: (value) => value as { status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] } });
-  resetShellBootstrap();
+  invalidateApiCaches();
   return result;
 }
 
 export async function approveInstall(approvalId: string): Promise<PluginManifest> {
   const manifest = (await coreResponse(coreApi.plugins.install.$post({ json: { workspaceId: currentWorkspaceId(), approvalId } }), { parse: (value) => value as { status: string; manifest: PluginManifest } })).manifest;
-  resetShellBootstrap();
+  invalidateApiCaches();
   return manifest;
 }
