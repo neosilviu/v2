@@ -29,7 +29,16 @@ jobs:
           if-no-files-found: error
       - run: pnpm --filter @v2/web build
       - run: pnpm build:analyze
-      - run: pnpm test:generated -- --check-migrations
+      - name: Run generated and migration validation
+        run: pnpm test:generated -- --check-migrations 2>&1 | tee /tmp/v2-generated.log
+        shell: bash
+      - name: Upload generated validation output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-validation-output
+          path: /tmp/v2-generated.log
+          if-no-files-found: error
       - run: pnpm guard:architecture
       - run: pnpm exec playwright install --with-deps chromium
       - name: Production-like local smoke, browser and performance gates
