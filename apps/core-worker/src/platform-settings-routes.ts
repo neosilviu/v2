@@ -15,16 +15,12 @@ async function requirePermission(c: { env: CoreEnv; get: (name: "user") => User;
   return allowed ? undefined : c.json(errorResponse(failure("not_authorized", `${permission} permission is required.`)), 403);
 }
 
-/**
- * Platform settings are source-controlled compact UI declarations. The
- * platform tab registry intentionally does not depend on legacy seeded D1
- * contributions; plugin settings can be reintroduced through a dedicated
- * runtime contribution query once that registry is exposed by repository.
- */
+/** Platform Settings remain compact source-controlled declarations while the
+ * runtime API contract stays stable on /settings/tabs for Web + generated tests. */
 export function createPlatformSettingsRoutes() {
   const routes = new Hono<{ Bindings: CoreEnv; Variables: Variables }>();
 
-  routes.get("/workspaces/:workspaceId/settings/schema/tabs", async (c) => {
+  routes.get("/workspaces/:workspaceId/settings/tabs", async (c) => {
     const workspaceId = c.req.param("workspaceId");
     const denied = await requirePermission(c, workspaceId, "workspace.settings.read");
     if (denied) return denied;
@@ -32,7 +28,7 @@ export function createPlatformSettingsRoutes() {
     return c.json({ tabs });
   });
 
-  routes.get("/workspaces/:workspaceId/settings/schema/tabs/:tabId", async (c) => {
+  routes.get("/workspaces/:workspaceId/settings/tabs/:tabId", async (c) => {
     const workspaceId = c.req.param("workspaceId");
     const denied = await requirePermission(c, workspaceId, "workspace.settings.read");
     if (denied) return denied;
