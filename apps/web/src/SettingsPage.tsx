@@ -17,9 +17,10 @@ type SettingsPageProps = {
 const tabDescriptions: Record<string, string> = {
   "platform.settings.general": "Workspace name, branding, locale and public contact details.",
   "platform.settings.mail": "Transactional email providers and delivery verification.",
-  "platform.settings.security": "Authentication, members, permissions and access control.",
+  "platform.settings.security": "Users, roles, authentication, plans, limits and access control.",
   "platform.settings.audit": "Workspace activity and administrative history.",
-  "platform.settings.plans": "Plans, usage limits and customer assignments.",
+  "platform.settings.plans": "Legacy plan administration retained for existing configured workspaces.",
+  "platform.settings.plugins": "Marketplace catalog, installed runtimes and feature activation.",
   "platform.settings.domains": "Domains used by websites, authentication and mail.",
   "platform.settings.interface": "Navigation, layout and interface customization.",
 };
