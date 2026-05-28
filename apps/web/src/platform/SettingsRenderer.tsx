@@ -177,22 +177,23 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
           </section>;
         }
         if (section.kind === "crud" && section.crud) {
-          return <CrudRenderer
-            key={section.id}
-            title={section.title}
-            description={section.description}
-            status={sectionError ?? undefined}
-            busy={submitting}
-            rows={rowsFromData(sectionData)}
-            columns={section.columns}
-            fields={section.fields}
-            crud={section.crud}
-            onRefresh={refresh}
-            onCreate={(values) => runAction(actionDefinition(section.crud!.createActionId, "Add", "primary"), null, values)}
-            onUpdate={(row, values) => runAction(actionDefinition(section.crud!.updateActionId, "Save", "primary"), row, values)}
-            onDelete={(row) => runAction(actionDefinition(section.crud!.deleteActionId, "Remove", "danger"), row, {})}
-            onRowAction={(action, row) => runAction(action, row, {})}
-          />;
+          const sharedProps = {
+            title: section.title,
+            status: sectionError ?? undefined,
+            busy: submitting,
+            rows: rowsFromData(sectionData),
+            columns: section.columns,
+            fields: section.fields,
+            crud: section.crud,
+            onRefresh: refresh,
+            onCreate: (values: Record<string, unknown>) => runAction(actionDefinition(section.crud!.createActionId, "Add", "primary"), null, values),
+            onUpdate: (row: Record<string, unknown>, values: Record<string, unknown>) => runAction(actionDefinition(section.crud!.updateActionId, "Save", "primary"), row, values),
+            onDelete: (row: Record<string, unknown>) => runAction(actionDefinition(section.crud!.deleteActionId, "Remove", "danger"), row, {}),
+            onRowAction: (action: ActionDefinition, row: Record<string, unknown>) => runAction(action, row, {}),
+          };
+          return section.description
+            ? <CrudRenderer key={section.id} {...sharedProps} description={section.description} />
+            : <CrudRenderer key={section.id} {...sharedProps} />;
         }
         if (section.kind === "form") {
           const authMethods = section.id === "security.authentication" && sectionData && typeof sectionData === "object" && Array.isArray((sectionData as { methods?: unknown[] }).methods)
