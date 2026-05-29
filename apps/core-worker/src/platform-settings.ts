@@ -21,7 +21,7 @@ const authentication = ui.form({
 const roles = ui.crud({
   id: "security.roles",
   title: "Roles & permissions",
-  description: "Reusable access profiles assigned to workspace users.",
+  description: "Reusable access profiles assigned to workspace users. System roles are protected.",
   dataSourceId: "platform.settings.rbac.roles",
   entity: { singular: "Role", plural: "Roles", titleField: "name" },
   operations: { create: "platform.settings.rbac.role.create", update: "platform.settings.rbac.role.update", delete: "platform.settings.rbac.role.delete" },
@@ -34,20 +34,31 @@ const roles = ui.crud({
   fields: [
     field({ id: "name", label: "Name", type: "text", required: true }),
     field({ id: "description", label: "Description", type: "textarea" }),
+    field({ id: "permissions", label: "Permissions (comma-separated)", type: "textarea" }),
+  ],
+  rowActions: [
+    ui.rowAction("platform.settings.rbac.role.clone", "Clone", { access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Clone role", fields: [field({ id: "name", label: "New role name", type: "text", required: true })] } }),
   ],
 });
 
-const members = ui.table({
+const members = ui.crud({
   id: "security.members",
-  title: "Users, roles & overrides",
-  description: "Review member status, role access and start audited impersonation for support.",
+  title: "Workspace users",
+  description: "Create invited members, assign roles, disable access and start audited impersonation for support.",
   dataSourceId: "platform.settings.rbac.members",
+  entity: { singular: "User", plural: "Users", rowId: "userId", titleField: "user" },
+  operations: { create: "platform.settings.rbac.member.invite", update: "platform.settings.rbac.member.update", delete: "platform.settings.rbac.member.delete" },
   columns: [
     column({ id: "user", label: "User", field: "user" }),
     column({ id: "status", label: "Status", field: "status", type: "badge" }),
     column({ id: "roles", label: "Roles", field: "roles" }),
     column({ id: "permissions", label: "Permissions", field: "permissions" }),
     column({ id: "overrides", label: "Overrides", field: "overrides" }),
+  ],
+  fields: [
+    field({ id: "user", label: "Email", type: "email", required: true }),
+    field({ id: "status", label: "Status", type: "select", required: true, options: [{ value: "invited", label: "Invited" }, { value: "active", label: "Active" }, { value: "disabled", label: "Disabled" }] }),
+    field({ id: "roleIds", label: "Role IDs (comma-separated)", type: "text" }),
   ],
   rowActions: [
     ui.rowAction("platform.settings.rbac.member.impersonate", "Impersonate", { variant: "primary", access: "permission-gated", requiredPermission: "workspace.impersonate", confirmation: { title: "Impersonate user", message: "You will switch into the selected user's view. This action is audited.", reasonRequired: true, fields: [field({ id: "reason", label: "Reason", type: "textarea", required: true })] }, effects: [{ type: "toast", message: "Impersonation started" }, { type: "closeDialog" }, { type: "navigate", to: "/" }] }),
@@ -57,13 +68,26 @@ const members = ui.table({
   ],
 });
 
+const permissions = ui.table({
+  id: "security.permissions",
+  title: "Permission matrix",
+  description: "Effective permission keys assigned by roles and user-specific overrides.",
+  dataSourceId: "platform.settings.rbac.permissions",
+  columns: [
+    column({ id: "permission", label: "Permission", field: "permission" }),
+    column({ id: "category", label: "Category", field: "category" }),
+    column({ id: "roles", label: "Roles", field: "roles" }),
+    column({ id: "overrides", label: "Overrides", field: "overrides" }),
+  ],
+});
+
 const plans = ui.crud({
   id: "access.plans",
   title: "Plans & limits",
   description: "Subscription plans that control workspace and feature entitlements.",
   dataSourceId: "platform.settings.plans.list",
   entity: { singular: "Plan", plural: "Plans", titleField: "name" },
-  operations: { create: "platform.settings.plans.upsert", delete: "platform.settings.plans.delete" },
+  operations: { create: "platform.settings.plans.upsert", update: "platform.settings.plans.upsert", delete: "platform.settings.plans.delete" },
   columns: [
     column({ id: "id", label: "Plan ID", field: "id" }),
     column({ id: "name", label: "Name", field: "name" }),
@@ -84,7 +108,7 @@ const assignments = ui.crud({
   description: "Connect workspace users to subscription plans and their active access state.",
   dataSourceId: "platform.settings.plans.assignments",
   entity: { singular: "Assignment", plural: "Assignments", titleField: "planId" },
-  operations: { create: "platform.settings.plans.assignment.upsert", delete: "platform.settings.plans.assignment.delete" },
+  operations: { create: "platform.settings.plans.assignment.upsert", update: "platform.settings.plans.assignment.upsert", delete: "platform.settings.plans.assignment.delete" },
   columns: [
     column({ id: "userId", label: "User", field: "userId" }),
     column({ id: "planId", label: "Plan", field: "planId" }),
@@ -106,7 +130,7 @@ export function platformSettingsTabs() {
     id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read",
     sections: [ui.form({ id: "general.workspace", title: "Workspace settings", description: "Workspace name, language, timezone, currency and branding.", dataSourceId: "platform.settings.general.read", fields: [field({ id: "workspaceName", label: "Workspace name", type: "text", required: true }), field({ id: "language", label: "Language", type: "text" }), field({ id: "timezone", label: "Timezone", type: "text" }), field({ id: "defaultCurrency", label: "Default currency", type: "text" }), field({ id: "brandingName", label: "Brand name", type: "text" }), field({ id: "brandColor", label: "Brand color", type: "color" }), field({ id: "contactEmailPublic", label: "Public contact email", type: "email" }), field({ id: "contactPhonePublic", label: "Public contact phone", type: "text" })], actions: [ui.submit("platform.settings.general.save", "workspace.settings.write")] })],
   });
-  const access = ui.panel({ id: "platform.settings.security", label: "Users & Access", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, members, roles, plans, assignments] });
+  const access = ui.panel({ id: "platform.settings.security", label: "Users & Access", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, members, roles, permissions, plans, assignments] });
   const marketplace = ui.panel({ id: "platform.settings.plugins", label: "Marketplace", icon: "package", order: 30, permission: "marketplace.read", sections: [
     ui.table({ id: "plugins.catalog", title: "Available applications", description: "Applications available to install and run in this workspace.", dataSourceId: "platform.settings.plugins.catalog", columns: [column({ id: "name", label: "Application", field: "name" }), column({ id: "category", label: "Category", field: "category" }), column({ id: "version", label: "Version", field: "version" }), column({ id: "installed", label: "Installed", field: "installed", type: "badge" })] }),
     ui.table({ id: "plugins.installed", title: "Installed applications", description: "Applications installed in this workspace and their runtime status.", dataSourceId: "platform.settings.plugins.list", columns: [column({ id: "id", label: "Application", field: "id" }), column({ id: "version", label: "Version", field: "version" }), column({ id: "active", label: "Status", field: "active", type: "badge" }), column({ id: "workerIsolation", label: "Runtime", field: "workerIsolation" })], rowActions: [ui.rowAction("platform.settings.plugins.activate", "Activate", { access: "permission-gated", requiredPermission: "plugin.activate" }), ui.rowAction("platform.settings.plugins.deactivate", "Deactivate", { variant: "danger", access: "permission-gated", requiredPermission: "plugin.activate" })] }),
