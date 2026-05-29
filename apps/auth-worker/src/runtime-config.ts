@@ -51,6 +51,16 @@ type ImpersonationSessionRow = {
   ended_at: string | null;
   root_session_id: string | null;
 };
+type AuthUserAdminRow = {
+  id: string;
+  name: string;
+  email: string;
+  email_verified: number;
+  created_at: number | string;
+  updated_at: number | string;
+  passkey_count: number;
+  active_session_count: number;
+};
 
 export type RuntimeAuthProviderState = {
   github: boolean;
@@ -242,6 +252,19 @@ export class AuthRuntimeRepository {
     const sessionCount = await this.db.prepare("SELECT COUNT(*) AS count FROM session").first<{ count: number }>().catch(() => ({ count: 0 }));
     const passkeyCount = await this.db.prepare("SELECT COUNT(*) AS count FROM passkey").first<{ count: number }>().catch(() => ({ count: 0 }));
     return { sessions: sessionCount?.count ?? 0, passkeys: passkeyCount?.count ?? 0 };
+  }
+
+  async listUsers() {
+    const rows = await this.db.prepare(`SELECT users.id, users.name, users.email, users.email_verified, users.created_at, users.updated_at,
+        COUNT(DISTINCT passkeys.id) AS passkey_count,
+        COUNT(DISTINCT sessions.id) AS active_session_count
+      FROM user users
+      LEFT JOIN passkey passkeys ON passkeys.user_id = users.id
+      LEFT JOIN session sessions ON sessions.user_id = users.id
+      GROUP BY users.id, users.name, users.email, users.email_verified, users.created_at, users.updated_at
+      ORDER BY users.created_at DESC`)
+      .all<AuthUserAdminRow>();
+    return rows.results.map((row) => ({ id: row.id, name: row.name, email: row.email, emailVerified: row.email_verified === 1, passkeys: row.passkey_count, sessions: row.active_session_count, createdAt: row.created_at, updatedAt: row.updated_at }));
   }
 
   async listImpersonationSessions(workspaceId?: string | null) {
