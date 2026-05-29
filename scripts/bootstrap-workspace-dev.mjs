@@ -145,9 +145,9 @@ async function ensureOwner() {
   if (!signup.response.ok) {
     login = await signIn();
     if (!login.response.ok) throw new Error(`owner account exists but local password cannot sign in: HTTP ${login.response.status} ${JSON.stringify(login.body)}`);
-    const consume = await request(coreUrl, "/setup/owner/consume", { method: "POST", body: JSON.stringify({ token }) });
-    if (!consume.response.ok && consume.body?.error?.code !== "owner_setup_token_consumed") {
-      throw new Error(`existing owner setup consume failed: HTTP ${consume.response.status} ${JSON.stringify(consume.body)}`);
+    const activation = await request(authUrl, "/setup/owner/activate-existing", { method: "POST", body: JSON.stringify({ token }) });
+    if (!activation.response.ok && activation.body?.error?.code !== "owner_setup_token_consumed") {
+      throw new Error(`existing owner setup activation failed: HTTP ${activation.response.status} ${JSON.stringify(activation.body)}`);
     }
   }
 
