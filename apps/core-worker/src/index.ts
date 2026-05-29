@@ -347,8 +347,15 @@ async function platformSettingsData(c: CoreContext, repo: CoreRepository, worksp
       const security = await authAdminJson<{ summary: { policy: { registrationMode: string; requireEmailVerification: boolean; allowPasskeyRegistration: boolean; allowPasskeySignin: boolean } } }>(c, `/admin/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`);
       return c.json({ status: "ok", data: { registrationMode: security.summary.policy.registrationMode, requireEmailVerification: security.summary.policy.requireEmailVerification, allowPasskeyRegistration: security.summary.policy.allowPasskeyRegistration, allowPasskeySignin: security.summary.policy.allowPasskeySignin }, error: null, approvalId: null, auditEventId: null });
     }
+    case "platform.settings.users.list": {
+      const auth = await authAdminJson<{ users: Array<{ id: string; name: string; email: string; emailVerified: boolean; passkeys: number; sessions: number; createdAt: string | number; updatedAt: string | number }> }>(c, "/internal/auth/users");
+      return c.json({ status: "ok", data: { rows: auth.users.map((user) => ({ ...user, emailVerified: user.emailVerified ? "Verified" : "Unverified" })) }, error: null, approvalId: null, auditEventId: null });
+    }
     case "platform.settings.rbac.roles": return c.json({ status: "ok", data: { rows: await repo.workspaceRoles(workspaceId) }, error: null, approvalId: null, auditEventId: null });
     case "platform.settings.rbac.members": return c.json({ status: "ok", data: { rows: (await repo.workspaceMemberRecords(workspaceId)).map((member) => ({ ...member, userId: member.user.id, user: member.user.email ?? member.user.id, roles: member.roles.map((role) => role.name).join(", "), permissions: member.permissions.join(", "), overrides: member.overrides.map((override) => `${override.permission}:${override.effect}`).join(", ") })) }, error: null, approvalId: null, auditEventId: null });
+    case "platform.settings.permissions.list": return c.json({ status: "ok", data: { rows: await repo.workspacePermissionsCatalog(workspaceId) }, error: null, approvalId: null, auditEventId: null });
+    case "platform.settings.workspaces.list": return c.json({ status: "ok", data: { rows: await repo.workspaces() }, error: null, approvalId: null, auditEventId: null });
+    case "platform.settings.invites.list": return c.json({ status: "ok", data: { rows: await repo.workspaceInvitations(workspaceId) }, error: null, approvalId: null, auditEventId: null });
     case "platform.settings.audit.events": return c.json({ status: "ok", data: { rows: (await repo.auditEvents(workspaceId)).map((event) => ({ ...event, payload: event.payload ? JSON.stringify(event.payload) : "" })) }, error: null, approvalId: null, auditEventId: null });
     case "platform.settings.plans.list": return c.json({ status: "ok", data: { rows: (await repo.plans()).map((plan) => ({ ...plan, limits: JSON.stringify(plan.limits) })) }, error: null, approvalId: null, auditEventId: null });
     case "platform.settings.plans.assignments": return c.json({ status: "ok", data: { rows: await repo.userPlanAssignments() }, error: null, approvalId: null, auditEventId: null });
@@ -369,7 +376,7 @@ async function platformSettingsData(c: CoreContext, repo: CoreRepository, worksp
   }
 }
 async function platformSettingsAction(c: CoreContext, repo: CoreRepository, workspaceId: string, actionId: string, input: unknown) {
-  const actionPermissions: Partial<Record<string, WorkspacePermission>> = { "platform.settings.general.save": "workspace.settings.write", "platform.settings.mail.provider.save": "mail.configure", "platform.settings.mail.provider.activate": "mail.configure", "platform.settings.mail.provider.disable": "mail.configure", "platform.settings.mail.provider.test": "mail.test", "platform.settings.security.policy.save": "auth.admin", "platform.settings.rbac.role.create": "workspace.members.manage", "platform.settings.rbac.role.update": "workspace.members.manage", "platform.settings.rbac.role.delete": "workspace.members.manage", "platform.settings.rbac.member.impersonate": "workspace.impersonate", "platform.settings.rbac.member.override.allow": "workspace.members.manage", "platform.settings.rbac.member.override.deny": "workspace.members.manage", "platform.settings.rbac.member.override.remove": "workspace.members.manage", "platform.settings.plans.upsert": "plan.write", "platform.settings.plans.delete": "plan.write", "platform.settings.plans.assignment.upsert": "plan.write", "platform.settings.plans.assignment.delete": "plan.write", "platform.settings.domains.create": "domains.write", "platform.settings.domains.verify": "domains.verify", "platform.settings.domains.activate": "domains.write", "platform.settings.domains.disable": "domains.write", "platform.settings.plugins.activate": "plugin.activate", "platform.settings.plugins.deactivate": "plugin.activate", "platform.settings.interface.save": "interface.write" };
+  const actionPermissions: Partial<Record<string, WorkspacePermission>> = { "platform.settings.general.save": "workspace.settings.write", "platform.settings.mail.provider.save": "mail.configure", "platform.settings.mail.provider.activate": "mail.configure", "platform.settings.mail.provider.disable": "mail.configure", "platform.settings.mail.provider.test": "mail.test", "platform.settings.security.policy.save": "auth.admin", "platform.settings.rbac.role.create": "workspace.members.manage", "platform.settings.rbac.role.update": "workspace.members.manage", "platform.settings.rbac.role.delete": "workspace.members.manage", "platform.settings.rbac.member.impersonate": "workspace.impersonate", "platform.settings.rbac.member.override.allow": "workspace.members.manage", "platform.settings.rbac.member.override.deny": "workspace.members.manage", "platform.settings.rbac.member.override.remove": "workspace.members.manage", "platform.settings.workspaces.upsert": "workspace.admin", "platform.settings.workspaces.delete": "workspace.admin", "platform.settings.invites.create": "workspace.members.manage", "platform.settings.invites.revoke": "workspace.members.manage", "platform.settings.invites.delete": "workspace.members.manage", "platform.settings.plans.upsert": "plan.write", "platform.settings.plans.delete": "plan.write", "platform.settings.plans.assignment.upsert": "plan.write", "platform.settings.plans.assignment.delete": "plan.write", "platform.settings.domains.create": "domains.write", "platform.settings.domains.verify": "domains.verify", "platform.settings.domains.activate": "domains.write", "platform.settings.domains.disable": "domains.write", "platform.settings.plugins.activate": "plugin.activate", "platform.settings.plugins.deactivate": "plugin.activate", "platform.settings.interface.save": "interface.write" };
   const requiredPermission = actionPermissions[actionId];
   if (requiredPermission) { const denied = await requirePermission(c, workspaceId, requiredPermission); if (denied) return denied; }
   switch (actionId) {
@@ -382,8 +389,48 @@ async function platformSettingsAction(c: CoreContext, repo: CoreRepository, work
     case "platform.settings.rbac.role.create": { const value = objectInput(input); return c.json({ status: "ok", data: await repo.createWorkspaceRole(workspaceId, { name: typeof value.name === "string" ? value.name : "", description: normalizeEmptyString(value.description) as string | null }, c.get("user")?.id), error: null, approvalId: null, auditEventId: null }); }
     case "platform.settings.rbac.role.update": { const value = objectInput(input); const result = await repo.updateWorkspaceRole(workspaceId, typeof value.id === "string" ? value.id : "", { ...(typeof value.name === "string" ? { name: value.name } : {}), description: normalizeEmptyString(value.description) as string | null }, c.get("user")?.id); return result ? c.json({ status: "ok", data: result, error: null, approvalId: null, auditEventId: null }) : c.json({ status: "denied", data: null, error: "Role is not available.", approvalId: null, auditEventId: null }, 404); }
     case "platform.settings.rbac.role.delete": return c.json({ status: "ok", data: await repo.deleteWorkspaceRole(workspaceId, String(objectInput(input).id ?? ""), c.get("user")?.id), error: null, approvalId: null, auditEventId: null });
+    case "platform.settings.rbac.member.impersonate": {
+      const value = objectInput(input);
+      const actor = c.get("user");
+      const subjectUserId = typeof value.userId === "string" ? value.userId.trim() : "";
+      const reason = typeof value.reason === "string" ? value.reason.trim() : "";
+      if (!actor || !subjectUserId || !reason) return c.json(errorResponse(failure("validation_failed", "User and reason are required for impersonation.")), 400);
+      const result = await authAdminJson<{ impersonation: unknown }>(c, "/internal/auth/impersonation/start", { method: "POST", body: JSON.stringify({ expectedActorUserId: actor.id, subjectUserId, workspaceId, reason, durationSeconds: 3600 }) });
+      await repo.audit(workspaceId, "rbac.member.impersonate", { subjectUserId, reason }, actor.id);
+      return c.json({ status: "ok", data: result, error: null, approvalId: null, auditEventId: null });
+    }
     case "platform.settings.rbac.member.override.allow": case "platform.settings.rbac.member.override.deny": { const value = objectInput(input); return c.json({ status: "ok", data: await repo.setMemberPermissionOverride(workspaceId, String(value.userId ?? ""), String(value.permission ?? ""), actionId.endsWith(".allow") ? "allow" : "deny", c.get("user")?.id), error: null, approvalId: null, auditEventId: null }); }
     case "platform.settings.rbac.member.override.remove": { const value = objectInput(input); return c.json({ status: "ok", data: await repo.removeMemberPermissionOverride(workspaceId, String(value.userId ?? ""), String(value.permission ?? ""), c.get("user")?.id), error: null, approvalId: null, auditEventId: null }); }
+    case "platform.settings.workspaces.upsert": {
+      const value = objectInput(input);
+      const name = typeof value.name === "string" ? value.name.trim() : "";
+      if (!name) return c.json(errorResponse(failure("validation_failed", "Workspace name is required.")), 400);
+      const status = value.status === "unprovisioned" || value.status === "provisioning" || value.status === "active" || value.status === "suspended" ? value.status : "active";
+      const target = await repo.upsertWorkspace({ ...(typeof value.id === "string" && value.id.trim() ? { id: value.id.trim() } : {}), name, status }, c.get("user")?.id);
+      return c.json({ status: "ok", data: target, error: null, approvalId: null, auditEventId: null });
+    }
+    case "platform.settings.workspaces.delete": {
+      const targetWorkspaceId = String(objectInput(input).id ?? "").trim();
+      if (!targetWorkspaceId) return c.json(errorResponse(failure("validation_failed", "Workspace ID is required.")), 400);
+      if (targetWorkspaceId === workspaceId) return c.json(errorResponse(failure("conflict", "The active workspace cannot be deleted from its own settings context.")), 409);
+      const deleted = await repo.deleteWorkspace(targetWorkspaceId, c.get("user")?.id);
+      return deleted ? c.json({ status: "ok", data: true, error: null, approvalId: null, auditEventId: null }) : c.json(errorResponse(failure("conflict", "Workspace cannot be deleted while it has an owner membership.")), 409);
+    }
+    case "platform.settings.invites.create": {
+      const value = objectInput(input);
+      const email = typeof value.email === "string" ? value.email.trim().toLowerCase() : "";
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json(errorResponse(failure("validation_failed", "A valid invitation email is required.")), 400);
+      const roleId = typeof value.roleId === "string" && value.roleId.trim() ? value.roleId.trim() : null;
+      if (roleId && !(await repo.workspaceRoles(workspaceId)).some((role) => role.id === roleId)) return c.json(errorResponse(failure("validation_failed", "Invitation role is not available in this workspace.")), 400);
+      const expiresAt = typeof value.expiresAt === "string" && value.expiresAt ? value.expiresAt : null;
+      const invitation = await repo.createWorkspaceInvitation(workspaceId, { email, roleId, expiresAt }, c.get("user")?.id);
+      if (!invitation) return c.json(errorResponse(failure("internal_error", "Invitation could not be created.")), 500);
+      const workspace = (await repo.workspaces()).find((item) => item.id === workspaceId);
+      const delivery = await repo.sendMail(workspaceId, { workspaceId, templateKey: "workspace_invite", purpose: "workspace_invite", to: email, variables: { workspaceName: workspace?.name ?? workspaceId, email, roleName: invitation.roleName ?? "Member" } }, c.get("user")?.id);
+      return c.json({ status: "ok", data: { ...invitation, deliveryStatus: delivery.status, deliveryError: delivery.errorSafe ?? null }, error: null, approvalId: null, auditEventId: null });
+    }
+    case "platform.settings.invites.revoke": return c.json({ status: "ok", data: await repo.revokeWorkspaceInvitation(workspaceId, String(objectInput(input).id ?? ""), c.get("user")?.id), error: null, approvalId: null, auditEventId: null });
+    case "platform.settings.invites.delete": return c.json({ status: "ok", data: await repo.deleteWorkspaceInvitation(workspaceId, String(objectInput(input).id ?? ""), c.get("user")?.id), error: null, approvalId: null, auditEventId: null });
     case "platform.settings.plans.upsert": { const value = objectInput(input); let limits: Record<string, unknown> = {}; try { limits = JSON.parse(typeof value.limits === "string" ? value.limits : JSON.stringify(value.limits ?? {})) as Record<string, unknown>; } catch { return c.json(errorResponse(failure("validation_failed", "Limits must be valid JSON.")), 400); } return c.json({ status: "ok", data: await repo.upsertPlan({ id: String(value.id ?? ""), name: typeof value.name === "string" ? value.name : String(value.id ?? ""), status: value.status === "active" || value.status === "disabled" ? value.status : "draft", limits }, c.get("user")?.id), error: null, approvalId: null, auditEventId: null }); }
     case "platform.settings.plans.delete": return c.json({ status: "ok", data: await repo.deletePlan(String(objectInput(input).id ?? ""), c.get("user")?.id), error: null, approvalId: null, auditEventId: null });
     case "platform.settings.plans.assignment.upsert": { const value = objectInput(input); return c.json({ status: "ok", data: await repo.upsertUserPlanAssignment({ ...(typeof value.id === "string" ? { id: value.id } : {}), userId: String(value.userId ?? ""), planId: String(value.planId ?? ""), status: value.status === "scheduled" || value.status === "expired" || value.status === "disabled" ? value.status : "active", startsAt: normalizeEmptyString(value.startsAt) as string | null, endsAt: normalizeEmptyString(value.endsAt) as string | null }, c.get("user")?.id), error: null, approvalId: null, auditEventId: null }); }
@@ -754,7 +801,7 @@ const coreApiRoutes34 = coreApiRoutes.post("/runtime/ui/data", (async (c): Promi
   const readDenied = requireRead(c);
   if (readDenied) return readDenied;
   const request = runtimeDataRequestSchema.parse(await c.req.json().catch(() => null));
-  const repo = new CoreRepository(c.env.CORE_DB);
+  const repo = new CoreRepository(c.env.CORE_DB, c.env);
   const resolved = await repo.privateRuntimeContribution(request.workspaceId, request.contributionId);
   if (!resolved) return c.json(pluginOperationEnvelope("denied", null, "Contribution is not active in this workspace.", null, null), 403) as Response;
   const dataSource = resolved.page.dataSources.find((item) => item.id === request.dataSourceId);
@@ -780,7 +827,7 @@ const coreApiRoutes35 = coreApiRoutes.post("/runtime/ui/actions", (async (c) => 
   const readDenied = requireRead(c);
   if (readDenied) return readDenied;
   const request = runtimeActionRequestSchema.parse(await c.req.json().catch(() => null));
-  const repo = new CoreRepository(c.env.CORE_DB);
+  const repo = new CoreRepository(c.env.CORE_DB, c.env);
   const resolved = await repo.privateRuntimeContribution(request.workspaceId, request.contributionId);
   if (!resolved) return c.json(pluginOperationEnvelope("denied", null, "Contribution is not active in this workspace.", null, null), 403);
   const action = resolved.page.actions.find((item) => item.id === request.actionId);
@@ -790,9 +837,9 @@ const coreApiRoutes35 = coreApiRoutes.post("/runtime/ui/actions", (async (c) => 
   const tool = toolOwner?.contributes.tools.find((item) => item.id === action.commandId);
   const permissionDenied = await requireAllPermissions(c, request.workspaceId, tool?.permissions.length ? tool.permissions : [resolved.requiredPermission ?? "workspace.settings.write"]);
   if (permissionDenied) return permissionDenied;
-  if (resolved.pluginId === "platform" && action.id === "platform.settings.general.save") {
-    const data = await repo.saveGeneralSettings(request.workspaceId, request.input && typeof request.input === "object" ? request.input as Record<string, unknown> : {}, c.get("user")?.id);
-    return c.json({ status: "ok", data, error: null, approvalId: null, auditEventId: null });
+  if (resolved.pluginId === "platform" && action.id.startsWith("platform.settings.")) {
+    const result = await platformSettingsAction(c, repo, request.workspaceId, action.id, request.input);
+    if (result) return result;
   }
   const deployment = await activeRuntimeOrAudit(repo, request.workspaceId, resolved.pluginId, "settings.runtime.ui.action", c.get("user")?.id);
   if (!deployment) return c.json(runtimeUnavailable("Plugin runtime is not active."), 503);
@@ -805,8 +852,8 @@ const coreApiRoutes35 = coreApiRoutes.post("/runtime/ui/actions", (async (c) => 
   await repo.audit(request.workspaceId, "settings.runtime.ui.action.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, actionId: action.id, commandId: action.commandId }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 }) as Handler<CoreApiEnv, "/runtime/ui/actions", JsonInput<z.input<typeof runtimeActionRequestSchema>>>);
-const coreApiRoutes36 = coreApiRoutes35.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => { const workspaceId = c.req.param("workspaceId"); const parsed = runtimeDataRequestSchema.safeParse(await c.req.json().catch(() => null)); if (!parsed.success || parsed.data.workspaceId !== workspaceId) return c.json(errorResponse(failure("validation_failed", "Valid settings runtime data input is required.")), 400); const result = await platformSettingsData(c, new CoreRepository(c.env.CORE_DB), workspaceId, parsed.data.dataSourceId); return result ?? c.json(errorResponse(failure("not_found", "Settings data source is not available.")), 404); });
-const coreApiRoutes37 = coreApiRoutes36.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => { const workspaceId = c.req.param("workspaceId"); const parsed = runtimeActionRequestSchema.safeParse(await c.req.json().catch(() => null)); if (!parsed.success || parsed.data.workspaceId !== workspaceId) return c.json(errorResponse(failure("validation_failed", "Valid settings runtime action input is required.")), 400); const result = await platformSettingsAction(c, new CoreRepository(c.env.CORE_DB), workspaceId, parsed.data.actionId, parsed.data.input); return result ?? c.json(errorResponse(failure("not_found", "Settings action is not available.")), 404); });
+const coreApiRoutes36 = coreApiRoutes35.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => { const workspaceId = c.req.param("workspaceId"); const parsed = runtimeDataRequestSchema.safeParse(await c.req.json().catch(() => null)); if (!parsed.success || parsed.data.workspaceId !== workspaceId) return c.json(errorResponse(failure("validation_failed", "Valid settings runtime data input is required.")), 400); const result = await platformSettingsData(c, new CoreRepository(c.env.CORE_DB, c.env), workspaceId, parsed.data.dataSourceId); return result ?? c.json(errorResponse(failure("not_found", "Settings data source is not available.")), 404); });
+const coreApiRoutes37 = coreApiRoutes36.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => { const workspaceId = c.req.param("workspaceId"); const parsed = runtimeActionRequestSchema.safeParse(await c.req.json().catch(() => null)); if (!parsed.success || parsed.data.workspaceId !== workspaceId) return c.json(errorResponse(failure("validation_failed", "Valid settings runtime action input is required.")), 400); const result = await platformSettingsAction(c, new CoreRepository(c.env.CORE_DB, c.env), workspaceId, parsed.data.actionId, parsed.data.input); return result ?? c.json(errorResponse(failure("not_found", "Settings action is not available.")), 404); });
 const coreApiRoutes38 = coreApiRoutes37.get("/workspaces/:workspaceId/settings/tabs", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "workspace.settings.read");
