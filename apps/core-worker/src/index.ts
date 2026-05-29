@@ -19,7 +19,7 @@ import { assessPluginBundle, extractDeclaredHtmlAsset, unpackPluginZip } from "@
 import { CoreRepository, type WorkspacePermission } from "./repository";
 import { ApprovalRequestRepository } from "./approval-requests";
 import { ToolApprovalRepository } from "./tool-approvals";
-import { isInternalRequest } from "./access";
+import { allowedOrigins, isInternalRequest } from "./access";
 import type { CoreEnv } from "./env";
 
 type CoreApiEnv = { Bindings: CoreEnv; Variables: { user: { id: string; email: string; name?: string | null; impersonatedBy?: string | null } | null; internal: boolean } };
@@ -39,6 +39,19 @@ function isPlatformAdmin(env: CoreEnv, user: { email: string } | null | undefine
 
 function requestCredentialKey(c: CoreContext) {
   return c.req.header("authorization") ?? c.req.header("cookie") ?? "";
+}
+
+function browserCorsOrigin(env: CoreEnv, origin: string) {
+  return allowedOrigins(env).includes(origin) ? origin : null;
+}
+
+function applyBrowserCors(c: CoreContext, origin: string) {
+  c.header("Access-Control-Allow-Origin", origin);
+  c.header("Access-Control-Allow-Credentials", "true");
+  c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+  c.header("Access-Control-Expose-Headers", "Content-Length");
+  c.header("Vary", "Origin");
 }
 
 async function resolveSession(c: CoreContext) {
@@ -1029,6 +1042,20 @@ const publicWorkspaceFacade = new Hono<CoreApiEnv>()
   .route("/runtime", publicRuntimeFacade);
 
 const coreApiFacade0 = new Hono<CoreApiEnv>();
+coreApiFacade0.use("*", async (c, next) => {
+  const origin = c.req.header("origin");
+  const allowedOrigin = origin ? browserCorsOrigin(c.env, origin) : null;
+  if (!allowedOrigin) {
+    await next();
+    return;
+  }
+  if (c.req.method === "OPTIONS") {
+    applyBrowserCors(c, allowedOrigin);
+    return c.body(null, 204);
+  }
+  await next();
+  applyBrowserCors(c, allowedOrigin);
+});
 const coreApiFacade1 = coreApiFacade0.get("/health", proxyToCore).get("/bootstrap", proxyToCore);
 const coreApiFacade2 = coreApiFacade1.route("/session", sessionFacade).route("/setup", setupFacade);
 const coreApiFacade3 = coreApiFacade2.post("/internal/setup/owner/consume", proxyToCore).post("/internal/provision/workspace", proxyToCore).get("/internal/workspaces/:workspaceId/auth/trust-config", proxyToCore).route("/runtime", runtimeFacade).route("/plugins", pluginsFacade).route("/marketplace", marketplaceFacade).route("/tools", toolsFacade).route("/tool-approvals", toolApprovalsFacade).route("/approval-requests", approvalRequestsFacade);
