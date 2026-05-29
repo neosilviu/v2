@@ -2,7 +2,22 @@ import { ui, type SettingsSection } from "@v2/ui-schema";
 
 const field = ui.field;
 const column = ui.column;
-const allowPermissionField = field({ id: "permission", label: "Permission", type: "text", required: true });
+const permissionField = field({ id: "permission", label: "Permission", type: "text", required: true });
+
+const users = ui.table({
+  id: "security.users",
+  title: "Users",
+  description: "Global user identities owned by the Auth service. Workspace access is configured separately through Memberships.",
+  dataSourceId: "platform.settings.users.list",
+  columns: [
+    column({ id: "name", label: "Name", field: "name" }),
+    column({ id: "email", label: "Email", field: "email" }),
+    column({ id: "emailVerified", label: "Verified", field: "emailVerified", type: "badge" }),
+    column({ id: "passkeys", label: "Passkeys", field: "passkeys" }),
+    column({ id: "sessions", label: "Sessions", field: "sessions" }),
+    column({ id: "createdAt", label: "Created", field: "createdAt", type: "date" }),
+  ],
+});
 
 const authentication = ui.form({
   id: "security.authentication",
@@ -51,9 +66,42 @@ const members = ui.table({
   ],
   rowActions: [
     ui.rowAction("platform.settings.rbac.member.impersonate", "Impersonate", { variant: "primary", access: "permission-gated", requiredPermission: "workspace.impersonate", confirmation: { title: "Impersonate user", message: "You will switch into the selected user's view. This action is audited.", reasonRequired: true, fields: [field({ id: "reason", label: "Reason", type: "textarea", required: true })] }, effects: [{ type: "toast", message: "Impersonation started" }, { type: "closeDialog" }, { type: "navigate", to: "/" }] }),
-    ui.rowAction("platform.settings.rbac.member.override.allow", "Allow permission", { access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Allow permission", fields: [allowPermissionField] } }),
-    ui.rowAction("platform.settings.rbac.member.override.deny", "Deny permission", { variant: "danger", access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Deny permission", fields: [allowPermissionField] } }),
-    ui.rowAction("platform.settings.rbac.member.override.remove", "Remove override", { access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Remove override", fields: [allowPermissionField] } }),
+    ui.rowAction("platform.settings.rbac.member.override.allow", "Allow permission", { access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Allow permission", fields: [permissionField] } }),
+    ui.rowAction("platform.settings.rbac.member.override.deny", "Deny permission", { variant: "danger", access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Deny permission", fields: [permissionField] } }),
+    ui.rowAction("platform.settings.rbac.member.override.remove", "Remove override", { access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Remove override", fields: [permissionField] } }),
+  ],
+});
+
+const permissions = ui.table({
+  id: "security.permissions",
+  title: "Permissions",
+  description: "Permission catalogue with role assignments and explicit member override counts for this workspace.",
+  dataSourceId: "platform.settings.permissions.list",
+  columns: [
+    column({ id: "name", label: "Permission", field: "name" }),
+    column({ id: "category", label: "Category", field: "category" }),
+    column({ id: "roleCount", label: "Roles", field: "roleCount" }),
+    column({ id: "memberOverrideCount", label: "Overrides", field: "memberOverrideCount" }),
+  ],
+});
+
+const workspaces = ui.crud({
+  id: "security.workspaces",
+  title: "Workspaces",
+  description: "Tenant workspaces. User membership and roles are configured independently.",
+  dataSourceId: "platform.settings.workspaces.list",
+  entity: { singular: "Workspace", plural: "Workspaces", titleField: "name" },
+  operations: { create: "platform.settings.workspaces.upsert", update: "platform.settings.workspaces.upsert", delete: "platform.settings.workspaces.delete" },
+  columns: [
+    column({ id: "id", label: "Workspace ID", field: "id" }),
+    column({ id: "name", label: "Name", field: "name" }),
+    column({ id: "status", label: "Status", field: "status", type: "badge" }),
+    column({ id: "updatedAt", label: "Updated", field: "updatedAt", type: "date" }),
+  ],
+  fields: [
+    field({ id: "id", label: "Workspace ID", type: "text" }),
+    field({ id: "name", label: "Name", type: "text", required: true }),
+    field({ id: "status", label: "Status", type: "select", required: true, options: [{ value: "unprovisioned", label: "Unprovisioned" }, { value: "provisioning", label: "Provisioning" }, { value: "active", label: "Active" }, { value: "suspended", label: "Suspended" }] }),
   ],
 });
 
@@ -63,7 +111,7 @@ const plans = ui.crud({
   description: "Plans and limits available for users and workspace access.",
   dataSourceId: "platform.settings.plans.list",
   entity: { singular: "Plan", plural: "Plans", titleField: "name" },
-  operations: { create: "platform.settings.plans.upsert", delete: "platform.settings.plans.delete" },
+  operations: { create: "platform.settings.plans.upsert", update: "platform.settings.plans.upsert", delete: "platform.settings.plans.delete" },
   columns: [
     column({ id: "id", label: "Plan ID", field: "id" }),
     column({ id: "name", label: "Name", field: "name" }),
@@ -84,7 +132,7 @@ const assignments = ui.crud({
   description: "Assign an available workspace plan to a user account.",
   dataSourceId: "platform.settings.plans.assignments",
   entity: { singular: "Assignment", plural: "Assignments", titleField: "planId" },
-  operations: { create: "platform.settings.plans.assignment.upsert", delete: "platform.settings.plans.assignment.delete" },
+  operations: { create: "platform.settings.plans.assignment.upsert", update: "platform.settings.plans.assignment.upsert", delete: "platform.settings.plans.assignment.delete" },
   columns: [
     column({ id: "userId", label: "User", field: "userId" }),
     column({ id: "planId", label: "Plan", field: "planId" }),
@@ -98,6 +146,30 @@ const assignments = ui.crud({
     field({ id: "status", label: "Status", type: "select", required: true, options: [{ value: "active", label: "Active" }, { value: "scheduled", label: "Scheduled" }, { value: "expired", label: "Expired" }, { value: "disabled", label: "Disabled" }] }),
     field({ id: "startsAt", label: "Starts at", type: "date" }),
     field({ id: "endsAt", label: "Ends at", type: "date" }),
+  ],
+});
+
+const invites = ui.crud({
+  id: "security.invites",
+  title: "Invites",
+  description: "Invite users into this workspace and assign the initial membership role.",
+  dataSourceId: "platform.settings.invites.list",
+  entity: { singular: "Invite", plural: "Invites", titleField: "email" },
+  operations: { create: "platform.settings.invites.create", delete: "platform.settings.invites.delete" },
+  columns: [
+    column({ id: "email", label: "Email", field: "email" }),
+    column({ id: "roleName", label: "Role", field: "roleName" }),
+    column({ id: "status", label: "Status", field: "status", type: "badge" }),
+    column({ id: "expiresAt", label: "Expires", field: "expiresAt", type: "date" }),
+    column({ id: "createdAt", label: "Created", field: "createdAt", type: "date" }),
+  ],
+  fields: [
+    field({ id: "email", label: "Email", type: "email", required: true }),
+    field({ id: "roleId", label: "Role ID", type: "text" }),
+    field({ id: "expiresAt", label: "Expires at", type: "date" }),
+  ],
+  rowActions: [
+    ui.rowAction("platform.settings.invites.revoke", "Revoke", { variant: "danger", access: "permission-gated", requiredPermission: "workspace.members.manage" }),
   ],
 });
 
@@ -153,7 +225,7 @@ const marketplaceSections: SettingsSection[] = [
 
 export function platformSettingsTabs() {
   const general = ui.panel({ id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read", sections: [workspaceSettings, ...mailSections, domains] });
-  const security = ui.panel({ id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, members, roles, plans, assignments, auditEvents] });
+  const security = ui.panel({ id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, users, roles, members, permissions, workspaces, plans, assignments, invites, auditEvents] });
   const marketplace = ui.panel({ id: "platform.settings.plugins", label: "Marketplace", icon: "package", order: 30, permission: "marketplace.read", sections: marketplaceSections });
   const interfacePanel = ui.panel({ id: "platform.settings.interface", label: "Interface", icon: "layout", order: 40, permission: "interface.read", sections: [ui.table({ id: "interface.builder", title: "Interface builder", description: "Navigation, layout, manual pages and UI contributions.", dataSourceId: "platform.settings.interface.summary", actions: [ui.submit("platform.settings.interface.save", "interface.write", "Save interface")] })] });
   return [general, security, marketplace, interfacePanel];
