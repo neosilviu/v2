@@ -1762,8 +1762,9 @@ export class CoreRepository {
               data: { settingsTab: tab },
             });
           })()
-        : declarativePageContributionSchema.parse(JSON.parse(row.schema_json));
-
+        : row.contribution_type === "page" && row.zone_id?.startsWith("settings.panel.")
+          ? settingsPanelContributionSchema.parse(JSON.parse(row.schema_json)).schema
+          : declarativePageContributionSchema.parse(JSON.parse(row.schema_json));
       return [{
         pluginId: row.plugin_id,
         contributionId: row.contribution_id,
