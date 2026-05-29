@@ -1750,7 +1750,40 @@ export class CoreRepository {
       .all<{ plugin_id: string; contribution_id: string; contribution_type: PluginUiContribution["contributionType"]; source: UiSource; access_mode: AccessMode; zone_id: string | null; default_path: string | null; label: string | null; icon: string | null; navigation_section: NavigationSection | null; display_order: number; renderer_mode: UiRendererMode; component_id: string | null; configurable_json: string; template_id: string; schema_json: string; required_permission: string | null; version: string }>();
     return rows.results.flatMap((row) => {
       if (row.required_permission && !permissions.has(row.required_permission) && !permissions.has("workspace.admin")) return [];
-      return [{ pluginId: row.plugin_id, contributionId: row.contribution_id, contributionType: row.contribution_type, source: row.source, accessMode: row.access_mode, zoneId: row.zone_id, defaultPath: row.default_path, label: row.label, icon: row.icon, navigationSection: row.navigation_section, displayOrder: row.display_order, rendererMode: row.renderer_mode, componentId: row.component_id, configurable: safeJson<UiConfigurable>(row.configurable_json, config(false)), templateId: row.template_id, schema: declarativePageContributionSchema.parse(JSON.parse(row.schema_json)), requiredPermission: row.required_permission, version: row.version }];
+
+      const schema = row.contribution_type === "menu"
+        ? (() => {
+            const tab = settingsTabContributionSchema.parse(JSON.parse(row.schema_json));
+            return declarativePageContributionSchema.parse({
+              id: tab.id,
+              title: tab.label,
+              templateId: "admin.settings",
+              access: row.required_permission ? "permission-gated" : "private",
+              data: { settingsTab: tab },
+            });
+          })()
+        : declarativePageContributionSchema.parse(JSON.parse(row.schema_json));
+
+      return [{
+        pluginId: row.plugin_id,
+        contributionId: row.contribution_id,
+        contributionType: row.contribution_type,
+        source: row.source,
+        accessMode: row.access_mode,
+        zoneId: row.zone_id,
+        defaultPath: row.default_path,
+        label: row.label,
+        icon: row.icon,
+        navigationSection: row.navigation_section,
+        displayOrder: row.display_order,
+        rendererMode: row.renderer_mode,
+        componentId: row.component_id,
+        configurable: safeJson<UiConfigurable>(row.configurable_json, config(false)),
+        templateId: row.template_id,
+        schema,
+        requiredPermission: row.required_permission,
+        version: row.version,
+      }];
     });
   }
 
