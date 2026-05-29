@@ -67,7 +67,7 @@ export type RuntimeAuthProviderState = {
 };
 
 export class AuthRuntimeRepository {
-  constructor(private readonly db: D1Database) {}
+  constructor(private readonly db: D1Database, private readonly platformAdminEmails: Set<string> = new Set()) {}
 
   private scoped(workspaceId?: string | null) {
     return workspaceId ?? null;
@@ -264,7 +264,7 @@ export class AuthRuntimeRepository {
       GROUP BY users.id, users.name, users.email, users.email_verified, users.created_at, users.updated_at
       ORDER BY users.created_at DESC`)
       .all<AuthUserAdminRow>();
-    return rows.results.map((row) => ({ id: row.id, name: row.name, email: row.email, emailVerified: row.email_verified === 1, passkeys: row.passkey_count, sessions: row.active_session_count, createdAt: row.created_at, updatedAt: row.updated_at }));
+    return rows.results.map((row) => ({ id: row.id, name: row.name, email: row.email, emailVerified: row.email_verified === 1, passkeys: row.passkey_count, sessions: row.active_session_count, createdAt: row.created_at, updatedAt: row.updated_at, isPlatformAdmin: this.platformAdminEmails.has(row.email.toLowerCase()) }));
   }
 
   async listImpersonationSessions(workspaceId?: string | null) {

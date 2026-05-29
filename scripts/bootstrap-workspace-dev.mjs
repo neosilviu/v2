@@ -13,11 +13,12 @@ const skipMarketplaceSync = args.has("--skip-marketplace-sync") || process.env.V
 const skipDemoSeed = args.has("--skip-demo-seed") || process.env.V2_DEV_SKIP_DEMO_SEED === "1";
 const cookies = new Map();
 const demoAccounts = [
-  { key: "admin", name: "Development Admin", email: "admin@example.local", role: "admin", plan: "business", status: "active" },
-  { key: "operator", name: "Development Operator", email: "operator@example.local", role: "operator", plan: "business", status: "active" },
-  { key: "viewer", name: "Development Viewer", email: "viewer@example.local", role: "viewer", plan: "starter", status: "active" },
-  { key: "invited", name: "Invited Customer", email: "invited@example.local", role: "viewer", plan: "starter", status: "invited" },
-  { key: "disabled", name: "Disabled Account", email: "disabled@example.local", role: "viewer", plan: "starter", status: "disabled" },
+  { key: "superadmin", name: "Platform Superadmin", email: "superadmin@example.local", workspaceRole: null, plan: null, status: "active" },
+  { key: "admin", name: "Development Admin", email: "admin@example.local", workspaceRole: "admin", plan: "business", status: "active" },
+  { key: "editor", name: "Development Editor", email: "editor@example.local", workspaceRole: "editor", plan: "business", status: "active" },
+  { key: "viewer", name: "Development Viewer", email: "viewer@example.local", workspaceRole: "viewer", plan: "starter", status: "active" },
+  { key: "invited", name: "Invited Customer", email: "invited@example.local", workspaceRole: "viewer", plan: "starter", status: "invited" },
+  { key: "disabled", name: "Disabled Account", email: "disabled@example.local", workspaceRole: "viewer", plan: "starter", status: "disabled" },
 ];
 
 function run(name, command, commandArgs) {
@@ -214,22 +215,41 @@ function seedDemoCoreData(userIds) {
     { id: "enterprise", name: "Enterprise", status: "active", limits: { seats: 250, projects: "unlimited", apiCallsPerMonth: "unlimited", support: "dedicated", impersonation: true } },
     { id: "trial", name: "Trial Preview", status: "draft", limits: { seats: 1, projects: 1, trialDays: 14 } },
   ];
+  const roleSpecs = [
+    ["owner", "Owner", ["workspace.read", "workspace.admin", "workspace.members.manage", "workspace.settings.read", "workspace.settings.write", "auth.read", "auth.admin", "auth.method.publish", "auth.policy.write", "auth.ui.publish", "auth.session.read", "domains.read", "domains.write", "domains.verify", "mail.read", "mail.configure", "mail.test", "mail.template.write", "marketplace.read", "marketplace.publish", "plugin.install", "plugin.activate", "plugin.update", "plugin.uninstall", "plugin.grantCapability", "approval.read", "tool.approve", "audit.read", "layout.read", "layout.write", "publication.read", "publication.publish", "agent.read", "agent.use", "provider.read", "provider.configure", "localnode.read", "localnode.configure", "localnode.execute", "production.read", "production.execute", "production.approve"]],
+    ["admin", "Admin", ["workspace.read", "workspace.settings.read", "workspace.settings.write", "domains.read", "domains.write", "domains.verify", "mail.read", "mail.configure", "mail.test", "mail.template.write", "marketplace.read", "plugin.install", "plugin.activate", "plugin.update", "plugin.uninstall", "approval.read", "tool.approve", "audit.read", "layout.read", "layout.write", "interface.read", "interface.write", "publication.read", "publication.publish", "plan.read"]],
+    ["editor", "Editor", ["workspace.read", "workspace.settings.read", "layout.read", "layout.write", "interface.read", "interface.write", "publication.read", "publication.publish"]],
+    ["viewer", "Viewer", ["workspace.read", "workspace.settings.read", "layout.read", "interface.read", "publication.read"]],
+  ];
   const sql = [];
   for (const plan of plans) {
     sql.push(`INSERT INTO plans (id, name, status, limits_json, created_at, updated_at) VALUES (${sqlString(plan.id)}, ${sqlString(plan.name)}, ${sqlString(plan.status)}, ${sqlString(JSON.stringify(plan.limits))}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name = excluded.name, status = excluded.status, limits_json = excluded.limits_json, updated_at = CURRENT_TIMESTAMP;`);
   }
+  for (const [key, label, permissions] of roleSpecs) {
+    sql.push(`INSERT INTO workspace_roles (id, workspace_id, name, system_key, description, updated_at) VALUES (${sqlString(`${workspaceId}:${key}`)}, ${sqlString(workspaceId)}, ${sqlString(label)}, ${sqlString(key)}, ${sqlString(`${label} role`)}, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name = excluded.name, system_key = excluded.system_key, description = excluded.description, updated_at = CURRENT_TIMESTAMP;`);
+    for (const permission of permissions) {
+      sql.push(`INSERT OR IGNORE INTO workspace_role_permissions (workspace_id, role_id, permission) VALUES (${sqlString(workspaceId)}, ${sqlString(`${workspaceId}:${key}`)}, ${sqlString(permission)});`);
+    }
+  }
+  sql.push(`UPDATE workspace_member_roles SET role_id = ${sqlString(`${workspaceId}:editor`)} WHERE workspace_id = ${sqlString(workspaceId)} AND role_id = ${sqlString(`${workspaceId}:operator`)};`);
+  sql.push(`UPDATE workspace_invitations SET role_id = ${sqlString(`${workspaceId}:editor`)} WHERE workspace_id = ${sqlString(workspaceId)} AND role_id = ${sqlString(`${workspaceId}:operator`)};`);
+  sql.push(`DELETE FROM workspace_role_permissions WHERE workspace_id = ${sqlString(workspaceId)} AND role_id = ${sqlString(`${workspaceId}:operator`)};`);
+  sql.push(`DELETE FROM workspace_roles WHERE workspace_id = ${sqlString(workspaceId)} AND id = ${sqlString(`${workspaceId}:operator`)};`);
   sql.push(`INSERT INTO user_plan_assignments (id, user_id, plan_id, status, starts_at, ends_at, created_at, updated_at) SELECT ${sqlString(`${workspaceId}:owner:enterprise`)}, user_id, 'enterprise', 'active', DATE('now'), NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM workspace_members WHERE workspace_id = ${sqlString(workspaceId)} AND lower(email) = lower(${sqlString(email)}) ON CONFLICT(id) DO UPDATE SET plan_id = excluded.plan_id, status = excluded.status, starts_at = excluded.starts_at, ends_at = excluded.ends_at, updated_at = CURRENT_TIMESTAMP;`);
   for (const account of demoAccounts) {
     const userId = userIds.get(account.key);
     if (!userId) continue;
-    sql.push(`INSERT INTO workspace_members (workspace_id, user_id, email, status, updated_at) VALUES (${sqlString(workspaceId)}, ${sqlString(userId)}, ${sqlString(account.email)}, ${sqlString(account.status)}, CURRENT_TIMESTAMP) ON CONFLICT(workspace_id, user_id) DO UPDATE SET email = excluded.email, status = excluded.status, updated_at = CURRENT_TIMESTAMP;`);
-    sql.push(`DELETE FROM workspace_member_roles WHERE workspace_id = ${sqlString(workspaceId)} AND user_id = ${sqlString(userId)};`);
-    sql.push(`INSERT OR IGNORE INTO workspace_member_roles (workspace_id, user_id, role_id) VALUES (${sqlString(workspaceId)}, ${sqlString(userId)}, ${sqlString(`${workspaceId}:${account.role}`)});`);
-    sql.push(`INSERT INTO user_plan_assignments (id, user_id, plan_id, status, starts_at, ends_at, created_at, updated_at) VALUES (${sqlString(`${workspaceId}:${account.key}:${account.plan}`)}, ${sqlString(userId)}, ${sqlString(account.plan)}, ${sqlString(account.status === "invited" ? "scheduled" : account.status === "disabled" ? "disabled" : "active")}, DATE('now'), ${account.status === "disabled" ? "DATE('now')" : "NULL"}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET user_id = excluded.user_id, plan_id = excluded.plan_id, status = excluded.status, starts_at = excluded.starts_at, ends_at = excluded.ends_at, updated_at = CURRENT_TIMESTAMP;`);
+    if (account.workspaceRole) {
+      sql.push(`INSERT INTO workspace_members (workspace_id, user_id, email, status, updated_at) VALUES (${sqlString(workspaceId)}, ${sqlString(userId)}, ${sqlString(account.email)}, ${sqlString(account.status)}, CURRENT_TIMESTAMP) ON CONFLICT(workspace_id, user_id) DO UPDATE SET email = excluded.email, status = excluded.status, updated_at = CURRENT_TIMESTAMP;`);
+      sql.push(`DELETE FROM workspace_member_roles WHERE workspace_id = ${sqlString(workspaceId)} AND user_id = ${sqlString(userId)};`);
+      sql.push(`INSERT OR IGNORE INTO workspace_member_roles (workspace_id, user_id, role_id) VALUES (${sqlString(workspaceId)}, ${sqlString(userId)}, ${sqlString(`${workspaceId}:${account.workspaceRole}`)});`);
+    }
+    if (account.plan) {
+      sql.push(`INSERT INTO user_plan_assignments (id, user_id, plan_id, status, starts_at, ends_at, created_at, updated_at) VALUES (${sqlString(`${workspaceId}:${account.key}:${account.plan}`)}, ${sqlString(userId)}, ${sqlString(account.plan)}, ${sqlString(account.status === "invited" ? "scheduled" : account.status === "disabled" ? "disabled" : "active")}, DATE('now'), ${account.status === "disabled" ? "DATE('now')" : "NULL"}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET user_id = excluded.user_id, plan_id = excluded.plan_id, status = excluded.status, starts_at = excluded.starts_at, ends_at = excluded.ends_at, updated_at = CURRENT_TIMESTAMP;`);
+    }
   }
-  const operatorId = userIds.get("operator");
+  const editorId = userIds.get("editor");
   const viewerId = userIds.get("viewer");
-  if (operatorId) sql.push(`INSERT INTO workspace_member_permission_overrides (workspace_id, user_id, permission, effect, created_at, updated_at) VALUES (${sqlString(workspaceId)}, ${sqlString(operatorId)}, 'plugin.activate', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT(workspace_id, user_id, permission) DO UPDATE SET effect = excluded.effect, updated_at = CURRENT_TIMESTAMP;`);
   if (viewerId) sql.push(`INSERT INTO workspace_member_permission_overrides (workspace_id, user_id, permission, effect, created_at, updated_at) VALUES (${sqlString(workspaceId)}, ${sqlString(viewerId)}, 'publication.publish', 'deny', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT(workspace_id, user_id, permission) DO UPDATE SET effect = excluded.effect, updated_at = CURRENT_TIMESTAMP;`);
   coreSql(sql.join("\n"));
 }
@@ -254,10 +274,11 @@ async function main() {
   console.log(`Application: ${webUrl.replace(/\/$/, "")}/login`);
   console.log(`Workspace: ${workspaceId}`);
   console.log(`Owner: ${email} / ${password}`);
+  console.log(`Demo sign-in: superadmin@example.local / ${password}`);
   console.log(`Demo sign-in: admin@example.local / ${password}`);
-  console.log(`Demo sign-in: operator@example.local / ${password}`);
+  console.log(`Demo sign-in: editor@example.local / ${password}`);
   console.log(`Demo sign-in: viewer@example.local / ${password}`);
-  console.log("Seeded: owner, admin, operator, viewer, invited, disabled; roles, permission overrides, plans and assignments.");
+  console.log("Seeded: owner, superadmin, admin, editor, viewer, invited, disabled; roles, permission overrides, plans and assignments.");
   console.log("Local-only credentials and development fixtures");
 }
 

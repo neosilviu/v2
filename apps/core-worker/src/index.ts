@@ -108,6 +108,7 @@ function requireAdmin(c: CoreContext): Response | undefined { return isPlatformA
 async function requirePermission(c: CoreContext, workspaceId: string, permission: WorkspacePermission): Promise<Response | undefined> {
   const readDenied = requireRead(c);
   if (readDenied) return readDenied;
+  if (isPlatformAdmin(c.env, c.get("user"))) return undefined;
   const repo = new CoreRepository(c.env.CORE_DB);
   const user = c.get("user");
   return await repo.hasPermission(workspaceId, user, permission) ? undefined : c.json(errorResponse(failure("not_authorized", `${permission} permission is required.`)), 403);
@@ -115,6 +116,7 @@ async function requirePermission(c: CoreContext, workspaceId: string, permission
 async function requireAnyPermission(c: CoreContext, workspaceId: string, permissions: WorkspacePermission[]): Promise<Response | undefined> {
   const readDenied = requireRead(c);
   if (readDenied) return readDenied;
+  if (isPlatformAdmin(c.env, c.get("user"))) return undefined;
   const repo = new CoreRepository(c.env.CORE_DB);
   const user = c.get("user");
   for (const permission of permissions) if (await repo.hasPermission(workspaceId, user, permission)) return undefined;
@@ -123,6 +125,7 @@ async function requireAnyPermission(c: CoreContext, workspaceId: string, permiss
 async function requireAllPermissions(c: CoreContext, workspaceId: string, permissions: WorkspacePermission[]): Promise<Response | undefined> {
   const readDenied = requireRead(c);
   if (readDenied) return readDenied;
+  if (isPlatformAdmin(c.env, c.get("user"))) return undefined;
   const repo = new CoreRepository(c.env.CORE_DB);
   return await repo.hasAllPermissions(workspaceId, c.get("user"), permissions) ? undefined : c.json(errorResponse(failure("not_authorized", `${permissions.join(", ") || "workspace.read"} permission is required.`)), 403);
 }
@@ -287,7 +290,7 @@ async function dispatchPluginOperation(c: CoreContext, request: { workspaceId: s
 async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string) {
   const denied = requireRead(c);
   if (denied) return denied;
-  const repo = new CoreRepository(c.env.CORE_DB);
+  const repo = new CoreRepository(c.env.CORE_DB, c.env);
   const user = c.get("user");
   const workspaces = await repo.accessibleWorkspaces(user);
   const currentWorkspace = (requestedWorkspaceId ? workspaces.find((workspace) => workspace.id === requestedWorkspaceId) : null) ?? workspaces[0] ?? null;
@@ -295,11 +298,12 @@ async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string)
   if (requestedWorkspaceId && currentWorkspace.id !== requestedWorkspaceId) return c.json(errorResponse(failure("not_authorized", "This account is not a member of the requested workspace.")), 403);
   const workspaceId = currentWorkspace.id;
   const permissions = new Set(currentWorkspace.permissions);
+  const membership = await repo.memberSummary(workspaceId, user);
   return c.json({
-    session: { authenticated: true, impersonated: false, isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null },
+    session: { authenticated: true, impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), isSuperadmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null },
     workspaces,
     currentWorkspace,
-    membership: { user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null, roles: currentWorkspace.roles, permissions: currentWorkspace.permissions, recoveryAdmin: false, bootstrap: false },
+    membership,
     layout: (await repo.getLayout(workspaceId)) ?? null,
     navigation: await repo.navigation(workspaceId, permissions),
     featureAvailability: {
@@ -313,7 +317,7 @@ async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string)
 async function runtimeUiBootstrapPayload(c: CoreContext, workspaceId?: string) {
   const denied = requireRead(c);
   if (denied) return denied;
-  const repo = new CoreRepository(c.env.CORE_DB);
+  const repo = new CoreRepository(c.env.CORE_DB, c.env);
   const requestedWorkspaceId = workspaceId && workspaceId !== "current" ? workspaceId : undefined;
   const workspaces = await repo.accessibleWorkspaces(c.get("user"));
   const currentWorkspace = (requestedWorkspaceId ? workspaces.find((workspace) => workspace.id === requestedWorkspaceId) : null) ?? workspaces[0] ?? null;
@@ -361,7 +365,7 @@ async function authAdminJson<T>(c: CoreContext, path: string, init?: { method?: 
   return response.json() as Promise<T>;
 }
 app.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
-app.get("/session", (c) => { const user = c.get("user"); return c.json({ authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isPlatformAdmin(c.env, user), user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null }); });
+app.get("/session", (c) => { const user = c.get("user"); const isSuperadmin = isPlatformAdmin(c.env, user); return c.json({ authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isSuperadmin, isSuperadmin, user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null }); });
 app.get("/session/impersonation", async (c) => {
   const user = c.get("user");
   if (!user) return c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401);
@@ -891,7 +895,7 @@ app.get("/workspaces/:workspaceId/rbac/me", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "workspace.read");
   if (denied) return denied;
-  return c.json(await new CoreRepository(c.env.CORE_DB).memberSummary(workspaceId, c.get("user")));
+  return c.json(await new CoreRepository(c.env.CORE_DB, c.env).memberSummary(workspaceId, c.get("user")));
 });
 app.get("/workspaces/:workspaceId/auth/security-bootstrap", async (c) => {
   const workspaceId = c.req.param("workspaceId");
@@ -900,7 +904,7 @@ app.get("/workspaces/:workspaceId/auth/security-bootstrap", async (c) => {
   const [security, sessions, rbac] = await Promise.all([
     authAdminJson<{ summary: unknown }>(c, `/admin/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`),
     authAdminJson<{ summary: unknown }>(c, "/admin/auth/sessions/summary"),
-    new CoreRepository(c.env.CORE_DB).rbacOverview(workspaceId, c.get("user")),
+    new CoreRepository(c.env.CORE_DB, c.env).rbacOverview(workspaceId, c.get("user")),
   ]);
   return c.json({ summary: security.summary, sessions: sessions.summary, rbac });
 });

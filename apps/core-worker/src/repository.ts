@@ -3,6 +3,7 @@ import type { MailDeliveryResult, MailMessageRequest, MailProviderConfigure, Mai
 import type { SettingScope, WorkspaceLayout } from "@v2/rpc-contracts";
 import { declarativePageContributionSchema, publicRoutePatternSchema, settingsPanelContributionSchema, settingsTabContributionSchema, type AccessMode, type DeclarativePageContribution, type SettingsPanelContribution, type SettingsTabContribution } from "@v2/ui-schema";
 import platformSettingsTabs from "./platform-settings";
+import { isPlatformAdmin } from "./access";
 import type { CoreEnv } from "./env";
 
 export type PluginWorkspaceState = {
@@ -393,7 +394,7 @@ function matchRoutePattern(pattern: string, path: string): Record<string, string
   return params;
 }
 
-const WORKSPACE_RBAC_SEED_VERSION = "workspace-rbac:v1";
+const WORKSPACE_RBAC_SEED_VERSION = "workspace-rbac:v2";
 const PLATFORM_SETTINGS_SEED_VERSION = "platform-settings:v3";
 const PLATFORM_SHELL_SEED_VERSION = "platform-shell:v1";
 const protectedPlatformPages = new Set(["platform.home", "platform.account", "platform.settings"]);
@@ -471,7 +472,7 @@ function manualContributionId(workspaceId: string, slug: string) {
 }
 
 export class CoreRepository {
-  constructor(private readonly db: D1Database, private readonly env?: Pick<CoreEnv, "ENVIRONMENT" | "MAIL_PROVIDER_CONFIGS_JSON">) {}
+  constructor(private readonly db: D1Database, private readonly env?: Pick<CoreEnv, "ENVIRONMENT" | "MAIL_PROVIDER_CONFIGS_JSON" | "PLATFORM_ADMIN_EMAILS" | "RECOVERY_ADMIN_EMAILS" | "RECOVERY_ADMIN_ENABLED">) {}
 
   private async internalSeedCurrent(workspaceId: string, key: string, version: string) {
     const row = await this.db.prepare("SELECT value_json FROM workspace_settings WHERE workspace_id = ? AND scope = '__internal' AND key = ? LIMIT 1")
@@ -516,20 +517,55 @@ export class CoreRepository {
     return true;
   }
 
-  private rolePermissions(systemKey: "owner" | "admin" | "operator" | "viewer"): WorkspacePermission[] {
+  private rolePermissions(systemKey: "owner" | "admin" | "editor" | "viewer"): WorkspacePermission[] {
     if (systemKey === "owner") return [...workspacePermissions];
-    if (systemKey === "admin") return workspacePermissions.filter((permission) => !permission.endsWith(".approve") && permission !== "workspace.admin");
-    if (systemKey === "operator") return ["workspace.read", "workspace.settings.read", "marketplace.read", "approval.read", "layout.read", "publication.read", "agent.read", "agent.use", "provider.read", "localnode.read", "localnode.execute", "production.read", "production.execute"];
-    return ["workspace.read", "workspace.settings.read", "marketplace.read", "approval.read", "layout.read", "publication.read", "agent.read", "provider.read", "localnode.read", "production.read"];
+    if (systemKey === "admin") return [
+      "workspace.read", "workspace.settings.read", "workspace.settings.write",
+      "domains.read", "domains.write", "domains.verify",
+      "mail.read", "mail.configure", "mail.test", "mail.template.write",
+      "marketplace.read", "plugin.install", "plugin.activate", "plugin.update", "plugin.uninstall",
+      "approval.read", "tool.approve", "audit.read", "layout.read", "layout.write", "interface.read", "interface.write", "publication.read", "publication.publish", "plan.read",
+    ];
+    if (systemKey === "editor") return [
+      "workspace.read", "workspace.settings.read",
+      "layout.read", "layout.write",
+      "interface.read", "interface.write",
+      "publication.read", "publication.publish",
+    ];
+    return ["workspace.read", "workspace.settings.read", "layout.read", "interface.read", "publication.read"];
+  }
+
+  private async migrateLegacyWorkspaceRoles(workspaceId: string) {
+    const operator = await this.db.prepare("SELECT id FROM workspace_roles WHERE workspace_id = ? AND system_key = 'operator' LIMIT 1").bind(workspaceId).first<{ id: string }>();
+    if (!operator) return;
+    const editorRoleId = `${workspaceId}:editor`;
+    const statements = [] as ReturnType<D1Database["prepare"]>[];
+    statements.push(
+      this.db.prepare(`INSERT INTO workspace_roles (id, workspace_id, name, system_key, description, updated_at)
+        VALUES (?, ?, 'Editor', 'editor', 'Workspace content editing access', CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET name = excluded.name, system_key = excluded.system_key, description = excluded.description, updated_at = CURRENT_TIMESTAMP`)
+        .bind(editorRoleId, workspaceId),
+    );
+    for (const permission of this.rolePermissions("editor")) {
+      statements.push(this.db.prepare("INSERT OR IGNORE INTO workspace_role_permissions (workspace_id, role_id, permission) VALUES (?, ?, ?)").bind(workspaceId, editorRoleId, permission));
+    }
+    statements.push(
+      this.db.prepare("UPDATE workspace_member_roles SET role_id = ? WHERE workspace_id = ? AND role_id = ?").bind(editorRoleId, workspaceId, operator.id),
+      this.db.prepare("UPDATE workspace_invitations SET role_id = ? WHERE workspace_id = ? AND role_id = ?").bind(editorRoleId, workspaceId, operator.id),
+      this.db.prepare("DELETE FROM workspace_role_permissions WHERE workspace_id = ? AND role_id = ?").bind(workspaceId, operator.id),
+      this.db.prepare("DELETE FROM workspace_roles WHERE workspace_id = ? AND id = ?").bind(workspaceId, operator.id),
+    );
+    await this.db.batch(statements);
   }
 
   async ensureWorkspaceRbac(workspaceId: string) {
+    await this.migrateLegacyWorkspaceRoles(workspaceId);
     if (await this.internalSeedCurrent(workspaceId, "rbac.seed", WORKSPACE_RBAC_SEED_VERSION)) return;
     await this.ensureWorkspace(workspaceId);
     const roles = [
       ["owner", "Owner", "Full workspace owner permissions"],
       ["admin", "Admin", "Workspace administration without owner recovery permissions"],
-      ["operator", "Operator", "Day-to-day operational access"],
+      ["editor", "Editor", "Workspace content editing access"],
       ["viewer", "Viewer", "Read-only workspace access"],
     ] as const;
     const statements = roles.flatMap(([key, name, description]) => {
@@ -634,6 +670,8 @@ export class CoreRepository {
   }
 
   private async permissionEvaluationForUser(workspaceId: string, userId: string) {
+    const email = await this.userEmail(userId);
+    if (this.env && email && isPlatformAdmin(this.env, { id: userId, email })) return { permissions: [...workspacePermissions], denied: new Set<WorkspacePermission>() };
     const [basePermissions, overrides] = await Promise.all([
       this.permissionsForUser(workspaceId, userId),
       this.db.prepare(`SELECT overrides.permission, overrides.effect
@@ -660,12 +698,20 @@ export class CoreRepository {
     return { permissions: [...permissions].sort(), denied };
   }
 
+  private async userEmail(userId: string) {
+    const row = await this.db.prepare("SELECT email FROM workspace_members WHERE user_id = ? LIMIT 1").bind(userId).first<{ email: string | null }>();
+    if (row?.email) return row.email;
+    const user = await this.db.prepare("SELECT email FROM user WHERE id = ? LIMIT 1").bind(userId).first<{ email: string | null }>().catch(() => null);
+    return user?.email ?? null;
+  }
+
   async effectivePermissionsForUser(workspaceId: string, userId: string): Promise<WorkspacePermission[]> {
     return (await this.permissionEvaluationForUser(workspaceId, userId)).permissions;
   }
 
   async hasPermission(workspaceId: string, user: { id: string; email: string } | null, permission: WorkspacePermission): Promise<boolean> {
     if (!user) return false;
+    if (this.env && isPlatformAdmin(this.env, user)) return true;
     const evaluation = await this.permissionEvaluationForUser(workspaceId, user.id);
     if (evaluation.denied.has(permission)) return false;
     return evaluation.permissions.includes(permission) || evaluation.permissions.includes("workspace.admin");
@@ -674,6 +720,7 @@ export class CoreRepository {
   async hasAllPermissions(workspaceId: string, user: { id: string; email: string } | null, permissions: WorkspacePermission[]): Promise<boolean> {
     if (!permissions.length) return await this.hasPermission(workspaceId, user, "workspace.read");
     if (!user) return false;
+    if (this.env && isPlatformAdmin(this.env, user)) return true;
     const evaluation = await this.permissionEvaluationForUser(workspaceId, user.id);
     if (permissions.some((permission) => evaluation.denied.has(permission))) return false;
     if (evaluation.permissions.includes("workspace.admin")) return true;
@@ -682,6 +729,9 @@ export class CoreRepository {
 
   async memberSummary(workspaceId: string, user: { id: string; email: string } | null) {
     if (!user) return { user: null, roles: [], permissions: [], bootstrap: false };
+    if (this.env && isPlatformAdmin(this.env, user)) {
+      return { user: { id: user.id, email: user.email }, roles: [], permissions: [...workspacePermissions], bootstrap: false, recoveryAdmin: true };
+    }
     const rows = await this.db.prepare(`SELECT roles.name, roles.system_key
       FROM workspace_member_roles member_roles
       INNER JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id
@@ -694,6 +744,9 @@ export class CoreRepository {
 
   async accessibleWorkspaces(user: { id: string; email: string } | null): Promise<AccessibleWorkspace[]> {
     if (!user) return [];
+    if (this.env && isPlatformAdmin(this.env, user)) {
+      return (await this.workspaces()).map((workspace) => ({ id: workspace.id, name: workspace.name, status: workspace.status, roles: [], permissions: [...workspacePermissions] }));
+    }
     const rows = await this.db.prepare(`SELECT members.workspace_id, workspaces.name, workspaces.status, roles.name AS role_name, roles.system_key, permissions.permission
       FROM workspace_members members
       INNER JOIN workspaces ON workspaces.id = members.workspace_id

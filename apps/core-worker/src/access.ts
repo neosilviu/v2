@@ -1,5 +1,7 @@
 import type { CoreEnv } from "./env";
 
+type PlatformAdminEnv = Pick<CoreEnv, "PLATFORM_ADMIN_EMAILS" | "RECOVERY_ADMIN_EMAILS" | "RECOVERY_ADMIN_ENABLED">;
+
 export type CoreSessionUser = {
   id: string;
   email: string;
@@ -29,6 +31,16 @@ export function isInternalRequest(request: Request): boolean {
 
 function credentialKey(headers: Headers) {
   return headers.get("authorization") ?? headers.get("cookie") ?? "";
+}
+
+function platformAdminEmails(env: PlatformAdminEnv): string[] {
+  return csv(env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase());
+}
+
+function recoveryAdminEmails(env: PlatformAdminEnv): string[] {
+  return env.RECOVERY_ADMIN_ENABLED === "true"
+    ? csv(env.RECOVERY_ADMIN_EMAILS).map((email) => email.toLowerCase())
+    : [];
 }
 
 export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreSessionUser | null> {
@@ -61,11 +73,12 @@ export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreS
   }
 }
 
-export function isRecoveryAdmin(env: CoreEnv, user: CoreSessionUser | null): boolean {
+export function isRecoveryAdmin(env: PlatformAdminEnv, user: CoreSessionUser | null): boolean {
   if (!user) return false;
-  if (env.RECOVERY_ADMIN_ENABLED !== "true") return false;
-  const admins = csv(env.RECOVERY_ADMIN_EMAILS || env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase());
-  return admins.includes(user.email.toLowerCase());
+  return [...recoveryAdminEmails(env), ...platformAdminEmails(env)].includes(user.email.toLowerCase());
 }
 
-export const isPlatformAdmin = isRecoveryAdmin;
+export function isPlatformAdmin(env: PlatformAdminEnv, user: CoreSessionUser | null): boolean {
+  if (!user) return false;
+  return [...platformAdminEmails(env), ...recoveryAdminEmails(env)].includes(user.email.toLowerCase());
+}

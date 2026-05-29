@@ -74,9 +74,9 @@ const permissions = [
 ];
 const roleSpecs = [
   ["owner", "Owner", permissions],
-  ["admin", "Admin", permissions.filter((item) => item !== "workspace.admin" && !item.endsWith(".approve"))],
-  ["operator", "Operator", ["workspace.read", "workspace.settings.read", "layout.read", "marketplace.read", "agent.read", "agent.use", "provider.read", "localnode.read", "localnode.execute", "production.read", "production.execute"]],
-  ["viewer", "Viewer", ["workspace.read", "workspace.settings.read", "layout.read", "marketplace.read", "agent.read", "provider.read", "localnode.read", "production.read"]],
+  ["admin", "Admin", ["workspace.read", "workspace.settings.read", "workspace.settings.write", "domains.read", "domains.write", "domains.verify", "mail.read", "mail.configure", "mail.test", "mail.template.write", "marketplace.read", "plugin.install", "plugin.activate", "plugin.update", "plugin.uninstall", "approval.read", "tool.approve", "audit.read", "layout.read", "layout.write", "interface.read", "interface.write", "publication.read", "publication.publish", "plan.read"]],
+  ["editor", "Editor", ["workspace.read", "workspace.settings.read", "layout.read", "layout.write", "interface.read", "interface.write", "publication.read", "publication.publish"]],
+  ["viewer", "Viewer", ["workspace.read", "workspace.settings.read", "layout.read", "interface.read", "publication.read"]],
 ];
 
 const statements = [

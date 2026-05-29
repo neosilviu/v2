@@ -44,6 +44,9 @@ function parseUrl(value: string | undefined, name: string): URL {
 }
 function isLocalOrigin(url: URL) { return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname.endsWith(".local"); }
 function parseOrigins(value?: string) { return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean); }
+function uniqueLowerEmails(...groups: Array<string[] | undefined>) {
+  return [...new Set(groups.flatMap((group) => (group ?? []).map((email) => email.toLowerCase())))];
+}
 function rpIdFor(url: URL) { return url.hostname === "127.0.0.1" ? "localhost" : url.hostname; }
 const developmentSecret = "v2-development-only-auth-secret-change-me";
 
@@ -60,7 +63,8 @@ export function parseAuthConfig(env: AuthEnv): AuthConfigResult {
     if (production && trustedOrigins.some((origin) => { const url = new URL(origin); return url.protocol !== "https:" || isLocalOrigin(url); })) throw new Error("Production trusted origins must be HTTPS and non-local");
     const github = env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET ? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } : undefined;
     const recoveryAdminEnabled = env.RECOVERY_ADMIN_ENABLED === "true";
-    return { ok: true, config: { db: env.AUTH_DB, secret, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin }, adminEmails: recoveryAdminEnabled ? parseOrigins(env.RECOVERY_ADMIN_EMAILS || env.PLATFORM_ADMIN_EMAILS).map((email) => email.toLowerCase()) : [], recoveryAdminEnabled, ...(env.CORE ? { core: env.CORE } : {}), workspaceId: env.AUTH_WORKSPACE_ID || "default" } };
+    const adminEmails = uniqueLowerEmails(parseOrigins(env.PLATFORM_ADMIN_EMAILS), recoveryAdminEnabled ? parseOrigins(env.RECOVERY_ADMIN_EMAILS) : []);
+    return { ok: true, config: { db: env.AUTH_DB, secret, baseURL: base.origin, trustedOrigins, production, ...(github ? { github } : {}), passkey: { rpID: rpIdFor(base), rpName: "v2", origin: base.origin }, adminEmails, recoveryAdminEnabled, ...(env.CORE ? { core: env.CORE } : {}), workspaceId: env.AUTH_WORKSPACE_ID || "default" } };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Invalid authentication configuration" };
   }
@@ -89,7 +93,6 @@ export async function readAuthUser(config: AuthConfig, headers: Headers) {
 }
 
 export async function isAuthAdmin(config: AuthConfig, headers: Headers) {
-  if (!config.recoveryAdminEnabled) return false;
   const user = await readAuthUser(config, headers);
   return Boolean(user && config.adminEmails.includes(user.email.toLowerCase()));
 }

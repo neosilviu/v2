@@ -77,7 +77,7 @@ async function requireAdmin(c: AuthContext) {
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
   if (!parsed.ok) return { ok: false as const, response: c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503) };
   if (isInternalRequest(c)) return { ok: true as const, config: parsed.config };
-  if (!await isAuthAdmin(parsed.config, c.req.raw.headers)) return { ok: false as const, response: c.json(errorResponse(failure("not_authorized", "Auth recovery administrator access is disabled or not authorized.")), 403) };
+  if (!await isAuthAdmin(parsed.config, c.req.raw.headers)) return { ok: false as const, response: c.json(errorResponse(failure("not_authorized", "Auth administrator access is required.")), 403) };
   return { ok: true as const, config: parsed.config };
 }
 authApiRoutes = authApiRoutes.post("/admin/auth/methods", async (c) => {
@@ -151,7 +151,7 @@ authApiRoutes = authApiRoutes.get("/admin/auth/sessions/summary", async (c) => {
 authApiRoutes = authApiRoutes.get("/admin/auth/security-bootstrap", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
-  const repo = new AuthRuntimeRepository(admin.config.db);
+  const repo = new AuthRuntimeRepository(admin.config.db, new Set(admin.config.adminEmails));
   const workspaceId = c.req.query("workspaceId") ?? null;
   const [security, sessions] = await Promise.all([
     repo.securitySummary(workspaceId, { github: Boolean(admin.config.github) }),
@@ -162,13 +162,13 @@ authApiRoutes = authApiRoutes.get("/admin/auth/security-bootstrap", async (c) =>
 authApiRoutes = authApiRoutes.get("/admin/auth/impersonation-sessions", async (c) => {
   const admin = await requireAdmin(c);
   if (!admin.ok) return admin.response;
-  return c.json({ sessions: await new AuthRuntimeRepository(admin.config.db).listImpersonationSessions(c.req.query("workspaceId") ?? null) });
+  return c.json({ sessions: await new AuthRuntimeRepository(admin.config.db, new Set(admin.config.adminEmails)).listImpersonationSessions(c.req.query("workspaceId") ?? null) });
 });
 authApiRoutes = authApiRoutes.get("/internal/auth/users", async (c) => {
   if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal user administration requires a service binding.")), 403);
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
-  return c.json({ users: await new AuthRuntimeRepository(parsed.config.db).listUsers() });
+  return c.json({ users: await new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails)).listUsers() });
 });
 type ResolvedAuthConfig = Extract<Awaited<ReturnType<typeof resolveAuthConfig>>, { ok: true }>["config"];
 async function currentAuthSession(c: AuthContext, config: ResolvedAuthConfig) {
@@ -209,7 +209,11 @@ authApiRoutes = authApiRoutes.post("/internal/auth/impersonation/start", async (
   if (!actorSessionId || !actorUserId) return c.json(errorResponse(failure("not_authenticated", "An active actor session is required.")), 401);
   if (actorUserId !== body.expectedActorUserId) return c.json(errorResponse(failure("not_authorized", "The authenticated actor does not match the authorized actor.")), 403);
   if (actorUserId === body.subjectUserId) return c.json(errorResponse(failure("validation_failed", "A user cannot impersonate themselves.")), 400);
-  const repo = new AuthRuntimeRepository(parsed.config.db);
+  const repo = new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails));
+  const actor = await parsed.config.db.prepare("SELECT id, email FROM user WHERE id = ? LIMIT 1").bind(actorUserId).first<{ id: string; email: string }>();
+  const subject = await parsed.config.db.prepare("SELECT id, email FROM user WHERE id = ? LIMIT 1").bind(body.subjectUserId).first<{ id: string; email: string }>();
+  if (!actor || !parsed.config.adminEmails.includes(actor.email.toLowerCase())) return c.json(errorResponse(failure("not_authorized", "Only platform superadmin accounts may start impersonation.")), 403);
+  if (subject && parsed.config.adminEmails.includes(subject.email.toLowerCase())) return c.json(errorResponse(failure("not_authorized", "Platform superadmin accounts cannot be impersonated.")), 403);
   if (current?.session?.impersonatedBy || await repo.activeImpersonationForSession(actorSessionId)) {
     return c.json(errorResponse(failure("not_authorized", "Impersonation chaining is not allowed.")), 403);
   }
@@ -239,7 +243,7 @@ authApiRoutes = authApiRoutes.post("/internal/auth/impersonation/stop", async (c
   const current = await currentAuthSession(c, parsed.config);
   const impersonatedSessionId = typeof current?.session?.id === "string" ? current.session.id : "";
   if (!impersonatedSessionId) return c.json(errorResponse(failure("not_authenticated", "An active impersonated session is required.")), 401);
-  const ended = await new AuthRuntimeRepository(parsed.config.db).stopImpersonationForSession(impersonatedSessionId);
+  const ended = await new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails)).stopImpersonationForSession(impersonatedSessionId);
   if (!ended) return c.json(errorResponse(failure("not_found", "Active impersonation session is not available.")), 404);
   if (ended.actorToken) {
     await setSignedCookie(c, context.authCookies.sessionToken.name, ended.actorToken, context.secret, context.authCookies.sessionToken.attributes);

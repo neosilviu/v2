@@ -12,6 +12,7 @@ const users = ui.table({
   columns: [
     column({ id: "name", label: "Name", field: "name" }),
     column({ id: "email", label: "Email", field: "email" }),
+    column({ id: "isPlatformAdmin", label: "Platform admin", field: "isPlatformAdmin", type: "badge" }),
     column({ id: "emailVerified", label: "Verified", field: "emailVerified", type: "badge" }),
     column({ id: "passkeys", label: "Passkeys", field: "passkeys" }),
     column({ id: "sessions", label: "Sessions", field: "sessions" }),
