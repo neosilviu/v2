@@ -41,8 +41,31 @@ function syncMarketplaceCatalog() {
   run("Marketplace catalog sync", "pnpm", ["marketplace:sync"]);
 }
 
-function authSql(sql) {
-  return run("auth local SQL", "pnpm", ["--dir", "apps/auth-worker", "exec", "wrangler", "d1", "execute", "v2-auth", "--local", "--command", sql]);
+function authSql(sql, json = false) {
+  return run("auth local SQL", "pnpm", [
+    "--dir",
+    "apps/auth-worker",
+    "exec",
+    "wrangler",
+    "d1",
+    "execute",
+    "v2-auth",
+    "--local",
+    ...(json ? ["--json"] : []),
+    "--command",
+    sql,
+  ]);
+}
+
+function authUserIdByEmail(emailAddress) {
+  const output = authSql(
+    `SELECT id FROM user WHERE lower(email) = lower(${sqlString(emailAddress)}) LIMIT 1;`,
+    true,
+  );
+  const parsed = JSON.parse(output);
+  const firstResult = Array.isArray(parsed) ? parsed[0] : parsed;
+  const rows = firstResult?.results ?? firstResult?.result ?? [];
+  return Array.isArray(rows) && typeof rows[0]?.id === "string" ? rows[0].id : undefined;
 }
 
 function coreSql(sql) {
@@ -176,7 +199,7 @@ async function ensureDemoAuthAccounts() {
     if (!signup.response.ok && signup.response.status !== 422 && signup.response.status !== 409) {
       throw new Error(`demo account signup failed for ${account.email}: HTTP ${signup.response.status} ${JSON.stringify(signup.body)}`);
     }
-    const userId = signup.body?.user?.id ?? authSql(`SELECT id FROM user WHERE lower(email) = lower(${sqlString(account.email)}) LIMIT 1;`).match(/\|\s*([^|\s]+)\s*\|/)?.[1];
+    const userId = signup.body?.user?.id ?? authUserIdByEmail(account.email);
     if (!userId) throw new Error(`could not resolve demo user id for ${account.email}`);
     userIds.set(account.key, userId);
   }
