@@ -1,5 +1,5 @@
 import { hc } from "hono/client";
-import type { CoreApi } from "@v2/core-worker";
+import type { CoreApp } from "@v2/core-worker";
 import { z } from "zod";
 import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc-contracts";
@@ -11,7 +11,7 @@ export type { CoreSession, ImpersonationContext, StartupBootstrap, MarketplacePl
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 type ResponseLike = Pick<Response, "ok" | "status" | "json" | "text">;
-export const coreApi = hc<CoreApi>(coreUrl, { init: { credentials: "include" } });
+export const coreApi = hc<CoreApp>(coreUrl, { init: { credentials: "include" } });
 
 let activeWorkspaceId: string | null = null;
 let shellBootstrap: Promise<ShellBootstrap> | null = null;
