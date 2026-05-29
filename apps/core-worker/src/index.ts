@@ -750,20 +750,20 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
   const repo = new CoreRepository(c.env.CORE_DB, c.env);
   const resolved = await repo.privateRuntimeContribution(request.workspaceId, request.contributionId);
   if (!resolved) return c.json(pluginOperationEnvelope("denied", null, "Contribution is not active in this workspace."), 403);
-  const dataSource = resolved.panel.dataSources.find((item) => item.id === request.dataSourceId) ?? resolved.panel.dataSources.find((item) => item.resource === request.dataSourceId);
-  if (!dataSource) return c.json(pluginOperationEnvelope("denied", null, "Data source is not declared by this contribution."), 403);
-  const permissionDenied = await requirePermission(c, request.workspaceId, dataSource.access === "permission-gated" ? resolved.requiredPermission ?? "workspace.settings.read" : "workspace.settings.read");
+  const section = resolved.panel.sections.find((item) => item.dataSourceId === request.dataSourceId) ?? resolved.panel.sections.find((item) => item.id === request.dataSourceId);
+  if (!section) return c.json(pluginOperationEnvelope("denied", null, "Data source is not declared by this contribution."), 403);
+  const permissionDenied = await requirePermission(c, request.workspaceId, resolved.requiredPermission ?? "workspace.settings.read");
   if (permissionDenied) return permissionDenied;
-  if (dataSource.kind === "static") return c.json({ status: "ok", data: staticDataFor((resolved.panel.schema as { data?: Record<string, unknown> }).data ?? {}, dataSource.id, dataSource.resource), error: null, approvalId: null, auditEventId: null });
+  if (section.kind === "summary" || section.kind === "table" || section.kind === "form" || section.kind === "crud" || section.kind === "actions") return c.json({ status: "ok", data: staticDataFor((resolved.panel.schema as { data?: Record<string, unknown> }).data ?? {}, request.dataSourceId, section.dataSourceId), error: null, approvalId: null, auditEventId: null });
   const deployment = await activeRuntimeOrAudit(repo, request.workspaceId, resolved.pluginId, "settings.runtime.data", c.get("user")?.id);
   if (!deployment) return c.json(runtimeUnavailable("Plugin runtime is not active."), 503);
-  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "data", operationId: dataSource.resource ?? dataSource.id, contributionId: request.contributionId, ...(request.routeParams ? { routeParams: request.routeParams } : {}), ...(request.queryParams ? { queryParams: request.queryParams } : {}) });
+  const runtimeResult = await pluginRuntimeDispatch(c, { workspaceId: request.workspaceId, pluginId: resolved.pluginId, runtimeKey: deployment.runtimeKey, kind: "data", operationId: section.dataSourceId ?? section.id, contributionId: request.contributionId, ...(request.routeParams ? { routeParams: request.routeParams } : {}), ...(request.queryParams ? { queryParams: request.queryParams } : {}) });
   if (runtimeResult) {
     if (!runtimeResult.response.ok) return c.json({ status: "denied", data: null, error: "Plugin runtime rejected the data request.", approvalId: null, auditEventId: null }, runtimeResult.response.status === 404 ? 404 : 403);
-    await repo.audit(request.workspaceId, "settings.runtime.data.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id, dispatched: "plugin-runtime" }, c.get("user")?.id);
+    await repo.audit(request.workspaceId, "settings.runtime.data.execute", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: section.dataSourceId ?? section.id, dispatched: "plugin-runtime" }, c.get("user")?.id);
     return c.json({ status: "ok", data: runtimeResult.body, error: null, approvalId: null, auditEventId: null });
   }
-  await repo.audit(request.workspaceId, "settings.runtime.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: dataSource.id }, c.get("user")?.id);
+  await repo.audit(request.workspaceId, "settings.runtime.data.unavailable", { pluginId: resolved.pluginId, contributionId: request.contributionId, dataSourceId: section.dataSourceId ?? section.id }, c.get("user")?.id);
   return c.json(runtimeUnavailable(), 501);
 });
 app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
