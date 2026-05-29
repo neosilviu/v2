@@ -164,6 +164,12 @@ authApiRoutes = authApiRoutes.get("/admin/auth/impersonation-sessions", async (c
   if (!admin.ok) return admin.response;
   return c.json({ sessions: await new AuthRuntimeRepository(admin.config.db).listImpersonationSessions(c.req.query("workspaceId") ?? null) });
 });
+authApiRoutes = authApiRoutes.get("/internal/auth/users", async (c) => {
+  if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal user administration requires a service binding.")), 403);
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  return c.json({ users: await new AuthRuntimeRepository(parsed.config.db).listUsers() });
+});
 type ResolvedAuthConfig = Extract<Awaited<ReturnType<typeof resolveAuthConfig>>, { ok: true }>["config"];
 async function currentAuthSession(c: AuthContext, config: ResolvedAuthConfig) {
   const headers = new Headers();
