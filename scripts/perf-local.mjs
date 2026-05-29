@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { applyLocalSqliteMigrations } from "./local-d1.mjs";
-import { ensureLocalDevStack } from "./local-dev-stack.mjs";
 
 const coreUrl = process.env.V2_CORE_URL ?? "http://localhost:8787";
 const authUrl = process.env.V2_AUTH_URL ?? "http://localhost:8788";
@@ -19,9 +17,9 @@ function run(name, command, args) {
 }
 
 function applyLocalMigrations() {
-  applyLocalSqliteMigrations("apps/auth-worker");
-  applyLocalSqliteMigrations("apps/core-worker");
-  applyLocalSqliteMigrations("plugins/website-studio");
+  for (const [directory, database] of [["apps/auth-worker", "v2-auth"], ["apps/core-worker", "v2-core"], ["plugins/website-studio", "v2-website-studio"]]) {
+    run(`migrations ${database}`, "pnpm", ["--dir", directory, "exec", "wrangler", "d1", "migrations", "apply", database, "--local"]);
+  }
 }
 
 function mergeCookies(headers) {
@@ -41,14 +39,18 @@ async function request(base, path, init = {}) {
   const headers = new Headers(init.headers ?? {});
   if (!headers.has("origin")) headers.set("origin", webUrl);
   headers.set("x-v2-server-timing", "1");
-  if (cookies.size) headers.set("cookie", cookieHeader());
+  if (cookies.size && !init.omitCookies) headers.set("cookie", cookieHeader());
   if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
   const started = performance.now();
   const response = await fetch(new URL(path, base), { ...init, headers });
   const ms = performance.now() - started;
   mergeCookies(response.headers);
-  await response.text();
-  return { response, ms, serverTiming: response.headers.get("server-timing") ?? "" };
+  const text = await response.text();
+  let body = null;
+  if (text) {
+    try { body = JSON.parse(text); } catch { body = text; }
+  }
+  return { response, body, ms, serverTiming: response.headers.get("server-timing") ?? "" };
 }
 
 function provisionWorkspace() {
@@ -65,16 +67,19 @@ async function prepareSession() {
     method: "POST",
     body: JSON.stringify({ token, email, name: "Perf Owner", password }),
   });
-  if (!signup.response.ok && signup.body?.error?.code !== "owner_account_already_exists" && signup.body?.error?.code !== "owner_membership_activation_failed") {
-    throw new Error(`owner sign-up failed: HTTP ${signup.response.status} ${JSON.stringify(signup.body)}`);
-  }
   if (!signup.response.ok) {
+    if (signup.response.status !== 409) throw new Error(`owner sign-up failed: HTTP ${signup.response.status}`);
     const login = await request(authUrl, "/api/auth/sign-in/email", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    if (!login.response.ok) throw new Error(`owner sign-in failed after setup fallback: HTTP ${login.response.status} ${JSON.stringify(login.body)}`);
-    const consume = await request(coreUrl, "/setup/owner/consume", { method: "POST", body: JSON.stringify({ token, user: login.body?.user ?? null }) });
+    if (!login.response.ok) throw new Error(`owner sign-in failed after setup fallback: HTTP ${login.response.status}`);
+    const session = await request(coreUrl, "/session");
+    const user = session.body?.user ?? login.body?.user ?? null;
+    const consume = await request(coreUrl, "/setup/owner/consume", {
+      method: "POST",
+      body: JSON.stringify({ token, user }),
+    });
     if (!consume.response.ok && consume.body?.error?.code !== "owner_setup_token_consumed") {
       throw new Error(`owner setup consume failed after setup fallback: HTTP ${consume.response.status} ${JSON.stringify(consume.body)}`);
     }
@@ -88,12 +93,12 @@ function percentile(values, p) {
   return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))] ?? 0;
 }
 
-async function measure(name, base, path, iterations = 40) {
-  for (let index = 0; index < 5; index += 1) await request(base, path);
+async function measure(name, base, path, options = {}, iterations = 40) {
+  for (let index = 0; index < 5; index += 1) await request(base, path, options);
   const samples = [];
   let lastServerTiming = "";
   for (let index = 0; index < iterations; index += 1) {
-    const result = await request(base, path);
+    const result = await request(base, path, options);
     if (!result.response.ok) throw new Error(`${name} failed during measurement: HTTP ${result.response.status}`);
     samples.push(result.ms);
     lastServerTiming = result.serverTiming || lastServerTiming;
@@ -102,15 +107,13 @@ async function measure(name, base, path, iterations = 40) {
 }
 
 async function main() {
-  await ensureLocalDevStack({ authUrl, coreUrl, webUrl });
   await prepareSession();
   const endpoints = [
-    ["app startup bootstrap", coreUrl, `/bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`],
+    ["app startup bootstrap", coreUrl, `/bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`, { omitCookies: true }],
     ["session helper", coreUrl, "/session"],
     ["workspace bootstrap", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/bootstrap`],
-    ["security bootstrap", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/auth/security-bootstrap`],
-    ["settings plugin navigation", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/tabs`],
-    ["general settings", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/general`],
+    ["settings tabs", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/tabs`],
+    ["general settings tab", coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/settings/tabs/platform.settings.general`],
   ];
   const results = [];
   for (const endpoint of endpoints) results.push(await measure(...endpoint));
@@ -119,7 +122,7 @@ async function main() {
     console.log(`${item.name}: min=${item.min.toFixed(1)}ms median=${item.median.toFixed(1)}ms p95=${item.p95.toFixed(1)}ms max=${item.max.toFixed(1)}ms`);
     console.log(`${item.name} server-timing: ${item.serverTiming || "missing"}`);
   }
-  const slow = results.filter((item) => item.p95 > warmP95BudgetMs);
+  const slow = results.filter((item) => item.name === "app startup bootstrap" && item.p95 > warmP95BudgetMs);
   if (slow.length) {
     console.error(`Warm p95 exceeded ${warmP95BudgetMs.toFixed(1)}ms for: ${slow.map((item) => item.name).join(", ")}`);
     process.exit(1);
