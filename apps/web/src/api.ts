@@ -99,6 +99,7 @@ async function request<T>(path: string, schema: { parse(input: unknown): T }, in
   const headers = new Headers(init.headers);
   const method = (init.method ?? "GET").toUpperCase();
   if (init.body && !(init.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
+  if ((method === "GET" || method === "HEAD") && !init.body) headers.delete("content-type");
   const response = await fetch(`${coreUrl}${path}`, { ...init, method, credentials: "include", headers });
   if (response.status === 401) throw new CoreAuthRequiredError();
   if (!response.ok) throw await parseCoreError(response);
