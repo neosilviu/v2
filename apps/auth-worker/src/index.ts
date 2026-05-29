@@ -179,7 +179,7 @@ async function currentAuthSession(c: AuthContext, config: ResolvedAuthConfig) {
   if (authorization) headers.set("authorization", authorization);
   const response = await createAuth(config).handler(new Request(new URL("/api/auth/get-session", config.baseURL).toString(), { headers }));
   if (!response.ok) return null;
-  return response.json().catch(() => null) as Promise<{ session?: { id?: string; userId?: string; impersonatedBy?: string | null } | null; user?: { id?: string } | null } | null>;
+  return response.json().catch(() => null) as Promise<{ session?: { id?: string; userId?: string; impersonatedBy?: string | null } | null; user?: { id?: string; email?: string; name?: string | null } | null } | null>;
 }
 
 authApiRoutes = authApiRoutes.get("/internal/auth/impersonation/current", async (c) => {
@@ -260,7 +260,7 @@ authApiRoutes = authApiRoutes.post("/api/auth/sign-up/email", async (c) => {
     body: await c.req.text(),
   }));
 });
-function ownerSetupError(c: AuthContext, status: 400 | 403 | 404 | 409 | 422 | 503, code: AppErrorCode, message: string, details?: Record<string, unknown>) {
+function ownerSetupError(c: AuthContext, status: 400 | 401 | 403 | 404 | 409 | 422 | 503, code: AppErrorCode, message: string, details?: Record<string, unknown>) {
   return c.json(errorResponse(failure(code, message, details ? { details } : {})), status);
 }
 function ownerStatusError(c: AuthContext, setupStatus: string | undefined, emailMatches: boolean) {
@@ -338,6 +338,36 @@ authApiRoutes = authApiRoutes.post("/setup/owner/sign-up/email", async (c) => {
   });
   if (!consumeResponse.ok) return ownerSetupError(c, 409, "owner_membership_activation_failed", "Owner account was created but workspace membership could not be finalized. Retry with the same setup link.");
   return response;
+});
+authApiRoutes = authApiRoutes.post("/setup/owner/activate-existing", async (c) => {
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  if (!parsed.config.core) return c.json(errorResponse(failure("dependency_unavailable", "Core service binding is required for owner setup.")), 503);
+  const body = await c.req.json().catch(() => null) as { token?: unknown } | null;
+  const token = typeof body?.token === "string" ? body.token : "";
+  if (token.length < 24) return ownerSetupError(c, 400, "owner_setup_invalid_token", "A valid owner setup token is required.");
+  const current = await currentAuthSession(c, parsed.config);
+  const user = current?.user && typeof current.user.id === "string" && typeof current.user.email === "string"
+    ? { id: current.user.id, email: current.user.email, ...(typeof current.user.name === "string" ? { name: current.user.name } : {}) }
+    : null;
+  if (!user) return ownerSetupError(c, 401, "not_authenticated", "Sign in with the authorized owner account before activating this workspace.");
+  const statusResponse = await parsed.config.core.fetch(`https://core.internal/setup/owner?token=${encodeURIComponent(token)}`);
+  if (!statusResponse.ok) return ownerSetupError(c, 404, "owner_setup_invalid_token", "Owner setup link is not available.");
+  const status = await statusResponse.json() as { setup?: { ownerEmail?: string; status?: string } };
+  const statusError = ownerStatusError(c, status.setup?.status, status.setup?.ownerEmail?.toLowerCase() === user.email.trim().toLowerCase());
+  if (statusError) return statusError;
+  const consumeResponse = await parsed.config.core.fetch("https://core.internal/internal/setup/owner/consume", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token, user }),
+  });
+  if (!consumeResponse.ok) {
+    const consumeBody = await consumeResponse.json().catch(() => null) as { error?: { code?: string } } | null;
+    if (consumeBody?.error?.code === "owner_setup_token_consumed") return ownerSetupError(c, 409, "owner_setup_token_consumed", "Owner setup token has already been consumed.");
+    if (consumeBody?.error?.code === "owner_setup_email_mismatch" || consumeResponse.status === 403) return ownerSetupError(c, 403, "owner_setup_email_mismatch", "Owner setup token is not valid for this email.");
+    return ownerSetupError(c, 409, "owner_membership_activation_failed", "Workspace membership could not be finalized. Retry with the same setup link.");
+  }
+  return c.json(await consumeResponse.json());
 });
 authApiRoutes = authApiRoutes.post("/api/auth/sign-in/email", async (c) => {
   const parsed = await resolveAuthConfig(c.env);
