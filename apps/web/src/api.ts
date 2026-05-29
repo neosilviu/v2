@@ -259,6 +259,20 @@ export async function installMarketplacePlugin(pluginId: string, approvalId?: st
   return result;
 }
 
+export async function uploadPlugin(file: File): Promise<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }> {
+  const body = new FormData();
+  body.append("file", file);
+  const result = await requestUnknown<{ status: string; manifest?: PluginManifest; approvalId?: string; pluginId?: string; version?: string; sha256?: string; sensitiveCapabilities?: string[] }>(`/plugins/upload?workspaceId=${encodeURIComponent(currentWorkspaceId())}`, { method: "POST", body });
+  invalidateApiCaches();
+  return result;
+}
+
+export async function approveInstall(approvalId: string): Promise<PluginManifest> {
+  const result = await requestUnknown<{ status: string; manifest: PluginManifest }>("/plugins/install", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), approvalId }) });
+  invalidateApiCaches();
+  return result.manifest;
+}
+
 export async function deactivatePlugin(pluginId: string): Promise<void> {
   await requestUnknown("/plugins/deactivate", { method: "POST", body: JSON.stringify({ workspaceId: currentWorkspaceId(), pluginId }) });
   invalidateApiCaches();
