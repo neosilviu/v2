@@ -124,5 +124,5 @@ export type CoreApiCompatibility = {
   };
 };
 
-export type CoreApi = Hono<CoreApiEnv, CoreApiSchema & CoreApiCompatibility>;
+export type CoreApi = Hono<CoreApiEnv, CoreApiSchema>;
 export type CoreApiClient = Hono<CoreApiEnv, CoreApiSchema>;

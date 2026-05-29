@@ -263,6 +263,7 @@ export async function loadSettingsTab(tabId: string): Promise<RuntimeSettingsTab
 }
 
 export async function loadPublicPage(pathname: string): Promise<{ page: DeclarativePageContribution; routeParams: Record<string, string>; plugin: { id: string; name: string; version: string } | null }> {
+  // Allowed exception: public wildcard route loading is not ergonomic through CoreApi Hono routes.
   const headers = new Headers();
   stripJsonContentType(headers);
   const response = await fetch(pathname, { credentials: "include", headers });
