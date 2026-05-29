@@ -4,11 +4,10 @@ import { z } from "zod";
 import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc-contracts";
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
-import { pluginManifestSchema, surfaceSchema, toolSchema } from "@v2/plugin-contracts";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
-import { approvalRequestListSchema, coreSessionSchema, startupBootstrapSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, interfaceContributionSchema, type CoreSession, type StartupBootstrap, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary, type InterfaceContribution } from "./platform-contracts";
+import { approvalRequestListSchema, coreSessionSchema, impersonationResponseSchema, runtimeUiBootstrapSchema, startupBootstrapSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, interfaceContributionSchema, stopImpersonationResponseSchema, type CoreSession, type ImpersonationContext, type RuntimeUiBootstrap, type StartupBootstrap, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary, type InterfaceContribution } from "./platform-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-export type { CoreSession, StartupBootstrap, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary, InterfaceContribution, RuntimeNavigationItem } from "./platform-contracts";
+export type { CoreSession, ImpersonationContext, StartupBootstrap, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary, InterfaceContribution, RuntimeNavigationItem } from "./platform-contracts";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 type ResponseLike = Pick<Response, "ok" | "status" | "json" | "text">;
@@ -155,39 +154,6 @@ export async function loadCoreSession(): Promise<CoreSession> {
   return coreResponse(coreApi.session.$get(), coreSessionSchema);
 }
 
-export type ImpersonationContext = {
-  id: string;
-  actorUserId: string;
-  subjectUserId: string;
-  workspaceId: string;
-  reason: string;
-  expiresAt: string | null;
-};
-
-const impersonationResponseSchema = z.object({
-  impersonation: z.object({
-    id: z.string(),
-    actorUserId: z.string(),
-    subjectUserId: z.string(),
-    workspaceId: z.string(),
-    reason: z.string(),
-    expiresAt: z.string().nullable().optional().default(null),
-  }).nullable(),
-});
-
-const stopImpersonationResponseSchema = z.object({
-  impersonation: z.object({
-    id: z.string().optional(),
-    actorUserId: z.string().optional(),
-    subjectUserId: z.string().optional(),
-    workspaceId: z.string(),
-    reason: z.string().optional(),
-    expiresAt: z.string().nullable().optional(),
-  }),
-  restored: z.boolean(),
-  reauthenticationRequired: z.boolean(),
-});
-
 export async function loadCurrentImpersonation(): Promise<ImpersonationContext | null> {
   return (await coreResponse(coreApi.session.impersonation.$get(), impersonationResponseSchema)).impersonation;
 }
@@ -260,14 +226,6 @@ export async function loadRuntimePage(contributionId: string): Promise<{ contrib
     z.object({ contribution: interfaceContributionSchema, page: z.any() as z.ZodType<DeclarativePageContribution> }),
   );
 }
-
-const runtimeUiBootstrapSchema = z.object({
-  plugins: z.array(pluginManifestSchema),
-  active: z.array(z.string()),
-  tools: z.array(toolSchema),
-  surfaces: z.array(surfaceSchema),
-});
-type RuntimeUiBootstrap = z.output<typeof runtimeUiBootstrapSchema>;
 
 async function loadRuntimeUiBootstrap() {
   if (!runtimeUiBootstrap) {

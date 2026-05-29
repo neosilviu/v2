@@ -1,16 +1,15 @@
 # Runtime Login
 
-The login page is public, but its visible methods and decorative UI contributions are resolved at runtime from Auth DB. Auth Worker remains the only authority for password, session, OAuth and passkey handling.
+The login page is public, but its visible methods and declarative UI contributions are resolved at runtime from Auth DB. Auth Worker remains the only authority for password, session, OAuth and passkey handling.
 
 ## Public config
 
 `GET /public/auth/login-config?workspaceId=...` returns only public-safe data:
 
 - enabled and public-visible methods;
-- public provider IDs and titles;
-- display order;
 - published declarative UI contributions for login slots;
-- feature availability such as passkey support.
+- feature availability such as password, passkey and social support;
+- policy flags for registration and verification.
 
 It must not return OAuth secrets, secret refs, internal bindings, draft/disabled methods or administrative configuration.
 
@@ -44,11 +43,6 @@ Normal Marketplace plugins cannot provide arbitrary auth code. Future auth exten
 - `auth.policy.admin`
 
 Publishing login contributions or auth methods must be approval and audit backed once RBAC and the persistent approval engine are in place.
-## Runtime Login Status
-
-The public Login page is driven by `GET /public/auth/login-config?workspaceId=...`.
-
-The response contains only published/enabled public methods, safe method labels/provider IDs, registration policy flags and published declarative login UI contributions. It never returns OAuth secrets, configuration refs or internal bindings.
 
 Current behavior:
 
@@ -59,4 +53,4 @@ Current behavior:
 - Social methods appear only when the social method is explicitly published, even if server-side provider env vars exist.
 - Redirects are restricted to local relative paths and public delivery paths are not accepted as login redirects.
 
-Admin configuration is protected by Auth Worker `/admin/auth/*` endpoints and still uses bootstrap admin authorization until workspace RBAC replaces it.
+Admin configuration is normally reached through Core Settings, which checks workspace RBAC and then calls Auth internally. Direct Auth `/admin/auth/*` access is recovery-only and requires `RECOVERY_ADMIN_ENABLED=true` plus a matching recovery admin email.

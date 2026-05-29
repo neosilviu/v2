@@ -3,7 +3,8 @@
 - The signing value is configured server-side and must contain at least 32 characters.
 - `DEPLOYMENT_ENV=production` activates strict production validation.
 - In production, authentication URL and trusted origins must be HTTPS and non-local.
-- CORS returns only configured trusted origins and permits credentials only for authentication routes.
+- In production, Auth resolves trusted origins and passkey RP settings from Core's `/internal/workspaces/:workspaceId/auth/trust-config` boundary.
+- CORS returns only configured trusted origins and permits credentials only for authentication, setup and admin routes.
 - Secure cookies are enabled for production.
 - GitHub OAuth is enabled only when both required server-side values exist. Runtime login config may expose the public provider ID, but never client secrets or configuration references.
 - GitHub OAuth server-side availability does not make the GitHub login method public. Social methods must be explicitly enabled and public-visible in Auth DB.
@@ -11,8 +12,8 @@
 - Passkey login is hidden until the Auth method is published and `auth_policies.allow_passkey_signin` is enabled.
 - Password registration is controlled by `auth_policies.registration_mode`; email sign-up is rejected unless registration is `open`.
 - Auth DB is isolated from Core and all feature-plugin databases.
-- The only public Auth configuration endpoint is `GET /public/auth/login-config`. It returns enabled public methods, display labels/order, safe provider IDs, published declarative UI contributions and feature availability.
-- Normal Auth administration is authorized by Core workspace RBAC and proxied to Auth over an internal service binding. Direct admin access is recovery-only.
+- The only public Auth configuration endpoint is `GET /public/auth/login-config?workspaceId=...`. It returns enabled and public-visible methods, published declarative login UI contributions, the public feature matrix and policy flags. It does not return configuration refs, secrets or internal bindings.
+- Normal Auth administration is authorized by Core workspace RBAC and proxied to Auth over an internal service binding. Direct admin access is recovery-only and requires `RECOVERY_ADMIN_ENABLED=true` plus a matching recovery admin email.
 - Ordinary Marketplace plugins cannot inject code into login, session, OAuth or passkey handling. Future auth extensions require privileged capabilities and explicit approval.
 - Email verification and forgot/reset password use Core Mail Runtime. Do not add ad hoc email sending or expose reset tokens in logs or public payloads.
 ## Auth Production Security Status

@@ -12,6 +12,32 @@ export const coreSessionSchema = z.object({
   user: z.object({ id: z.string(), email: z.string(), name: z.string().nullable() }).nullable(),
 });
 
+export const impersonationContextSchema = z.object({
+  id: z.string(),
+  actorUserId: z.string(),
+  subjectUserId: z.string(),
+  workspaceId: z.string(),
+  reason: z.string(),
+  expiresAt: z.string().nullable().optional().default(null),
+});
+
+export const impersonationResponseSchema = z.object({
+  impersonation: impersonationContextSchema.nullable(),
+});
+
+export const stopImpersonationResponseSchema = z.object({
+  impersonation: z.object({
+    id: z.string().optional(),
+    actorUserId: z.string().optional(),
+    subjectUserId: z.string().optional(),
+    workspaceId: z.string(),
+    reason: z.string().optional(),
+    expiresAt: z.string().nullable().optional(),
+  }),
+  restored: z.boolean(),
+  reauthenticationRequired: z.boolean(),
+});
+
 export const workspaceSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -136,6 +162,13 @@ export const shellBootstrapSchema = z.object({
   }),
 });
 
+export const runtimeUiBootstrapSchema = z.object({
+  plugins: z.array(pluginManifestSchema),
+  active: z.array(z.string()),
+  tools: z.array(toolSchema),
+  surfaces: z.array(surfaceSchema),
+});
+
 export const startupBootstrapSchema = z.discriminatedUnion("authenticated", [
   z.object({ authenticated: z.literal(false) }),
   z.object({ authenticated: z.literal(true), bootstrap: shellBootstrapSchema }),
@@ -148,6 +181,9 @@ export const auditEventListSchema = z.object({ events: z.array(auditEventSchema)
 export const approvalRequestListSchema = z.object({ approvals: z.array(approvalRequestSchema) });
 
 export type CoreSession = z.output<typeof coreSessionSchema>;
+export type ImpersonationContext = z.output<typeof impersonationContextSchema>;
+export type ImpersonationResponse = z.output<typeof impersonationResponseSchema>;
+export type StopImpersonationResponse = z.output<typeof stopImpersonationResponseSchema>;
 export type StartupBootstrap = z.output<typeof startupBootstrapSchema>;
 export type WorkspaceSummary = z.output<typeof workspaceSummarySchema>;
 export type RbacMe = z.output<typeof rbacMeSchema>;
@@ -163,6 +199,7 @@ export type WorkspaceDomain = z.output<typeof workspaceDomainSchema>;
 export type AuthSecuritySummary = z.output<typeof authSecuritySummarySchema>;
 export type AuthSecurityBootstrap = z.output<typeof authSecurityBootstrapSchema>;
 export type ShellBootstrap = z.output<typeof shellBootstrapSchema>;
+export type RuntimeUiBootstrap = z.output<typeof runtimeUiBootstrapSchema>;
 export type WorkspacePublication = z.output<typeof workspacePublicationSchema>;
 export type WorkspacePublicationList = z.output<typeof workspacePublicationListSchema>;
 export type WorkspacePublicationEnvelope = z.output<typeof workspacePublicationEnvelopeSchema>;

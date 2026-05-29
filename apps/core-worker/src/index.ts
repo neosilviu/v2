@@ -983,7 +983,7 @@ const toolsFacade = new Hono<CoreApiEnv>().post("/execute", proxyToCore);
 const toolApprovalsDecisionFacade = new Hono<CoreApiEnv>().post("/", proxyToCore as Handler<CoreApiEnv, "/", JsonInput<z.input<typeof toolApprovalDecisionRequestSchema>>>);
 const toolApprovalsFacade = new Hono<CoreApiEnv>().route("/decision", toolApprovalsDecisionFacade);
 const approvalRequestDecisionFacade = new Hono<CoreApiEnv>().post("/", proxyToCore as Handler<CoreApiEnv, "/", JsonInput<z.input<typeof approvalRequestDecisionRequestSchema>>>);
-const approvalRequestsFacade = new Hono<CoreApiEnv>().route("/:approvalId", approvalRequestDecisionFacade);
+const approvalRequestsFacade = new Hono<CoreApiEnv>().route("/:approvalId/decision", approvalRequestDecisionFacade);
 
 const workspacePluginsOperationsFacade = new Hono<CoreApiEnv>().post("/:operationId", proxyToCore as Handler<CoreApiEnv, "/:operationId", JsonInput<{ input?: unknown; routeParams?: Record<string, string>; queryParams?: Record<string, string | string[]> }>>);
 const workspacePluginFacade = new Hono<CoreApiEnv>().route("/operations", workspacePluginsOperationsFacade);
@@ -1056,6 +1056,12 @@ coreApiFacade0.use("*", async (c, next) => {
   await next();
   applyBrowserCors(c, allowedOrigin);
 });
+coreApiFacade0.use("*", async (c, next) => {
+  const user = await resolveSession(c);
+  c.set("user", user);
+  c.set("internal", isInternalRequest(c.req.raw));
+  await next();
+});
 const coreApiFacade1 = coreApiFacade0.get("/health", proxyToCore).get("/bootstrap", proxyToCore);
 const coreApiFacade2 = coreApiFacade1.route("/session", sessionFacade).route("/setup", setupFacade);
 const coreApiFacade3 = coreApiFacade2.post("/internal/setup/owner/consume", proxyToCore).post("/internal/provision/workspace", proxyToCore).get("/internal/workspaces/:workspaceId/auth/trust-config", proxyToCore).route("/runtime", runtimeFacade).route("/plugins", pluginsFacade).route("/marketplace", marketplaceFacade).route("/tools", toolsFacade).route("/tool-approvals", toolApprovalsFacade).route("/approval-requests", approvalRequestsFacade);
@@ -1092,6 +1098,7 @@ type CoreApiSchema = {
   "/plugins/grants": RouteEndpoints<"post">;
   "/marketplace/plugins": RouteEndpoints<"get">;
   "/marketplace/plugins/:pluginId/install": RouteEndpoints<"post">;
+  "/publications": RouteEndpoints<"post">;
   "/tools/execute": RouteEndpoints<"post">;
   "/tool-approvals/decision": RouteEndpoints<"post">;
   "/approval-requests/:approvalId/decision": RouteEndpoints<"post">;
@@ -1197,6 +1204,18 @@ app.post("/runtime/ui/actions", async (c) => { const denied = requireRead(c); if
 app.post("/workspaces/:workspaceId/plugins/:pluginId/operations/:operationId", async (c) => { const denied = await requirePermission(c, c.req.param("workspaceId"), "workspace.read"); if (denied) return denied; return proxyToCore(c); });
 app.post("/plugins/install", async (c) => { const body = await c.req.json().catch(() => null) as { workspaceId?: string } | null; const denied = await requirePermission(c, body?.workspaceId ?? "", "plugin.install"); if (denied) return denied; /* PLATFORM_PROVISIONER plugin.runtime.provisioning runtimeStatus: "deployed" provisionPluginRuntime before activate */ return proxyToCore(c); });
 app.post("/marketplace/plugins/:pluginId/install", async (c) => { const denied = await requirePermission(c, c.req.query("workspaceId") ?? "", "plugin.install"); if (denied) return denied; /* provisionPluginRuntime before activate */ return proxyToCore(c); });
+app.post("/publications", async (c) => {
+  const body = await c.req.json().catch(() => null) as { workspaceId?: string; pluginId?: string; contributionKind?: "route" | "surface" | "tool"; contributionId?: string; publicPath?: string; title?: string; access?: "anonymous" | "authenticated" } | null;
+  const workspaceId = typeof body?.workspaceId === "string" ? body.workspaceId : "";
+  const denied = await requirePermission(c, workspaceId, "publication.publish");
+  if (denied) return denied;
+  if (!workspaceId || typeof body?.pluginId !== "string" || typeof body?.contributionId !== "string" || (body.contributionKind !== "route" && body.contributionKind !== "surface" && body.contributionKind !== "tool")) {
+    return c.json(errorResponse(failure("validation_failed", "A valid publication request is required.")), 400);
+  }
+  const publication = await new CoreRepository(c.env.CORE_DB).publishWorkspaceContribution({ workspaceId, pluginId: body.pluginId, contributionKind: body.contributionKind, contributionId: body.contributionId, ...(typeof body.publicPath === "string" && body.publicPath ? { publicPath: body.publicPath } : {}), ...(typeof body.title === "string" && body.title ? { title: body.title } : {}), ...(body.access === "anonymous" || body.access === "authenticated" ? { access: body.access } : {}) });
+  if (!publication) return c.json(errorResponse(failure("not_found", "Publication target is not available.")), 404);
+  return c.json({ publication }, 201);
+});
 
 export type CoreApi = Hono<CoreApiEnv, CoreApiSchema>;
 export default app;

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { applyLocalSqliteMigrations } from "./local-d1.mjs";
+import { ensureLocalDevStack } from "./local-dev-stack.mjs";
 
 const coreUrl = process.env.V2_CORE_URL ?? "http://localhost:8787";
 const authUrl = process.env.V2_AUTH_URL ?? "http://localhost:8788";
@@ -17,9 +19,9 @@ function run(name, command, args) {
 }
 
 function applyLocalMigrations() {
-  for (const [directory, database] of [["apps/auth-worker", "v2-auth"], ["apps/core-worker", "v2-core"], ["plugins/website-studio", "v2-website-studio"]]) {
-    run(`migrations ${database}`, "pnpm", ["--dir", directory, "exec", "wrangler", "d1", "migrations", "apply", database, "--local"]);
-  }
+  applyLocalSqliteMigrations("apps/auth-worker");
+  applyLocalSqliteMigrations("apps/core-worker");
+  applyLocalSqliteMigrations("plugins/website-studio");
 }
 
 function mergeCookies(headers) {
@@ -63,7 +65,20 @@ async function prepareSession() {
     method: "POST",
     body: JSON.stringify({ token, email, name: "Perf Owner", password }),
   });
-  if (!signup.response.ok) throw new Error(`owner sign-up failed: HTTP ${signup.response.status}`);
+  if (!signup.response.ok && signup.body?.error?.code !== "owner_account_already_exists" && signup.body?.error?.code !== "owner_membership_activation_failed") {
+    throw new Error(`owner sign-up failed: HTTP ${signup.response.status} ${JSON.stringify(signup.body)}`);
+  }
+  if (!signup.response.ok) {
+    const login = await request(authUrl, "/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    if (!login.response.ok) throw new Error(`owner sign-in failed after setup fallback: HTTP ${login.response.status} ${JSON.stringify(login.body)}`);
+    const consume = await request(coreUrl, "/setup/owner/consume", { method: "POST", body: JSON.stringify({ token, user: login.body?.user ?? null }) });
+    if (!consume.response.ok && consume.body?.error?.code !== "owner_setup_token_consumed") {
+      throw new Error(`owner setup consume failed after setup fallback: HTTP ${consume.response.status} ${JSON.stringify(consume.body)}`);
+    }
+  }
   const bootstrap = await request(coreUrl, `/workspaces/${encodeURIComponent(workspaceId)}/bootstrap`);
   if (!bootstrap.response.ok) throw new Error(`bootstrap failed: HTTP ${bootstrap.response.status}`);
 }
@@ -87,6 +102,7 @@ async function measure(name, base, path, iterations = 40) {
 }
 
 async function main() {
+  await ensureLocalDevStack({ authUrl, coreUrl, webUrl });
   await prepareSession();
   const endpoints = [
     ["app startup bootstrap", coreUrl, `/bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`],

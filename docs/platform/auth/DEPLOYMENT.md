@@ -12,6 +12,8 @@ Runtime login configuration is stored in Auth DB tables:
 
 - `auth_methods` for password, passkey and server-supported social methods.
 - `auth_ui_contributions` for safe declarative login slot content.
+- `auth_policies` for registration and verification policy.
+- `impersonation_sessions` for audit-backed support impersonation state.
 
 `RECOVERY_ADMIN_ENABLED` and `RECOVERY_ADMIN_EMAILS` are break-glass recovery settings for Auth admin configuration endpoints. Keep them disabled in normal operation. `PLATFORM_ADMIN_EMAILS` is legacy compatibility only.
 
@@ -27,4 +29,4 @@ Production Auth deployment requires:
 - OAuth callback URLs that match verified domains;
 - Core Mail Runtime before email verification or reset password is enabled.
 
-The current foundation exposes protected admin APIs and safe public login config, but does not yet implement the complete domain verification to Auth trusted-origin replication workflow.
+The current foundation resolves production Auth trust through Core's auth trust-config boundary, so the operational rule is to keep verified Core domains, Auth trusted origins and passkey origin settings aligned.

@@ -54,7 +54,7 @@ export const readDevEndpoints = () =>
 
 export const pidListForPort = (port) => {
   try {
-    const output = execFileSync("lsof", ["-ti", `tcp:${port}`], { encoding: "utf8" }).trim();
+    const output = execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" }).trim();
     return output ? output.split(/\r?\n/).map((pid) => Number(pid)).filter(Boolean) : [];
   } catch {
     return [];
