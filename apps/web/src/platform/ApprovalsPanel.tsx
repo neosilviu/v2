@@ -3,6 +3,32 @@ import type { ApprovalRequest, ToolApproval } from "@v2/rpc-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { approveToolApproval, decideApprovalRequest, denyToolApproval, loadCoreSession, loadPendingApprovalRequests, loadPendingToolApprovals } from "../api";
 
+function approvalTitle(approval: ApprovalRequest) {
+  if (approval.kind.includes("install")) return "Install plugin";
+  if (approval.kind.includes("activate")) return "Activate plugin";
+  if (approval.kind.includes("deactivate")) return "Deactivate plugin";
+  if (approval.kind.includes("upload")) return "Upload plugin package";
+  return approval.kind.replace(/[_-]+/g, " ").replace(/^./, (char) => char.toUpperCase());
+}
+
+function approvalSummary(approval: ApprovalRequest) {
+  const owner = approval.pluginId ? "Plugin request" : "Platform request";
+  const when = new Date(approval.requestedAt).toLocaleString();
+  return `${owner} · ${when}`;
+}
+
+function pluginRiskSummary(approval: ApprovalRequest) {
+  if (!approval.kind.startsWith("plugin_")) return null;
+  const version = String(approval.payload.version ?? "").trim();
+  const capabilities = Array.isArray(approval.payload.sensitiveCapabilities)
+    ? approval.payload.sensitiveCapabilities.length
+    : 0;
+  return [
+    version ? `Release ${version}` : "Release pending review",
+    capabilities ? `${capabilities} sensitive capability${capabilities === 1 ? "" : "ies"}` : "No sensitive capabilities declared",
+  ].join(" · ");
+}
+
 export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
   const [approvals, setApprovals] = useState<ToolApproval[]>([]);
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
@@ -73,9 +99,9 @@ export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
     <div className="approval-list">
       {requests.map((approval) => <div className="approval-row" key={approval.id}>
         <div>
-          <strong>{approval.kind}</strong>
-          <small>{approval.pluginId ?? "platform"} · {approval.subjectId} · {approval.id.slice(0, 8)} · {new Date(approval.requestedAt).toLocaleTimeString()}</small>
-          {approval.kind.startsWith("plugin_") ? <small>{String(approval.payload.version ?? "")} · {String(approval.payload.sha256 ?? "").slice(0, 12)} · {(approval.payload.sensitiveCapabilities as string[] | undefined)?.join(", ") || "no sensitive capabilities listed"}</small> : null}
+          <strong>{approvalTitle(approval)}</strong>
+          <small>{approvalSummary(approval)}</small>
+          {pluginRiskSummary(approval) ? <small>{pluginRiskSummary(approval)}</small> : null}
         </div>
         <Badge>{approval.risk}</Badge>
         <div className="approval-actions">
@@ -85,8 +111,8 @@ export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
       </div>)}
       {approvals.map((approval) => <div className="approval-row" key={approval.id}>
         <div>
-          <strong>{approval.toolId}</strong>
-          <small>{approval.pluginId} · {approval.id.slice(0, 8)} · {new Date(approval.requestedAt).toLocaleTimeString()}</small>
+          <strong>Run workspace tool</strong>
+          <small>{approval.pluginId ? "Plugin tool" : "Platform tool"} · {new Date(approval.requestedAt).toLocaleString()}</small>
         </div>
         <Badge>{approval.risk}</Badge>
         <div className="approval-actions">

@@ -32,6 +32,60 @@ function shellFromBootstrap(bootstrap: ShellBootstrap): ShellState {
   return { ...emptyShell, zones: bootstrap.layout.zones, placements: bootstrap.layout.placements };
 }
 
+function normalizeLabel(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function navigationGroup(item: RuntimeNavigationItem) {
+  if (item.section === "administration") {
+    const label = normalizeLabel(item.label);
+    if (label.includes("market") || label.includes("interface") || label.includes("setting")) return "Administration";
+    if (label.includes("audit") || label.includes("approval")) return "Operations";
+    return "Administration";
+  }
+  const label = normalizeLabel(item.label);
+  if (item.id === "platform.home" || label === "home" || label.includes("dashboard")) return "Home";
+  if (label.includes("account") || label.includes("profile") || label.includes("passkey")) return "Account";
+  if (label.includes("builder") || label.includes("form") || label.includes("studio")) return "Build";
+  if (label.includes("audit") || label.includes("approval") || label.includes("handoff")) return "Operations";
+  return "Work";
+}
+
+function groupNavigation(items: RuntimeNavigationItem[]) {
+  const order = ["Home", "Work", "Build", "Operations", "Administration", "Account"];
+  const groups = new Map<string, RuntimeNavigationItem[]>();
+  for (const item of items) {
+    const group = navigationGroup(item);
+    groups.set(group, [...(groups.get(group) ?? []), item]);
+  }
+  return order
+    .map((label) => ({ label, items: (groups.get(label) ?? []).sort((left, right) => left.displayOrder - right.displayOrder || left.label.localeCompare(right.label)) }))
+    .filter((group) => group.items.length > 0);
+}
+
+function pageSubtitle(selected: RuntimeNavigationItem | null, bootstrap: ShellBootstrap) {
+  if (!selected) return "This page is not available for your current access.";
+  if (selected.id === "platform.home") return `${bootstrap.currentWorkspace.name} overview and quick actions.`;
+  if (selected.id === "platform.workspaces") return "Choose the workspace you want to operate in.";
+  if (selected.id === "platform.account") return "Profile, security and account actions.";
+  if (selected.id === "platform.approvals") return "Review sensitive runtime actions before they continue.";
+  if (selected.id === "platform.settings") return "Manage workspace configuration, access and interface.";
+  if (selected.source === "manual") return "Workspace page created from the interface editor.";
+  if (selected.source === "plugin") return "Plugin experience provided by the active workspace runtime.";
+  return "Workspace page.";
+}
+
+function sourceLabel(source: RuntimeNavigationItem["source"]) {
+  if (source === "platform") return "Platform";
+  if (source === "plugin") return "Plugin";
+  return "Manual";
+}
+
+function accessLabel(item: RuntimeNavigationItem) {
+  if (!item.requiredPermission) return "Workspace member";
+  return item.section === "administration" ? "Administrator access" : "Restricted access";
+}
+
 function UserMenu({ session, workspace, accountPath, settingsPath, onOpenPath, onSignOut }: { session: CoreSession | null; workspace: WorkspaceSummary | null; accountPath?: string; settingsPath?: string; onOpenPath: (path: string) => void; onSignOut: () => void }) {
   const [open, setOpen] = useState(false);
   const closeAndRun = (action: () => void) => {
@@ -67,23 +121,37 @@ function DashboardPage({ bootstrap, onOpenPath }: { bootstrap: ShellBootstrap; o
   const account = bootstrap.navigation.find((item) => item.id === "platform.account");
   const workspaces = bootstrap.navigation.find((item) => item.id === "platform.workspaces");
   const settings = bootstrap.navigation.find((item) => item.id === "platform.settings");
+  const approvals = bootstrap.navigation.find((item) => item.id === "platform.approvals");
+  const pluginPages = bootstrap.navigation.filter((item) => item.source === "plugin");
+  const manualPages = bootstrap.navigation.filter((item) => item.source === "manual");
   return <div className="page-stack">
     <SurfaceCard>
       <div className="surface-header">
-        <div><small>home</small><h2>Welcome, {displayUser(bootstrap.session)}</h2><p>{bootstrap.currentWorkspace.name} · {role}</p></div>
+        <div><small>Home</small><h2>Welcome, {displayUser(bootstrap.session)}</h2><p>{bootstrap.currentWorkspace.name} · {role}</p></div>
         <Badge>{bootstrap.currentWorkspace.status}</Badge>
       </div>
       <div className="actions">
         {workspaces ? <Button onClick={() => onOpenPath(workspaces.path)}>Switch workspace</Button> : null}
         {account ? <Button onClick={() => onOpenPath(account.path)}>My Account</Button> : null}
         {settings ? <Button className="primary" onClick={() => onOpenPath(settings.path)}>Settings</Button> : null}
+        {approvals ? <Button onClick={() => onOpenPath(approvals.path)}>Approvals</Button> : null}
       </div>
     </SurfaceCard>
     <div className="metric-grid">
-      <SurfaceCard><small>workspace</small><h2>{bootstrap.currentWorkspace.name}</h2><p>Active workspace context</p></SurfaceCard>
-      <SurfaceCard><small>role</small><h2>{role}</h2><p>{bootstrap.membership.permissions.length} permitted actions</p></SurfaceCard>
-      <SurfaceCard><small>access</small><h2>{bootstrap.workspaces.length}</h2><p>Workspace{bootstrap.workspaces.length === 1 ? "" : "s"} available</p></SurfaceCard>
+      <SurfaceCard><small>Workspace</small><h2>{bootstrap.currentWorkspace.name}</h2><p>Active workspace context</p></SurfaceCard>
+      <SurfaceCard><small>Access</small><h2>{role}</h2><p>{bootstrap.membership.permissions.length} permitted action{bootstrap.membership.permissions.length === 1 ? "" : "s"}</p></SurfaceCard>
+      <SurfaceCard><small>Runtime UI</small><h2>{pluginPages.length}</h2><p>Plugin page{pluginPages.length === 1 ? "" : "s"} available</p></SurfaceCard>
     </div>
+    <SurfaceCard>
+      <div className="surface-header"><div><small>Available modules</small><h2>Workspace navigation</h2><p>Everything shown here is active for your role and workspace.</p></div><Badge>{bootstrap.navigation.length}</Badge></div>
+      <div className="quick-link-grid">
+        {[...pluginPages, ...manualPages].slice(0, 8).map((item) => <button type="button" key={item.id} className="quick-link" onClick={() => onOpenPath(item.path)}>
+          <strong>{item.label}</strong>
+          <span>{sourceLabel(item.source)} · {accessLabel(item)}</span>
+        </button>)}
+        {pluginPages.length + manualPages.length === 0 ? <p>No additional workspace modules are active yet. Install or activate modules from Marketplace when you are ready.</p> : null}
+      </div>
+    </SurfaceCard>
   </div>;
 }
 
@@ -94,7 +162,7 @@ function WorkspacesPage({ bootstrap, onSwitchWorkspace }: { bootstrap: ShellBoot
       <table>
         <thead><tr><th>Workspace</th><th>Status</th><th>Role</th><th>Action</th></tr></thead>
         <tbody>{bootstrap.workspaces.map((workspace) => <tr key={workspace.id}>
-          <td><strong>{workspace.name}</strong><small>{workspace.id}</small></td>
+          <td><strong>{workspace.name}</strong><small>{workspace.id === bootstrap.currentWorkspace.id ? "Current workspace" : "Available workspace"}</small></td>
           <td><Badge>{workspace.status}</Badge></td>
           <td>{workspace.roles.map((role) => role.name).join(", ") || "Member"}</td>
           <td><Button disabled={workspace.id === bootstrap.currentWorkspace.id} onClick={() => onSwitchWorkspace(workspace.id)}>{workspace.id === bootstrap.currentWorkspace.id ? "Current" : "Open"}</Button></td>
@@ -166,6 +234,9 @@ export function App() {
   const [notice, setNotice] = useState("runtime ready");
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [runtimePage, setRuntimePage] = useState<Awaited<ReturnType<typeof loadRuntimePage>> | null>(null);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
   const emit = (item: Notification) => setNotifications((current) => [...current, item].slice(-5));
   const dismiss = (id: string) => setNotifications((current) => current.filter((item) => item.id !== id));
 
@@ -197,10 +268,14 @@ export function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  const navigation = useMemo(() => [...(bootstrap?.navigation ?? [])].sort((left, right) => left.displayOrder - right.displayOrder), [bootstrap?.navigation]);
+  const navigation = useMemo(() => [...(bootstrap?.navigation ?? [])].sort((left, right) => left.displayOrder - right.displayOrder || left.label.localeCompare(right.label)), [bootstrap?.navigation]);
   const selected = navigation.find((item) => item.path === activePath) ?? navigation.find((item) => item.path === "/" && activePath === "") ?? null;
-  const userNavigation = navigation.filter((item) => item.section === "user");
-  const adminNavigation = navigation.filter((item) => item.section === "administration");
+  const navigationGroups = useMemo(() => groupNavigation(navigation), [navigation]);
+  const commandResults = useMemo(() => {
+    const query = commandQuery.trim().toLowerCase();
+    if (!query) return navigation.slice(0, 12);
+    return navigation.filter((item) => `${item.label} ${sourceLabel(item.source)} ${accessLabel(item)}`.toLowerCase().includes(query)).slice(0, 12);
+  }, [commandQuery, navigation]);
   const accountPath = navigation.find((item) => item.id === "platform.account")?.path;
   const settingsPath = navigation.find((item) => item.id === "platform.settings")?.path;
 
@@ -217,6 +292,8 @@ export function App() {
   }, [selected?.id, selected?.rendererMode]);
 
   const openPath = (path: string) => {
+    setMobileSidebarOpen(false);
+    setCommandOpen(false);
     setActivePath(path);
     window.history.pushState(null, "", path);
   };
@@ -275,7 +352,7 @@ export function App() {
   if (authStatus === "unavailable" || !bootstrap) return <WorkspaceLoadingShell unavailable />;
 
   const title = selected?.label ?? "Page unavailable";
-  const subtitle = selected ? `${selected.source} ${selected.rendererMode} page` : "This workspace page is not visible to your account";
+  const subtitle = pageSubtitle(selected, bootstrap);
 
   const platformNativePages: Record<string, () => JSX.Element> = {
     "platform.home": () => <DashboardPage bootstrap={bootstrap} onOpenPath={openPath} />,
@@ -293,23 +370,34 @@ export function App() {
   };
 
   return <>
-    {impersonation ? <div role="status" style={{ position: "fixed", inset: "0 0 auto 0", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem", padding: "0.65rem 1rem", background: "#7c2d12", color: "#fff" }}>
+    {impersonation ? <div className="impersonation-banner" role="status">
       <strong>Impersonating {session?.user?.email ?? impersonation.subjectUserId}</strong>
       <span>{impersonation.reason}</span>
       <Button onClick={() => void stopImpersonating()}>Stop impersonation</Button>
     </div> : null}
-    <div className="app-shell" style={impersonation ? { paddingTop: "3.25rem" } : undefined}>
+    <div className={`app-shell ${mobileSidebarOpen ? "mobile-sidebar-open" : ""}`} style={impersonation ? { paddingTop: "3.25rem" } : undefined}>
       <header className="topbar">
+        <button className="mobile-menu-button" type="button" aria-label="Open navigation" onClick={() => setMobileSidebarOpen((value) => !value)}>☰</button>
         <button className="brand" type="button" onClick={() => openPath(navigation[0]?.path ?? "/")}><strong>v2</strong><Badge>runtime</Badge></button>
-        <span className="search">{title}</span>
+        <button className="search" type="button" onClick={() => setCommandOpen(true)}>
+          <span>{title}</span>
+          <kbd>⌘K</kbd>
+        </button>
         <WorkspaceSwitcher workspaces={bootstrap.workspaces} workspaceId={bootstrap.currentWorkspace.id} onChange={switchWorkspace} />
         <UserMenu session={session} workspace={bootstrap.currentWorkspace} {...(accountPath ? { accountPath } : {})} {...(settingsPath ? { settingsPath } : {})} onOpenPath={openPath} onSignOut={() => void signOut()} />
       </header>
       <aside className="sidebar">
-        <div className="sidebar-label">USER</div>
-        {userNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}
-        {adminNavigation.length ? <div className="sidebar-label">ADMINISTRATION</div> : null}
-        {adminNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}
+        <div className="sidebar-brand-block">
+          <span className="brand-mark">v2</span>
+          <div><strong>{bootstrap.currentWorkspace.name}</strong><small>{bootstrap.currentWorkspace.status}</small></div>
+        </div>
+        {navigationGroups.map((group) => <section className="sidebar-section" key={group.label}>
+          <div className="sidebar-label">{group.label}</div>
+          {group.items.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>
+            <span>{item.label}</span>
+            {item.source !== "platform" ? <small>{sourceLabel(item.source)}</small> : null}
+          </button>)}
+        </section>)}
         <div className="sidebar-account"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>{bootstrap.currentWorkspace.name}</small></div></div>
       </aside>
       <main className="workspace">
@@ -317,15 +405,27 @@ export function App() {
           <div>
             <h1>{title}</h1>
             <p>{subtitle}</p>
-            <div className="header-meta"><Badge>{bootstrap.currentWorkspace.name}</Badge><Badge>{selected?.section ?? "none"}</Badge></div>
+            <div className="header-meta"><Badge>{bootstrap.currentWorkspace.name}</Badge>{selected ? <Badge>{accessLabel(selected)}</Badge> : null}</div>
           </div>
           <div className="header-actions"><Badge>{bootstrap.currentWorkspace.status}</Badge><Button onClick={persistLayout}>Save layout</Button></div>
         </div>
         {renderSelected()}
       </main>
-      <aside className="assistant"><div className="message">Secondary workspace area is ready for active panel contributions.</div></aside>
-      <footer className="statusbar"><span>{notice}</span><span>{navigation.length} navigation items</span><span>Core {bootstrap.currentWorkspace.id}</span></footer>
+      <aside className="assistant"><div className="assistant-empty"><strong>Workspace assistant</strong><p>Floating and secondary contributions appear here when an active module provides them.</p></div></aside>
+      <footer className="statusbar"><span>{notice}</span><span>{navigation.length} visible item{navigation.length === 1 ? "" : "s"}</span><span>{bootstrap.currentWorkspace.name}</span></footer>
     </div>
+    {mobileSidebarOpen ? <button className="mobile-scrim" type="button" aria-label="Close navigation" onClick={() => setMobileSidebarOpen(false)} /> : null}
+    {commandOpen ? <div className="palette-backdrop" onClick={() => setCommandOpen(false)}>
+      <div className="palette" onClick={(event) => event.stopPropagation()}>
+        <input autoFocus value={commandQuery} onChange={(event) => setCommandQuery(event.currentTarget.value)} placeholder="Search pages and workspace actions..." />
+        <div className="palette-list">
+          {commandResults.length ? commandResults.map((item) => <button className="palette-item" key={item.id} onClick={() => openPath(item.path)}>
+            <div><strong>{item.label}</strong><small>{sourceLabel(item.source)} · {accessLabel(item)}</small></div>
+            <Badge>{navigationGroup(item)}</Badge>
+          </button>) : <div className="empty-state-inline">No matching pages available for your access.</div>}
+        </div>
+      </div>
+    </div> : null}
     <NotificationCenter notifications={notifications} onDismiss={dismiss} />
   </>;
 }
