@@ -185,6 +185,9 @@ export type RuntimeContributionResolution = {
   requiredPermission: string | null;
   policy?: { id: string | null; access: PublicContributionAccess; authenticationMode: "anonymous" | "customer" | "verified"; allowedOperations: string[]; enabled: boolean };
 };
+export type PrivateRuntimeContributionResolution = RuntimeContributionResolution & {
+  panel: SettingsPanelContribution;
+};
 export type SettingsTabResolution = {
   tab: SettingsTabContribution & { ownerName: string; orderIndex: number };
   panel: SettingsPanelContribution;
@@ -1882,7 +1885,15 @@ export class CoreRepository {
     const resolved = contributions.find((item) => item.contributionId === contributionId);
     const contribution = interfaces.find((item) => item.id === contributionId);
     if (!resolved || !contribution) return null;
-    return { workspaceId, pluginId: resolved.pluginId, contributionId, contribution: { ...contribution, ...(resolved.requiredPermission ? { requiredPermission: resolved.requiredPermission } : {}) }, page: resolved.schema, requiredPermission: resolved.requiredPermission };
+    const row = await this.db.prepare(`SELECT schema_json, required_permission
+      FROM plugin_ui_contributions
+      WHERE plugin_id = ? AND contribution_id = ? AND contribution_type = 'page'
+      LIMIT 1`)
+      .bind(resolved.pluginId, contributionId)
+      .first<{ schema_json: string; required_permission: string | null }>();
+    if (!row) return null;
+    const panel = settingsPanelContributionSchema.parse(JSON.parse(row.schema_json));
+    return { workspaceId, pluginId: resolved.pluginId, contributionId, contribution: { ...contribution, ...(resolved.requiredPermission ? { requiredPermission: resolved.requiredPermission } : {}) }, page: resolved.schema, requiredPermission: resolved.requiredPermission, panel };
   }
 
   async publicRuntimeContribution(workspaceId: string, contributionId: string) {
