@@ -192,7 +192,7 @@ function MyAccountPage({ session, bootstrap, onSessionChanged, onSignOut }: { se
   };
   return <div className="page-stack">
     <SurfaceCard>
-      <div className="surface-header"><div><small>account</small><h2>My Account</h2><p>{status}</p></div><Badge>{session?.isAdmin ? "admin" : "member"}</Badge></div>
+      <div className="surface-header"><div><small>account</small><h2>My Account</h2><p>{status}</p></div><Badge>{(session?.isSuperadmin ?? session?.isAdmin) ? "superadmin" : "member"}</Badge></div>
       <form className="profile-form" onSubmit={submit}>
         <label className="field">Display name<input value={name} onChange={(event) => setName(event.currentTarget.value)} placeholder="Your name" /></label>
         <div className="actions"><Button className="primary" type="submit" disabled={saving}>{saving ? "Saving..." : "Save profile"}</Button><Button type="button" onClick={onSignOut}>Sign out</Button></div>

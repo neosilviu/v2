@@ -38,8 +38,9 @@ export function ApprovalsPanel({ onDecision }: { onDecision?: () => void }) {
 
   useEffect(() => {
     void loadCoreSession().then((session) => {
-      setIsAdmin(session.isAdmin);
-      setStatus(session.isAdmin ? "Ready to load pending approvals" : "Sign in as a platform admin to manage approvals");
+      const isAdmin = session.isSuperadmin ?? session.isAdmin;
+      setIsAdmin(isAdmin);
+      setStatus(isAdmin ? "Ready to load pending approvals" : "Sign in as a platform admin to manage approvals");
     }).catch(() => {
       setIsAdmin(false);
       setStatus("Core session could not be checked");

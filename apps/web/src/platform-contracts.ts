@@ -9,6 +9,7 @@ export const coreSessionSchema = z.object({
   authenticated: z.boolean(),
   impersonated: z.boolean().optional().default(false),
   isAdmin: z.boolean(),
+  isSuperadmin: z.boolean().optional(),
   user: z.object({ id: z.string(), email: z.string(), name: z.string().nullable() }).nullable(),
 });
 
