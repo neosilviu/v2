@@ -28,6 +28,26 @@ function schema(value: Parameters<typeof declarativePageContributionSchema.parse
   return declarativePageContributionSchema.parse(value);
 }
 
+function pageDescription(selected: RuntimeNavigationItem | null, workspaceName: string) {
+  if (!selected) return "This page is unavailable for your current access.";
+  if (selected.id === "platform.home") return `${workspaceName} overview and active workspace modules.`;
+  if (selected.id === "platform.settings") return "Configure the workspace, access rules and published interface.";
+  if (selected.id === "platform.approvals") return "Review sensitive actions before the runtime continues.";
+  if (selected.id === "platform.account") return "Manage your profile and account details.";
+  if (selected.id === "platform.workspaces") return "Choose the workspace you want to operate in.";
+  return selected.source === "plugin" ? "Application page provided by an active workspace module." : "Workspace page.";
+}
+
+function navMark(item: RuntimeNavigationItem) {
+  const normalized = `${item.id} ${item.label}`.toLowerCase();
+  if (normalized.includes("home") || normalized.includes("dashboard")) return "⌂";
+  if (normalized.includes("setting") || normalized.includes("interface")) return "⚙";
+  if (normalized.includes("approval") || normalized.includes("audit")) return "✓";
+  if (normalized.includes("account") || normalized.includes("profile")) return "◉";
+  if (normalized.includes("workspace")) return "▣";
+  return "•";
+}
+
 function platformPage(selected: RuntimeNavigationItem, bootstrap: ShellBootstrap, session: CoreSession | null): DeclarativePageContribution {
   const role = bootstrap.currentWorkspace.roles[0]?.name ?? "Member";
   if (selected.id === "platform.home") return schema({
@@ -57,7 +77,7 @@ function platformPage(selected: RuntimeNavigationItem, bootstrap: ShellBootstrap
 }
 
 function loading(unavailable = false) {
-  return <main className="login-page"><SurfaceCard className="login-panel"><h2>{unavailable ? "Workspace unavailable" : "Loading workspace..."}</h2><p className="login-status">{unavailable ? "The Core service could not load this workspace." : "Resolving runtime interface contributions."}</p></SurfaceCard></main>;
+  return <main className="login-page"><SurfaceCard className="login-panel loading-panel"><div className="brand-lockup"><span className="brand-mark">v2</span><div><strong>Workspace</strong><small>Runtime platform</small></div></div><h2>{unavailable ? "Workspace unavailable" : "Loading workspace..."}</h2><p className="login-status">{unavailable ? "The Core service could not load this workspace." : "Resolving interface contributions."}</p></SurfaceCard></main>;
 }
 
 export function GeneratedWorkspaceApp() {
@@ -67,9 +87,12 @@ export function GeneratedWorkspaceApp() {
   const [impersonation, setImpersonation] = useState<ImpersonationContext | null>(null);
   const [activePath, setActivePath] = useState(window.location.pathname || "/");
   const [shell, setShell] = useState<ShellState>(emptyShell);
-  const [notice, setNotice] = useState("runtime ready");
+  const [notice, setNotice] = useState("Workspace ready");
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [runtimePage, setRuntimePage] = useState<DeclarativePageContribution | null>(null);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const emit = (item: Notification) => setNotifications((current) => [...current, item].slice(-5));
 
   useEffect(() => {
@@ -96,10 +119,10 @@ export function GeneratedWorkspaceApp() {
     return () => { alive = false; };
   }, [selected?.id, bootstrap, session]);
 
-  const openPath = (path: string) => { setActivePath(path); window.history.pushState(null, "", path); };
+  const openPath = (path: string) => { setMobileSidebarOpen(false); setAccountMenuOpen(false); setActivePath(path); window.history.pushState(null, "", path); };
   const switchWorkspace = (workspaceId: string) => { setCurrentWorkspaceId(workspaceId); const url = new URL(window.location.href); url.searchParams.set("workspace", workspaceId); window.location.assign(`${url.pathname}${url.search}${url.hash}`); };
   const signOut = async () => { await signOutAuth(); invalidateApiCaches(); setAuthStatus("anonymous"); window.history.replaceState(null, "", "/login"); };
-  const persistLayout = async () => { try { await saveLayout(shell); setNotice(`layout saved: ${currentWorkspaceId()}`); emit(notification("success", "Layout saved", "Workspace layout was updated.")); } catch { setNotice("layout not saved"); } };
+  const persistLayout = async () => { try { await saveLayout(shell); setNotice("Layout saved"); emit(notification("success", "Layout saved", "Workspace interface layout was updated.")); } catch { setNotice("Layout not saved"); emit(notification("error", "Layout not saved", "The workspace layout could not be updated.")); } };
   const stopImpersonating = async () => { const result = await stopCurrentImpersonation(); setImpersonation(null); if (result.reauthenticationRequired) window.location.assign("/login"); else window.location.reload(); };
   const submitPage = async (page: DeclarativePageContribution, values: Record<string, FormDataEntryValue>) => {
     if (page.id === "platform.account") { await updateAuthProfile({ name: String(values.name ?? "") }); emit(notification("success", "Profile saved", "Your display name was updated.")); }
@@ -112,6 +135,7 @@ export function GeneratedWorkspaceApp() {
   if (authStatus === "unavailable" || !bootstrap) return loading(true);
   const userNavigation = navigation.filter((item) => item.section === "user");
   const adminNavigation = navigation.filter((item) => item.section === "administration");
+  const assistantSurfaces = shell.surfaces.filter((surface) => surface.zone === "assistant.right");
   const pageOutput = selected?.id === "platform.settings"
     ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(_, __, nextShell) => setShell(nextShell)} />
     : selected?.id === "platform.approvals"
@@ -122,13 +146,39 @@ export function GeneratedWorkspaceApp() {
 
   return <>
     {impersonation ? <div role="status" className="impersonation-bar"><strong>Impersonating {session?.user?.email ?? impersonation.subjectUserId}</strong><Button onClick={() => void stopImpersonating()}>Stop impersonation</Button></div> : null}
-    <div className="app-shell">
-      <header className="topbar"><button className="brand" type="button" onClick={() => openPath(navigation[0]?.path ?? "/")}><strong>v2</strong><Badge>generated runtime</Badge></button><span className="search">{selected?.label ?? "Workspace"}</span><label className="workspace-switcher"><small>Workspace</small><select value={bootstrap.currentWorkspace.id} onChange={(event) => switchWorkspace(event.currentTarget.value)}>{bootstrap.workspaces.map((workspace: WorkspaceSummary) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label><button className="user-button" type="button" onClick={() => void signOut()}><span className="avatar">{userInitial(session)}</span><span>{displayUser(session)}</span></button></header>
-      <aside className="sidebar"><div className="sidebar-label">USER</div>{userNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}{adminNavigation.length ? <div className="sidebar-label">ADMINISTRATION</div> : null}{adminNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav active" : "nav"} onClick={() => openPath(item.path)}>{item.label}</button>)}</aside>
-      <main className="workspace"><div className="workspace-header"><div><h1>{selected?.label ?? "Workspace"}</h1><p>{selected ? `${selected.source} generated page` : "Page unavailable"}</p></div><div className="header-actions"><Badge>{bootstrap.currentWorkspace.status}</Badge><Button onClick={() => void persistLayout()}>Save layout</Button></div></div>{pageOutput}</main>
-      <aside className="assistant"><RuntimeSurfaceZone surfaces={shell.surfaces} zoneId="assistant.right" emptyMessage="No active assistant panel contribution." /></aside>
-      <footer className="statusbar"><span>{notice}</span><span>{navigation.length} navigation items</span><span>Core {bootstrap.currentWorkspace.id}</span></footer>
+    <div className={`app-shell ${mobileSidebarOpen ? "mobile-sidebar-open" : ""}`}>
+      <aside className="sidebar">
+        <div className="sidebar-inner">
+          <button className="sidebar-brand" type="button" onClick={() => openPath(navigation[0]?.path ?? "/")}>
+            <span className="brand-mark">v2</span>
+            <span className="sidebar-brand-copy"><strong>{bootstrap.currentWorkspace.name}</strong><small>Runtime workspace</small></span>
+          </button>
+          <nav className="sidebar-nav" aria-label="Primary navigation">
+            <section className="sidebar-section"><p className="sidebar-section-label">Workspace</p>{userNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav-item nav-item-active" : "nav-item"} type="button" onClick={() => openPath(item.path)}><span className="nav-item-icon">{navMark(item)}</span><span className="nav-item-label">{item.label}</span></button>)}</section>
+            {adminNavigation.length ? <section className="sidebar-section"><p className="sidebar-section-label">Administration</p>{adminNavigation.map((item) => <button key={item.id} className={selected?.id === item.id ? "nav-item nav-item-active" : "nav-item"} type="button" onClick={() => openPath(item.path)}><span className="nav-item-icon">{navMark(item)}</span><span className="nav-item-label">{item.label}</span></button>)}</section> : null}
+          </nav>
+          <div className="sidebar-foot"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>{bootstrap.currentWorkspace.roles.map((role) => role.name).join(", ") || "Member"}</small></div></div>
+        </div>
+      </aside>
+      <div className="shell-content">
+        <header className="topbar">
+          <button className="mobile-menu-button" type="button" aria-label="Open navigation" onClick={() => setMobileSidebarOpen((value) => !value)}>☰</button>
+          <div className="topbar-title-copy"><strong>{selected?.label ?? "Workspace"}</strong><span>{pageDescription(selected, bootstrap.currentWorkspace.name)}</span></div>
+          <div className="topbar-actions">
+            {assistantSurfaces.length ? <button className="topbar-action" type="button" onClick={() => setAssistantOpen((value) => !value)}>Assistant</button> : null}
+            <label className="workspace-switcher"><small>Workspace</small><select value={bootstrap.currentWorkspace.id} onChange={(event) => switchWorkspace(event.currentTarget.value)}>{bootstrap.workspaces.map((workspace: WorkspaceSummary) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label>
+            <div className="user-menu">
+              <button className="user-button" type="button" onClick={() => setAccountMenuOpen((value) => !value)} aria-expanded={accountMenuOpen}><span className="avatar">{userInitial(session)}</span><span>{displayUser(session)}</span><span aria-hidden="true">⌄</span></button>
+              {accountMenuOpen ? <div className="user-popover"><strong>{displayUser(session)}</strong><small>{session?.user?.email ?? ""}</small><small>{bootstrap.currentWorkspace.name}</small><button type="button" onClick={() => void persistLayout()}>Save layout</button><button type="button" onClick={() => void signOut()}>Sign out</button></div> : null}
+            </div>
+          </div>
+        </header>
+        <main className="workspace"><div className="workspace-page-header"><div><p className="eyebrow">{selected?.source === "plugin" ? "Application" : "Workspace"}</p><h1>{selected?.label ?? "Workspace"}</h1><p>{pageDescription(selected, bootstrap.currentWorkspace.name)}</p></div><Badge>{bootstrap.currentWorkspace.status}</Badge></div>{pageOutput}</main>
+        <footer className="statusbar"><span>{notice}</span><span>{navigation.length} visible pages</span><span>{bootstrap.currentWorkspace.name}</span></footer>
+      </div>
+      {assistantOpen && assistantSurfaces.length ? <aside className="assistant assistant-drawer"><div className="assistant-header"><strong>Workspace assistant</strong><button type="button" onClick={() => setAssistantOpen(false)} aria-label="Close assistant">×</button></div><RuntimeSurfaceZone surfaces={shell.surfaces} zoneId="assistant.right" /></aside> : null}
     </div>
+    {mobileSidebarOpen ? <button className="mobile-scrim" type="button" aria-label="Close navigation" onClick={() => setMobileSidebarOpen(false)} /> : null}
     <NotificationCenter notifications={notifications} onDismiss={(id) => setNotifications((current) => current.filter((item) => item.id !== id))} />
   </>;
 }
