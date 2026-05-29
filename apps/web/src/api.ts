@@ -134,19 +134,49 @@ export function loadShellBootstrap(workspaceId = workspaceFromLocation()): Promi
 export function loadStartupBootstrap(): Promise<ShellBootstrap | null> {
   if (!startupBootstrap) {
     const workspaceId = workspaceFromLocation();
-    const request = workspaceId
-      ? coreApi.bootstrap.$get({ query: { workspaceId } })
-      : coreApi.bootstrap.$get();
-    startupBootstrap = coreResponse(request, startupBootstrapSchema).then((entry) => {
-      if (!entry.authenticated) return null;
-      shellBootstrap = Promise.resolve(entry.bootstrap);
-      setCurrentWorkspaceId(entry.bootstrap.currentWorkspace.id);
-      return entry.bootstrap;
-    }).catch((error) => {
+
+    const load = async () => {
+      try {
+        const request = workspaceId
+          ? coreApi.bootstrap.$get({ query: { workspaceId } })
+          : coreApi.bootstrap.$get();
+
+        const entry = await coreResponse(request, startupBootstrapSchema);
+        if (!entry.authenticated) return null;
+
+        shellBootstrap = Promise.resolve(entry.bootstrap);
+        setCurrentWorkspaceId(entry.bootstrap.currentWorkspace.id);
+        return entry.bootstrap;
+      } catch (error) {
+        if (
+          workspaceId &&
+          error instanceof CoreRequestError &&
+          error.status === 403
+        ) {
+          window.localStorage.removeItem("v2.workspaceId");
+
+          const entry = await coreResponse(
+            coreApi.bootstrap.$get(),
+            startupBootstrapSchema,
+          );
+
+          if (!entry.authenticated) return null;
+
+          shellBootstrap = Promise.resolve(entry.bootstrap);
+          setCurrentWorkspaceId(entry.bootstrap.currentWorkspace.id);
+          return entry.bootstrap;
+        }
+
+        throw error;
+      }
+    };
+
+    startupBootstrap = load().catch((error) => {
       startupBootstrap = null;
       throw error;
     });
   }
+
   return startupBootstrap;
 }
 
