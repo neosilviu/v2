@@ -138,12 +138,25 @@ const domains = ui.crud({
   rowActions: [ui.rowAction("platform.settings.domains.verify", "Verify", { access: "permission-gated", requiredPermission: "domains.verify" }), ui.rowAction("platform.settings.domains.activate", "Activate", { access: "permission-gated", requiredPermission: "domains.write" }), ui.rowAction("platform.settings.domains.disable", "Disable", { variant: "danger", access: "permission-gated", requiredPermission: "domains.write" })],
 });
 
+const auditEvents = ui.table({
+  id: "audit.events",
+  title: "Audit log",
+  description: "Read-only workspace activity stream for authentication, access and platform actions.",
+  dataSourceId: "platform.settings.audit.events",
+  columns: [column({ id: "actorId", label: "Actor", field: "actorId" }), column({ id: "action", label: "Action", field: "action" }), column({ id: "payload", label: "Target / result", field: "payload" }), column({ id: "createdAt", label: "Time", field: "createdAt", type: "date" })],
+});
+
+const marketplaceSections: SettingsSection[] = [
+  ui.table({ id: "plugins.catalog", title: "Available applications", description: "Applications available to install and run in this workspace.", dataSourceId: "platform.settings.plugins.catalog", columns: [column({ id: "name", label: "Application", field: "name" }), column({ id: "category", label: "Category", field: "category" }), column({ id: "version", label: "Version", field: "version" }), column({ id: "installed", label: "Installed", field: "installed", type: "badge" })] }),
+  ui.table({ id: "plugins.installed", title: "Installed applications", description: "Applications installed in this workspace and their runtime status.", dataSourceId: "platform.settings.plugins.list", columns: [column({ id: "id", label: "Application", field: "id" }), column({ id: "version", label: "Version", field: "version" }), column({ id: "active", label: "Status", field: "active", type: "badge" }), column({ id: "workerIsolation", label: "Runtime", field: "workerIsolation" })], rowActions: [ui.rowAction("platform.settings.plugins.activate", "Activate", { access: "permission-gated", requiredPermission: "plugin.activate" }), ui.rowAction("platform.settings.plugins.deactivate", "Deactivate", { variant: "danger", access: "permission-gated", requiredPermission: "plugin.activate" })] }),
+];
+
 export function platformSettingsTabs() {
   const general = ui.panel({ id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read", sections: [workspaceSettings, ...mailSections, domains] });
-  const security = ui.panel({ id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, members, roles, plans, assignments] });
-  const interfacePanel = ui.panel({ id: "platform.settings.interface", label: "Interface", icon: "layout", order: 30, permission: "interface.read", sections: [ui.table({ id: "interface.builder", title: "Interface builder", description: "Navigation, layout, manual pages and UI contributions.", dataSourceId: "platform.settings.interface.summary", actions: [ui.submit("platform.settings.interface.save", "interface.write", "Save interface")] })] });
-  const audit = ui.panel({ id: "platform.settings.audit", label: "Audit", icon: "history", order: 40, permission: "audit.read", sections: [ui.table({ id: "audit.events", title: "Audit log", description: "Read-only workspace activity stream.", dataSourceId: "platform.settings.audit.events", columns: [column({ id: "actorId", label: "Actor", field: "actorId" }), column({ id: "action", label: "Action", field: "action" }), column({ id: "payload", label: "Target / result", field: "payload" }), column({ id: "createdAt", label: "Time", field: "createdAt", type: "date" })] })] });
-  return [general, security, interfacePanel, audit];
+  const security = ui.panel({ id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, members, roles, plans, assignments, auditEvents] });
+  const marketplace = ui.panel({ id: "platform.settings.plugins", label: "Marketplace", icon: "package", order: 30, permission: "marketplace.read", sections: marketplaceSections });
+  const interfacePanel = ui.panel({ id: "platform.settings.interface", label: "Interface", icon: "layout", order: 40, permission: "interface.read", sections: [ui.table({ id: "interface.builder", title: "Interface builder", description: "Navigation, layout, manual pages and UI contributions.", dataSourceId: "platform.settings.interface.summary", actions: [ui.submit("platform.settings.interface.save", "interface.write", "Save interface")] })] });
+  return [general, security, marketplace, interfacePanel];
 }
 
 export default platformSettingsTabs;
