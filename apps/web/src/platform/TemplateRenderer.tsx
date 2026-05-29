@@ -52,6 +52,15 @@ function Actions({ actions, callbacks }: { actions: ActionDefinition[]; callback
   return <div className="actions">{actions.map((action) => <Button key={action.id} className={action.variant === "primary" ? "primary" : action.variant === "danger" ? "danger" : ""} onClick={() => void callbacks?.onAction?.(action)}>{action.title}</Button>)}</div>;
 }
 
+function templateLabel(templateId: TemplateId) {
+  if (templateId.startsWith("public.")) return "Public experience";
+  if (templateId.includes("chat")) return "Conversation";
+  if (templateId.includes("settings")) return "Settings";
+  if (templateId.includes("table") || templateId.includes("crud") || templateId.includes("approvals")) return "Records";
+  if (templateId.includes("form") || templateId.includes("detail")) return "Details";
+  return "Workspace page";
+}
+
 function fieldValue(data: unknown, id: string) {
   if (!data || typeof data !== "object") return undefined;
   return (data as Record<string, unknown>)[id];
@@ -68,7 +77,7 @@ function Field({ field, data }: { field: FieldDefinition; data?: unknown }) {
 
 function AdminTable({ page, data, callbacks }: TemplateRendererProps) {
   const rows = rowsFrom(data ?? page.data);
-  return <SurfaceCard className="template-page template-table"><div className="surface-header"><div><small>{page.templateId}</small><h2>{page.title}</h2></div><Badge>{rows.length}</Badge></div><Slot slots={page.slots} slot="header" /><div className="template-table-wrap"><table><thead><tr>{page.columns.map((column) => <th key={column.id}>{column.label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{page.columns.map((column) => <td key={column.id}>{valueAt(row, column.field)}</td>)}</tr>)}</tbody></table></div><Actions actions={page.actions} callbacks={callbacks} /></SurfaceCard>;
+  return <SurfaceCard className="template-page template-table"><div className="surface-header"><div><small>{templateLabel(page.templateId)}</small><h2>{page.title}</h2></div><Badge>{rows.length}</Badge></div><Slot slots={page.slots} slot="header" /><div className="template-table-wrap"><table><thead><tr>{page.columns.map((column) => <th key={column.id}>{column.label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{page.columns.map((column) => <td key={column.id}>{valueAt(row, column.field)}</td>)}</tr>)}</tbody></table></div><Actions actions={page.actions} callbacks={callbacks} /></SurfaceCard>;
 }
 
 function AdminForm({ page, data, callbacks }: TemplateRendererProps) {
@@ -76,7 +85,7 @@ function AdminForm({ page, data, callbacks }: TemplateRendererProps) {
     event.preventDefault();
     void callbacks?.onSubmit?.(page, Object.fromEntries(new FormData(event.currentTarget)));
   };
-  return <SurfaceCard className="template-page template-form"><div className="surface-header"><div><small>{page.templateId}</small><h2>{page.title}</h2></div><Badge>{page.fields.length}</Badge></div><Slot slots={page.slots} slot="header" /><form onSubmit={submit}>{page.fields.map((field) => <Field key={`${field.id}:${fieldValue(data, field.id) ?? ""}`} field={field} data={data} />)}<Actions actions={page.actions} callbacks={callbacks} /></form></SurfaceCard>;
+  return <SurfaceCard className="template-page template-form"><div className="surface-header"><div><small>{templateLabel(page.templateId)}</small><h2>{page.title}</h2></div><Badge>{page.fields.length}</Badge></div><Slot slots={page.slots} slot="header" /><form onSubmit={submit}>{page.fields.map((field) => <Field key={`${field.id}:${fieldValue(data, field.id) ?? ""}`} field={field} data={data} />)}<Actions actions={page.actions} callbacks={callbacks} /></form></SurfaceCard>;
 }
 
 function AdminSettings(props: TemplateRendererProps) {
@@ -85,11 +94,11 @@ function AdminSettings(props: TemplateRendererProps) {
 
 function AdminChat({ page, data, callbacks }: TemplateRendererProps) {
   const messages = rowsFrom(data ?? page.data);
-  return <SurfaceCard className="template-page template-chat"><div className="surface-header"><div><small>{page.templateId}</small><h2>{page.title}</h2></div><Badge>{messages.length}</Badge></div><Slot slots={page.slots} slot="header" /><div className="chat-messages">{messages.map((message, index) => <div key={index} className={`chat-message ${valueAt(message, "role") || "system"}`}><strong>{valueAt(message, "title") || valueAt(message, "role")}</strong><p>{valueAt(message, "content")}</p></div>)}</div><Actions actions={page.actions} callbacks={callbacks} /></SurfaceCard>;
+  return <SurfaceCard className="template-page template-chat"><div className="surface-header"><div><small>{templateLabel(page.templateId)}</small><h2>{page.title}</h2></div><Badge>{messages.length}</Badge></div><Slot slots={page.slots} slot="header" /><div className="chat-messages">{messages.map((message, index) => <div key={index} className={`chat-message ${valueAt(message, "role") || "system"}`}><strong>{valueAt(message, "title") || valueAt(message, "role")}</strong><p>{valueAt(message, "content")}</p></div>)}</div><Actions actions={page.actions} callbacks={callbacks} /></SurfaceCard>;
 }
 
 function AuthLogin({ page, data, callbacks }: TemplateRendererProps) {
-  return <SurfaceCard className="template-page template-auth"><div className="surface-header"><div><small>{page.templateId}</small><h2>{page.title}</h2></div><Badge>public</Badge></div><Slot slots={page.slots} slot="login.header" /><Slot slots={page.slots} slot="login.branding" /><AdminForm page={page} data={data} callbacks={callbacks} /><Slot slots={page.slots} slot="login.footer" /><Slot slots={page.slots} slot="login.legal" /></SurfaceCard>;
+  return <SurfaceCard className="template-page template-auth"><div className="surface-header"><div><small>Sign in</small><h2>{page.title}</h2></div><Badge>public</Badge></div><Slot slots={page.slots} slot="login.header" /><Slot slots={page.slots} slot="login.branding" /><AdminForm page={page} data={data} callbacks={callbacks} /><Slot slots={page.slots} slot="login.footer" /><Slot slots={page.slots} slot="login.legal" /></SurfaceCard>;
 }
 
 function PublicContentPage({ page }: TemplateRendererProps) {
