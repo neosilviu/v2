@@ -774,7 +774,9 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
   const repo = new CoreRepository(c.env.CORE_DB, c.env);
   const resolved = await repo.privateRuntimeContribution(request.workspaceId, request.contributionId);
   if (!resolved) return c.json(pluginOperationEnvelope("denied", null, "Contribution is not active in this workspace."), 403);
-  const action = resolved.panel.actions.find((item) => item.id === request.actionId);
+  const action = resolved.panel.sections
+    .flatMap((section) => [...section.actions, ...section.rowActions, ...section.bulkActions])
+    .find((item) => item.id === request.actionId);
   if (!action) return c.json(pluginOperationEnvelope("denied", null, "Action is not declared by this contribution."), 403);
   const runtime = await runtimeFor(repo);
   const toolOwner = runtime.plugins.all().find((plugin) => plugin.contributes.tools.some((tool) => tool.id === action.commandId));
