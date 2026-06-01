@@ -7,16 +7,24 @@ const permissionField = field({ id: "permission", label: "Permission", type: "te
 const users = ui.table({
   id: "security.users",
   title: "Users",
-  description: "Global user identities owned by the Auth service. Workspace access is configured separately through Memberships.",
+  description: "Global Auth identities. Superadmin accounts are protected platform identities and are not workspace roles; workspace access is configured separately through Memberships.",
   dataSourceId: "platform.settings.users.list",
   columns: [
     column({ id: "name", label: "Name", field: "name" }),
     column({ id: "email", label: "Email", field: "email" }),
-    column({ id: "isPlatformAdmin", label: "Platform admin", field: "isPlatformAdmin", type: "badge" }),
+    column({ id: "accountType", label: "Account", field: "accountType", type: "badge" }),
+    column({ id: "protected", label: "Protected", field: "protected", type: "badge" }),
     column({ id: "emailVerified", label: "Verified", field: "emailVerified", type: "badge" }),
     column({ id: "passkeys", label: "Passkeys", field: "passkeys" }),
     column({ id: "sessions", label: "Sessions", field: "sessions" }),
     column({ id: "createdAt", label: "Created", field: "createdAt", type: "date" }),
+  ],
+  rowActions: [
+    ui.rowAction("platform.settings.users.view", "View", { access: "permission-gated", requiredPermission: "auth.read" }),
+    ui.rowAction("platform.settings.users.edit", "Edit", { access: "permission-gated", requiredPermission: "auth.admin" }),
+    ui.rowAction("platform.settings.users.impersonate", "Impersonate", { variant: "primary", access: "permission-gated", requiredPermission: "workspace.impersonate", confirmation: { title: "Impersonate user", message: "Only platform Superadmin may impersonate normal users. Superadmin accounts are protected targets and cannot be impersonated. This action is audited.", reasonRequired: true, fields: [field({ id: "reason", label: "Reason", type: "textarea", required: true })] }, effects: [{ type: "toast", message: "Impersonation started" }, { type: "navigate", to: "/" }] }),
+    ui.rowAction("platform.settings.users.disable", "Disable", { variant: "danger", access: "permission-gated", requiredPermission: "auth.admin", confirmation: { title: "Disable user", message: "Protected Superadmin accounts cannot be disabled. Normal users will be blocked from signing in." } }),
+    ui.rowAction("platform.settings.users.delete", "Delete", { variant: "danger", access: "permission-gated", requiredPermission: "auth.admin", confirmation: { title: "Delete user", message: "Protected Superadmin accounts cannot be deleted. This action is destructive and audited." } }),
   ],
 });
 
@@ -36,8 +44,8 @@ const authentication = ui.form({
 
 const roles = ui.crud({
   id: "security.roles",
-  title: "Roles",
-  description: "Reusable permission profiles assigned through workspace memberships.",
+  title: "Workspace roles",
+  description: "Workspace roles are Owner, Admin, Editor and Viewer plus optional custom roles. Superadmin is a protected platform account, not a role, and is intentionally hidden here.",
   dataSourceId: "platform.settings.rbac.roles",
   entity: { singular: "Role", plural: "Roles", titleField: "name" },
   operations: { create: "platform.settings.rbac.role.create", update: "platform.settings.rbac.role.update", delete: "platform.settings.rbac.role.delete" },
@@ -56,7 +64,7 @@ const roles = ui.crud({
 const members = ui.table({
   id: "security.members",
   title: "Memberships",
-  description: "Workspace memberships connect users, roles and effective permission overrides.",
+  description: "Workspace memberships connect users to Owner, Admin, Editor and Viewer roles. Superadmin access is global and does not require membership.",
   dataSourceId: "platform.settings.rbac.members",
   columns: [
     column({ id: "user", label: "User", field: "user" }),
@@ -64,11 +72,12 @@ const members = ui.table({
     column({ id: "roles", label: "Roles", field: "roles" }),
     column({ id: "permissions", label: "Permissions", field: "permissions" }),
     column({ id: "overrides", label: "Overrides", field: "overrides" }),
+    column({ id: "isLastOwner", label: "Last owner", field: "isLastOwner", type: "badge" }),
   ],
   rowActions: [
-    ui.rowAction("platform.settings.rbac.member.impersonate", "Impersonate", { variant: "primary", access: "permission-gated", requiredPermission: "workspace.impersonate", confirmation: { title: "Impersonate user", message: "You will switch into the selected user's view. This action is audited.", reasonRequired: true, fields: [field({ id: "reason", label: "Reason", type: "textarea", required: true })] }, effects: [{ type: "toast", message: "Impersonation started" }, { type: "closeDialog" }, { type: "navigate", to: "/" }] }),
-    ui.rowAction("platform.settings.rbac.member.override.allow", "Allow permission", { access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Allow permission", fields: [permissionField] } }),
-    ui.rowAction("platform.settings.rbac.member.override.deny", "Deny permission", { variant: "danger", access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Deny permission", fields: [permissionField] } }),
+    ui.rowAction("platform.settings.rbac.member.impersonate", "Impersonate", { variant: "primary", access: "permission-gated", requiredPermission: "workspace.impersonate", confirmation: { title: "Impersonate member", message: "Only platform Superadmin may impersonate normal members. Superadmin cannot be impersonated and impersonation is always audited.", reasonRequired: true, fields: [field({ id: "reason", label: "Reason", type: "textarea", required: true })] }, effects: [{ type: "toast", message: "Impersonation started" }, { type: "closeDialog" }, { type: "navigate", to: "/" }] }),
+    ui.rowAction("platform.settings.rbac.member.override.allow", "Allow permission", { access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Allow permission", message: "Explicit overrides should be rare. They are audited and evaluated after role permissions.", fields: [permissionField] } }),
+    ui.rowAction("platform.settings.rbac.member.override.deny", "Deny permission", { variant: "danger", access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Deny permission", message: "Do not deny permissions on the last active Owner. This operation is audited.", fields: [permissionField] } }),
     ui.rowAction("platform.settings.rbac.member.override.remove", "Remove override", { access: "permission-gated", requiredPermission: "workspace.members.manage", confirmation: { title: "Remove override", fields: [permissionField] } }),
   ],
 });
@@ -76,7 +85,7 @@ const members = ui.table({
 const permissions = ui.table({
   id: "security.permissions",
   title: "Permissions",
-  description: "Permission catalogue with role assignments and explicit member override counts for this workspace.",
+  description: "Permission catalogue with role assignments and explicit member override counts for this workspace. Superadmin bypass is global and not stored as a workspace permission.",
   dataSourceId: "platform.settings.permissions.list",
   columns: [
     column({ id: "name", label: "Permission", field: "name" }),
@@ -89,7 +98,7 @@ const permissions = ui.table({
 const workspaces = ui.crud({
   id: "security.workspaces",
   title: "Workspaces",
-  description: "Tenant workspaces. User membership and roles are configured independently.",
+  description: "Tenant workspaces. Owners create and manage workspace access within plan limits; Superadmin can administer every workspace globally.",
   dataSourceId: "platform.settings.workspaces.list",
   entity: { singular: "Workspace", plural: "Workspaces", titleField: "name" },
   operations: { create: "platform.settings.workspaces.upsert", update: "platform.settings.workspaces.upsert", delete: "platform.settings.workspaces.delete" },
@@ -109,7 +118,7 @@ const workspaces = ui.crud({
 const plans = ui.crud({
   id: "access.plans",
   title: "Workspace plans",
-  description: "Plans and limits available for users and workspace access.",
+  description: "Plans define workspace creation and feature limits for Owners. Superadmin can assign and override plans.",
   dataSourceId: "platform.settings.plans.list",
   entity: { singular: "Plan", plural: "Plans", titleField: "name" },
   operations: { create: "platform.settings.plans.upsert", update: "platform.settings.plans.upsert", delete: "platform.settings.plans.delete" },
@@ -194,42 +203,16 @@ const workspaceSettings = ui.form({
 
 const mailSections: SettingsSection[] = [
   ui.form({ id: "mail.provider", title: "Mail provider", description: "Configure delivery used for invites and account workflows.", dataSourceId: "platform.settings.mail.summary", fields: [field({ id: "kind", label: "Provider kind", type: "select", required: true, options: [{ value: "transactional-http", label: "Transactional HTTP" }, { value: "smtp", label: "SMTP" }, { value: "mock-development-only", label: "Mock development only" }] }), field({ id: "label", label: "Label", type: "text", required: true }), field({ id: "fromName", label: "From name", type: "text", required: true }), field({ id: "fromEmail", label: "From email", type: "email", required: true }), field({ id: "replyToEmail", label: "Reply-to email", type: "email" }), field({ id: "configurationRef", label: "Secret reference", type: "text" })], actions: [ui.submit("platform.settings.mail.provider.save", "mail.configure", "Save provider")] }),
-  ui.table({ id: "mail.providers", title: "Mail providers", dataSourceId: "platform.settings.mail.providers", columns: [column({ id: "label", label: "Label", field: "label" }), column({ id: "kind", label: "Kind", field: "kind" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "fromEmail", label: "From email", field: "fromEmail" })], rowActions: [ui.rowAction("platform.settings.mail.provider.activate", "Activate", { variant: "primary", access: "permission-gated", requiredPermission: "mail.configure" }), ui.rowAction("platform.settings.mail.provider.disable", "Disable", { variant: "danger", access: "permission-gated", requiredPermission: "mail.configure" })] }),
-  ui.table({ id: "mail.templates", title: "Templates", dataSourceId: "platform.settings.mail.templates", columns: [column({ id: "templateKey", label: "Template", field: "templateKey" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "locale", label: "Locale", field: "locale" }), column({ id: "subjectTemplate", label: "Subject", field: "subjectTemplate" })] }),
-  ui.table({ id: "mail.events", title: "Delivery events", dataSourceId: "platform.settings.mail.events", columns: [column({ id: "purpose", label: "Purpose", field: "purpose" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "templateKey", label: "Template", field: "templateKey" }), column({ id: "errorSafe", label: "Result", field: "errorSafe" })] }),
+  ui.table({ id: "mail.providers", title: "Mail providers", dataSourceId: "platform.settings.mail.providers", columns: [column({ id: "label", label: "Label", field: "label" }), column({ id: "kind", label: "Kind", field: "kind" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "fromEmail", label: "From email", field: "fromEmail" })], rowActions: [ui.rowAction("platform.settings.mail.provider.activate", "Activate", { variant: "primary", access: "permission-gated", requiredPermission: "mail.configure" }), ui.rowAction("platform.settings.mail.provider.disable", "Disable", { variant: "danger", access: "permission-gated", requiredPermission: "mail.configure" }), ui.rowAction("platform.settings.mail.provider.test", "Send test", { access: "permission-gated", requiredPermission: "mail.test", confirmation: { title: "Send test email", fields: [field({ id: "to", label: "Recipient", type: "email", required: true })] } })] }),
+  ui.table({ id: "mail.templates", title: "Templates", dataSourceId: "platform.settings.mail.templates", columns: [column({ id: "key", label: "Template", field: "key" }), column({ id: "subject", label: "Subject", field: "subject" }), column({ id: "enabled", label: "Enabled", field: "enabled", type: "badge" }), column({ id: "updatedAt", label: "Updated", field: "updatedAt", type: "date" })] }),
+  ui.table({ id: "mail.events", title: "Delivery events", dataSourceId: "platform.settings.mail.events", columns: [column({ id: "createdAt", label: "Created", field: "createdAt", type: "date" }), column({ id: "templateKey", label: "Template", field: "templateKey" }), column({ id: "recipient", label: "Recipient", field: "recipient" }), column({ id: "status", label: "Status", field: "status", type: "badge" })] }),
 ];
 
-const domains = ui.crud({
-  id: "domains.manage",
-  title: "Domains",
-  description: "Map public hosts to runtime routes and verify DNS ownership.",
-  dataSourceId: "platform.settings.domains.list",
-  entity: { singular: "Domain", plural: "Domains", titleField: "hostname" },
-  operations: { create: "platform.settings.domains.create", delete: "platform.settings.domains.delete" },
-  columns: [column({ id: "hostname", label: "Hostname", field: "hostname" }), column({ id: "kind", label: "Kind", field: "kind" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "verificationMethod", label: "Verification", field: "verificationMethod" }), column({ id: "publicationId", label: "Publication", field: "publicationId" })],
-  fields: [field({ id: "hostname", label: "Hostname", type: "text", required: true }), field({ id: "kind", label: "Kind", type: "select", required: true, options: [{ value: "admin", label: "Admin" }, { value: "auth", label: "Auth" }, { value: "website", label: "Website" }, { value: "storefront", label: "Storefront" }, { value: "public-chat", label: "Public chat" }, { value: "mail", label: "Mail sender" }] }), field({ id: "verificationMethod", label: "Verification method", type: "select", required: true, options: [{ value: "manual", label: "Manual" }, { value: "dns-txt", label: "DNS TXT" }, { value: "dns-cname", label: "DNS CNAME" }] }), field({ id: "isPrimary", label: "Primary domain", type: "boolean" })],
-  rowActions: [ui.rowAction("platform.settings.domains.verify", "Verify", { access: "permission-gated", requiredPermission: "domains.verify" }), ui.rowAction("platform.settings.domains.activate", "Activate", { access: "permission-gated", requiredPermission: "domains.write" }), ui.rowAction("platform.settings.domains.disable", "Disable", { variant: "danger", access: "permission-gated", requiredPermission: "domains.write" })],
-});
-
-const auditEvents = ui.table({
-  id: "audit.events",
-  title: "Audit log",
-  description: "Read-only workspace activity stream for authentication, access and platform actions.",
-  dataSourceId: "platform.settings.audit.events",
-  columns: [column({ id: "actorId", label: "Actor", field: "actorId" }), column({ id: "action", label: "Action", field: "action" }), column({ id: "payload", label: "Target / result", field: "payload" }), column({ id: "createdAt", label: "Time", field: "createdAt", type: "date" })],
-});
-
-const marketplaceSections: SettingsSection[] = [
-  ui.table({ id: "plugins.catalog", title: "Available applications", description: "Applications available to install and run in this workspace.", dataSourceId: "platform.settings.plugins.catalog", columns: [column({ id: "name", label: "Application", field: "name" }), column({ id: "category", label: "Category", field: "category" }), column({ id: "version", label: "Version", field: "version" }), column({ id: "installed", label: "Installed", field: "installed", type: "badge" })] }),
-  ui.table({ id: "plugins.installed", title: "Installed applications", description: "Applications installed in this workspace and their runtime status.", dataSourceId: "platform.settings.plugins.list", columns: [column({ id: "id", label: "Application", field: "id" }), column({ id: "version", label: "Version", field: "version" }), column({ id: "active", label: "Status", field: "active", type: "badge" }), column({ id: "workerIsolation", label: "Runtime", field: "workerIsolation" })], rowActions: [ui.rowAction("platform.settings.plugins.activate", "Activate", { access: "permission-gated", requiredPermission: "plugin.activate" }), ui.rowAction("platform.settings.plugins.deactivate", "Deactivate", { variant: "danger", access: "permission-gated", requiredPermission: "plugin.activate" })] }),
+export const platformSettingsTabs = [
+  ui.settingsTab({ id: "platform.settings.general", label: "General", description: "Workspace profile, domains and mail runtime.", icon: "settings", order: 10, requiredPermission: "workspace.settings.read", sections: [workspaceSettings, ui.table({ id: "general.domains", title: "Domains", description: "Verified hostnames for admin, auth, website, storefront, chat and mail.", dataSourceId: "platform.settings.domains.list", columns: [column({ id: "hostname", label: "Hostname", field: "hostname" }), column({ id: "kind", label: "Kind", field: "kind" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "primary", label: "Primary", field: "primary", type: "badge" })] }), ...mailSections] }),
+  ui.settingsTab({ id: "platform.settings.security", label: "Security", description: "Authentication, users, memberships, roles, permissions, sessions and audit.", icon: "shield", order: 20, requiredPermission: "auth.read", sections: [authentication, users, members, roles, permissions, invites, ui.table({ id: "security.sessions", title: "Sessions", dataSourceId: "platform.settings.sessions.list", columns: [column({ id: "user", label: "User", field: "user" }), column({ id: "device", label: "Device", field: "device" }), column({ id: "lastActive", label: "Last active", field: "lastActive", type: "date" }), column({ id: "expiresAt", label: "Expires", field: "expiresAt", type: "date" })] }), ui.table({ id: "security.audit", title: "Audit", description: "Security-sensitive changes and administrative activity.", dataSourceId: "platform.settings.audit.list", columns: [column({ id: "createdAt", label: "Time", field: "createdAt", type: "date" }), column({ id: "actor", label: "Actor", field: "actor" }), column({ id: "action", label: "Action", field: "action" }), column({ id: "target", label: "Target", field: "target" })] })] }),
+  ui.settingsTab({ id: "platform.settings.plans", label: "Plans", description: "Workspace plans, limits and assignments.", icon: "credit-card", order: 30, requiredPermission: "plans.read", sections: [plans, assignments] }),
+  ui.settingsTab({ id: "platform.settings.interface", label: "Interface", description: "Navigation, shell zones, menus and generated pages.", icon: "layout", order: 40, requiredPermission: "interface.read", sections: [ui.table({ id: "interface.navigation", title: "Navigation", dataSourceId: "platform.settings.interface.navigation", columns: [column({ id: "label", label: "Label", field: "label" }), column({ id: "section", label: "Section", field: "section" }), column({ id: "path", label: "Path", field: "path" }), column({ id: "visible", label: "Visible", field: "visible", type: "badge" })], rowActions: [ui.rowAction("platform.settings.interface.nav.edit", "Edit", { access: "permission-gated", requiredPermission: "interface.write" }), ui.rowAction("platform.settings.interface.nav.hide", "Hide", { access: "permission-gated", requiredPermission: "interface.write" })] }), ui.table({ id: "interface.zones", title: "Zones", dataSourceId: "platform.settings.interface.zones", columns: [column({ id: "zoneId", label: "Zone", field: "zoneId" }), column({ id: "surfaceCount", label: "Surfaces", field: "surfaceCount" })] })] }),
+  ui.settingsTab({ id: "platform.settings.marketplace", label: "Marketplace", description: "Plugins, approvals and runtime deployments.", icon: "plug", order: 50, requiredPermission: "marketplace.read", sections: [ui.table({ id: "marketplace.plugins", title: "Installed plugins", dataSourceId: "platform.settings.marketplace.plugins", columns: [column({ id: "name", label: "Plugin", field: "name" }), column({ id: "version", label: "Version", field: "version" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "runtimeStatus", label: "Runtime", field: "runtimeStatus", type: "badge" })] }), ui.table({ id: "marketplace.approvals", title: "Approvals", dataSourceId: "platform.settings.approvals.list", columns: [column({ id: "kind", label: "Kind", field: "kind" }), column({ id: "risk", label: "Risk", field: "risk", type: "badge" }), column({ id: "requestedBy", label: "Requested by", field: "requestedBy" }), column({ id: "createdAt", label: "Created", field: "createdAt", type: "date" })] })] }),
+  ui.settingsTab({ id: "platform.settings.workspaces", label: "Workspaces", description: "Tenant workspace registry, ownership and plan-aware creation.", icon: "building", order: 60, requiredPermission: "workspaces.read", sections: [workspaces] }),
 ];
-
-export function platformSettingsTabs() {
-  const general = ui.panel({ id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read", sections: [workspaceSettings, ...mailSections, domains] });
-  const security = ui.panel({ id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, users, roles, members, permissions, workspaces, plans, assignments, invites, auditEvents] });
-  const marketplace = ui.panel({ id: "platform.settings.plugins", label: "Marketplace", icon: "package", order: 30, permission: "marketplace.read", sections: marketplaceSections });
-  const interfacePanel = ui.panel({ id: "platform.settings.interface", label: "Interface", icon: "layout", order: 40, permission: "interface.read", sections: [ui.table({ id: "interface.builder", title: "Interface builder", description: "Navigation, layout, manual pages and UI contributions.", dataSourceId: "platform.settings.interface.summary", actions: [ui.submit("platform.settings.interface.save", "interface.write", "Save interface")] })] });
-  return [general, security, marketplace, interfacePanel];
-}
-
-export default platformSettingsTabs;
