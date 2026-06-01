@@ -66,6 +66,20 @@ function sectionTitle(section: SettingsSection) {
   return section.description ? <><h3>{section.title}</h3><p>{section.description}</p></> : <h3>{section.title}</h3>;
 }
 
+function countEntries(data: SectionPayload | undefined) {
+  if (Array.isArray(data)) return data.length;
+  if (data && typeof data === "object" && Array.isArray((data as { rows?: unknown[] }).rows)) return (data as { rows?: unknown[] }).rows?.length ?? 0;
+  if (data && typeof data === "object") {
+    const rows = (data as { users?: unknown[]; members?: unknown[]; roles?: unknown[]; invites?: unknown[]; sessions?: unknown[] }).users
+      ?? (data as { members?: unknown[] }).members
+      ?? (data as { roles?: unknown[] }).roles
+      ?? (data as { invites?: unknown[] }).invites
+      ?? (data as { sessions?: unknown[] }).sessions;
+    if (Array.isArray(rows)) return rows.length;
+  }
+  return 0;
+}
+
 function actionDefinition(commandId: string, title: string, variant: "default" | "primary" | "danger" = "default"): ActionDefinition {
   return { id: commandId, title, commandId, intent: "execute", variant, access: "private", risk: "safe", placement: "form", effects: [] };
 }
@@ -151,6 +165,16 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
     if (succeeded && !pendingAction.action.effects.some((effect) => effect.type === "closeDialog")) setPendingAction(null);
   };
 
+  const securitySummary = panel.id === "platform.settings.security"
+    ? [
+        { label: "Users", value: countEntries(loaded["security.users"]?.data), hint: "Auth identities" },
+        { label: "Memberships", value: countEntries(loaded["security.members"]?.data), hint: "Workspace members" },
+        { label: "Roles", value: countEntries(loaded["security.roles"]?.data), hint: "Defined roles" },
+        { label: "Invites", value: countEntries(loaded["security.invites"]?.data), hint: "Pending invitations" },
+        { label: "Sessions", value: countEntries(loaded["security.sessions"]?.data), hint: "Active sessions" },
+      ]
+    : [];
+
   if (!panel.sections.length) return <TemplateRenderer page={fallbackPage} runtime={{ contributionId: panel.id }} />;
 
   return <div className="settings-renderer">
@@ -161,6 +185,13 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
       </div>
       <Button onClick={() => refresh()} disabled={submitting}>Reload values</Button>
     </div>
+    {securitySummary.length ? <div className="settings-summary-grid">
+      {securitySummary.map((item) => <SurfaceCard className="settings-summary-card" key={item.label}>
+        <small>{item.label}</small>
+        <strong>{item.value}</strong>
+        <p>{item.hint}</p>
+      </SurfaceCard>)}
+    </div> : null}
     <div className="settings-grid">
       {panel.sections.map((section) => {
         const sectionData = loaded[section.id]?.data ?? null;
