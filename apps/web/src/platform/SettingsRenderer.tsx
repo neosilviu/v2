@@ -199,10 +199,11 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
           const authMethods = section.id === "security.authentication" && sectionData && typeof sectionData === "object" && Array.isArray((sectionData as { methods?: unknown[] }).methods)
             ? (sectionData as { methods: Array<{ id?: string; title?: string; type?: string; status?: string }> }).methods
             : [];
+          const formKey = `${section.id}:${refreshNonce}:${sectionError ? "error" : sectionData === null ? "loading" : "ready"}`;
           return <SurfaceCard className="settings-subpanel" key={section.id}>
             <div className="surface-header"><div>{sectionTitle(section)}</div>{panel.sections.length > 1 ? <Badge>{section.fields.length} fields</Badge> : null}</div>
             {sectionError ? <p className="settings-inline-error">{sectionError}</p> : null}
-            <form className="mail-form" key={`${section.id}:${refreshNonce}`} onSubmit={(event) => {
+            <form className="mail-form" key={formKey} onSubmit={(event) => {
               event.preventDefault();
               const values = parseFormValues(section.fields, event.currentTarget);
               const action = section.actions.find((item) => item.intent === "submit") ?? section.actions[0];

@@ -170,6 +170,18 @@ authApiRoutes = authApiRoutes.get("/internal/auth/users", async (c) => {
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   return c.json({ users: await new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails)).listUsers() });
 });
+authApiRoutes = authApiRoutes.get("/internal/auth/security-bootstrap", async (c) => {
+  if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal security lookup requires a service binding.")), 403);
+  const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const repo = new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails));
+  const workspaceId = c.req.query("workspaceId") ?? null;
+  const [summary, sessions] = await Promise.all([
+    repo.securitySummary(workspaceId, { github: Boolean(parsed.config.github) }),
+    repo.sessionsSummary(),
+  ]);
+  return c.json({ summary, sessions });
+});
 type ResolvedAuthConfig = Extract<Awaited<ReturnType<typeof resolveAuthConfig>>, { ok: true }>["config"];
 async function currentAuthSession(c: AuthContext, config: ResolvedAuthConfig) {
   const headers = new Headers();

@@ -364,6 +364,57 @@ async function authAdminJson<T>(c: CoreContext, path: string, init?: { method?: 
   if (!response.ok) throw new Error(`Auth administration failed: ${response.status}`);
   return response.json() as Promise<T>;
 }
+async function authInternalJson<T>(c: CoreContext, path: string): Promise<T> {
+  const response = await c.env.AUTH.fetch(`https://auth.internal${path}`, { method: "GET" });
+  if (!response.ok) throw new Error(`Auth internal lookup failed: ${response.status}`);
+  return response.json() as Promise<T>;
+}
+async function platformSettingsRuntimeData(c: CoreContext, repo: CoreRepository, workspaceId: string, dataSourceId: string) {
+  switch (dataSourceId) {
+    case "platform.settings.general.read":
+      return await repo.generalSettings(workspaceId);
+    case "platform.settings.security.bootstrap": {
+      const bootstrap = await authInternalJson<{ summary: { policy: Record<string, unknown> } }>(c, `/internal/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`);
+      return bootstrap.summary.policy;
+    }
+    case "platform.settings.users.list": {
+      const users = await authAdminJson<{ users: unknown[] }>(c, "/internal/auth/users");
+      return users.users;
+    }
+    case "platform.settings.rbac.roles":
+      return await repo.workspaceRoles(workspaceId);
+    case "platform.settings.rbac.members":
+      return await repo.workspaceMemberRecords(workspaceId);
+    case "platform.settings.permissions.list":
+      return await repo.workspacePermissionsCatalog(workspaceId);
+    case "platform.settings.workspaces.list":
+      return await repo.workspaces();
+    case "platform.settings.plans.list":
+      return await repo.plans();
+    case "platform.settings.plans.assignments":
+      return await repo.userPlanAssignments();
+    case "platform.settings.invites.list":
+      return await repo.workspaceInvitations(workspaceId);
+    case "platform.settings.audit.events":
+      return await repo.auditEvents(workspaceId);
+    case "platform.settings.mail.summary":
+      return await repo.mailSummary(workspaceId);
+    case "platform.settings.mail.providers":
+      return (await repo.mailSummary(workspaceId)).providers;
+    case "platform.settings.mail.templates":
+      return await repo.listMailTemplates(workspaceId);
+    case "platform.settings.mail.events":
+      return await repo.listMailEvents(workspaceId);
+    case "platform.settings.domains.list":
+      return await repo.listDomains(workspaceId);
+    case "platform.settings.plugins.catalog":
+      return await repo.pluginCatalogRows(workspaceId);
+    case "platform.settings.plugins.list":
+      return await repo.pluginInstalledRows(workspaceId);
+    default:
+      return null;
+  }
+}
 app.get("/health", (c) => c.json({ ok: true, service: "core-worker" }));
 app.get("/session", (c) => { const user = c.get("user"); const isSuperadmin = isPlatformAdmin(c.env, user); return c.json({ authenticated: Boolean(user), impersonated: Boolean(user?.impersonatedBy), isAdmin: isSuperadmin, isSuperadmin, user: user ? { id: user.id, email: user.email, name: user.name ?? null } : null }); });
 app.get("/session/impersonation", async (c) => {
@@ -748,6 +799,21 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
   if (denied) return denied;
   const request = runtimeDataRequestSchema.parse(await c.req.json().catch(() => null));
   const repo = new CoreRepository(c.env.CORE_DB, c.env);
+  const platformPermission = request.contributionId === "platform.settings.security"
+    ? "auth.read"
+    : request.contributionId === "platform.settings.plugins"
+      ? "marketplace.read"
+      : request.contributionId === "platform.settings.interface"
+        ? "interface.read"
+        : undefined;
+  if (platformPermission) {
+    const permissionDenied = await requirePermission(c, request.workspaceId, platformPermission);
+    if (permissionDenied) return permissionDenied;
+  }
+  if (request.contributionId.startsWith("platform.settings.")) {
+    const platformData = await platformSettingsRuntimeData(c, repo, request.workspaceId, request.dataSourceId);
+    if (platformData !== null) return c.json({ status: "ok", data: platformData, error: null, approvalId: null, auditEventId: null });
+  }
   const resolved = await repo.privateRuntimeContribution(request.workspaceId, request.contributionId);
   if (!resolved) return c.json(pluginOperationEnvelope("denied", null, "Contribution is not active in this workspace."), 403);
   const section = resolved.panel.sections.find((item) => item.dataSourceId === request.dataSourceId) ?? resolved.panel.sections.find((item) => item.id === request.dataSourceId);
@@ -903,12 +969,11 @@ app.get("/workspaces/:workspaceId/auth/security-bootstrap", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   const denied = await requirePermission(c, workspaceId, "auth.read");
   if (denied) return denied;
-  const [security, sessions, rbac] = await Promise.all([
-    authAdminJson<{ summary: unknown }>(c, `/admin/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`),
-    authAdminJson<{ summary: unknown }>(c, "/admin/auth/sessions/summary"),
+  const [security, rbac] = await Promise.all([
+    authInternalJson<{ summary: unknown; sessions: unknown }>(c, `/internal/auth/security-bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`),
     new CoreRepository(c.env.CORE_DB, c.env).rbacOverview(workspaceId, c.get("user")),
   ]);
-  return c.json({ summary: security.summary, sessions: sessions.summary, rbac });
+  return c.json({ summary: security.summary, sessions: security.sessions, rbac });
 });
 app.put("/workspaces/:workspaceId/auth/policy", async (c) => {
   const workspaceId = c.req.param("workspaceId");
