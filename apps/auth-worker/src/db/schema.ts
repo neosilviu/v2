@@ -14,6 +14,7 @@ export const user = sqliteTable("user", {
   location: text("location"),
   timezone: text("timezone"),
   image: text("image"),
+  disabledAt: integer("disabled_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 }, (table) => ({

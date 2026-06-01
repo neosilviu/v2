@@ -90,7 +90,10 @@ export async function resolveAuthConfig(env: AuthEnv, workspaceId = env.AUTH_WOR
 
 export async function readAuthUser(config: AuthConfig, headers: Headers) {
   const session = await createAuth(config).api.getSession({ headers });
-  return session?.user?.id && session.user.email ? session.user : null;
+  if (!session?.user?.id || !session.user.email) return null;
+  const disabled = await config.db.prepare("SELECT disabled_at FROM user WHERE id = ? LIMIT 1").bind(session.user.id).first<{ disabled_at: number | string | null }>();
+  if (disabled?.disabled_at) return null;
+  return session.user;
 }
 
 export async function isAuthAdmin(config: AuthConfig, headers: Headers) {

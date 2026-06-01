@@ -6,6 +6,7 @@ import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
 import { approvalRequestListSchema, coreSessionSchema, impersonationResponseSchema, runtimeUiBootstrapSchema, startupBootstrapSchema, pluginCatalogEntrySchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, interfaceContributionSchema, stopImpersonationResponseSchema, type CoreSession, type ImpersonationContext, type RuntimeUiBootstrap, type StartupBootstrap, type PluginCatalogEntry, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary, type InterfaceContribution } from "./platform-contracts";
+import { authUrl } from "./auth-client";
 import type { ShellState } from "@v2/ui-runtime";
 export type { CoreSession, ImpersonationContext, StartupBootstrap, PluginCatalogEntry, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary, InterfaceContribution, RuntimeNavigationItem } from "./platform-contracts";
 
@@ -44,6 +45,23 @@ export class CoreAuthRequiredError extends CoreRequestError {
     super(401, "not_authenticated", "Authentication is required.");
     this.name = "CoreAuthRequiredError";
   }
+}
+
+async function authResponse(pathname: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  const response = await fetch(new URL(pathname, authUrl).toString(), {
+    credentials: "include",
+    ...init,
+    headers,
+  });
+  return response;
+}
+
+export async function authJson<T>(pathname: string, init: RequestInit = {}): Promise<T> {
+  const response = await authResponse(pathname, init);
+  const payload = await response.json().catch(() => null) as T;
+  if (!response.ok) throw new Error(`Auth request failed: ${response.status}`);
+  return payload;
 }
 
 function resetShellBootstrap() {

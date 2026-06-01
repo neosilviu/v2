@@ -2,7 +2,7 @@ import { declarativeUiSchema, pluginManifestSchema, type PluginBundle, type Plug
 import type { MailDeliveryResult, MailMessageRequest, MailProviderConfigure, MailProviderPublicSummary, MailTemplate } from "@v2/mail-contracts";
 import type { SettingScope, WorkspaceLayout } from "@v2/rpc-contracts";
 import { declarativePageContributionSchema, publicRoutePatternSchema, settingsPanelContributionSchema, settingsTabContributionSchema, type AccessMode, type DeclarativePageContribution, type SettingsPanelContribution, type SettingsTabContribution } from "@v2/ui-schema";
-import platformSettingsTabs from "./platform-settings";
+import { platformSettingsTabs } from "./platform-settings";
 import { isPlatformAdmin } from "./access";
 import type { CoreEnv } from "./env";
 
@@ -235,6 +235,7 @@ type MailProviderRow = {
 };
 export const workspacePermissions = [
   "workspace.read", "workspace.admin", "workspace.members.manage", "workspace.settings.read", "workspace.settings.write", "workspace.impersonate",
+  "workspaces.read",
   "auth.read", "auth.admin", "auth.method.publish", "auth.policy.write", "auth.ui.publish", "auth.session.read",
   "domains.read", "domains.write", "domains.verify",
   "mail.read", "mail.configure", "mail.test", "mail.template.write",
@@ -247,6 +248,23 @@ export const workspacePermissions = [
 export type WorkspacePermission = string;
 type MailSecretConfig = { endpoint?: string; token?: string; headers?: Record<string, string> };
 type MailDeliveryAdapterResult = { ok: boolean; providerMessageId?: string; errorSafe?: string };
+type AuthUserLookupRecord = {
+  id: string;
+  name: string;
+  email: string;
+  emailVerified: boolean;
+  twoFactorEnabled: boolean;
+  language: string | null;
+  location: string | null;
+  timezone: string | null;
+  passkeys: number;
+  sessions: number;
+  createdAt: number | string;
+  updatedAt: number | string;
+  isPlatformAdmin: boolean;
+  disabledAt?: string | null;
+};
+type ActiveUserPlanRecord = PlanRecord & { assignmentId: string; startsAt: string | null; endsAt: string | null };
 
 function interpolate(template: string, variables: Record<string, string>) {
   return template.replaceAll(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (_match, key: string) => variables[key] ?? "");
@@ -476,7 +494,25 @@ function manualContributionId(workspaceId: string, slug: string) {
 }
 
 export class CoreRepository {
-  constructor(private readonly db: D1Database, private readonly env?: Pick<CoreEnv, "ENVIRONMENT" | "MAIL_PROVIDER_CONFIGS_JSON" | "PLATFORM_ADMIN_EMAILS" | "RECOVERY_ADMIN_EMAILS" | "RECOVERY_ADMIN_ENABLED">) {}
+  constructor(private readonly db: D1Database, private readonly env?: Pick<CoreEnv, "AUTH" | "ENVIRONMENT" | "MAIL_PROVIDER_CONFIGS_JSON" | "PLATFORM_ADMIN_EMAILS" | "RECOVERY_ADMIN_EMAILS" | "RECOVERY_ADMIN_ENABLED">) {}
+
+  private async authInternalResponse(path: string, init?: { method?: string; body?: unknown }) {
+    if (!this.env?.AUTH) throw new Error("Auth service binding is required.");
+    const headers = new Headers();
+    if (init?.body !== undefined) headers.set("content-type", "application/json");
+    const response = await this.env.AUTH.fetch(`https://auth.internal${path}`, {
+      method: init?.method ?? "GET",
+      headers,
+      ...(init?.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+    });
+    return response;
+  }
+
+  private async authInternalJson<T>(path: string, init?: { method?: string; body?: unknown }) {
+    const response = await this.authInternalResponse(path, init);
+    if (!response.ok) throw new Error(`Auth internal request failed: ${response.status}`);
+    return response.json() as Promise<T>;
+  }
 
   private async internalSeedCurrent(workspaceId: string, key: string, version: string) {
     const row = await this.db.prepare("SELECT value_json FROM workspace_settings WHERE workspace_id = ? AND scope = '__internal' AND key = ? LIMIT 1")
@@ -496,26 +532,136 @@ export class CoreRepository {
     await this.db.prepare("INSERT OR IGNORE INTO workspaces (id, name, status) VALUES (?, ?, ?)").bind(workspaceId, name, status).run();
   }
 
+  async authUsers() {
+    const response = await this.authInternalResponse("/internal/auth/users");
+    if (!response.ok) throw new Error(`Auth internal user lookup failed: ${response.status}`);
+    return response.json() as Promise<AuthUserLookupRecord[] | { users?: AuthUserLookupRecord[] }>;
+  }
+
+  async authUserById(userId: string) {
+    const result = await this.authUsers();
+    const users = Array.isArray(result) ? result : result.users ?? [];
+    return users.find((user) => user.id === userId) ?? null;
+  }
+
+  async authUserByEmail(email: string) {
+    const target = email.trim().toLowerCase();
+    const result = await this.authUsers();
+    const users = Array.isArray(result) ? result : result.users ?? [];
+    return users.find((user) => user.email.toLowerCase() === target) ?? null;
+  }
+
+  async disableAuthUser(userId: string) {
+    return this.authInternalResponse(`/internal/auth/users/${encodeURIComponent(userId)}/disable`, { method: "POST" });
+  }
+
+  async deleteAuthUser(userId: string) {
+    return this.authInternalResponse(`/internal/auth/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+  }
+
+  async workspaceOwnerCount(workspaceId: string) {
+    const row = await this.db.prepare(`SELECT COUNT(DISTINCT member_roles.user_id) AS count
+      FROM workspace_member_roles member_roles
+      INNER JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id AND roles.system_key = 'owner'
+      INNER JOIN workspace_members members ON members.workspace_id = member_roles.workspace_id AND members.user_id = member_roles.user_id AND members.status = 'active'
+      WHERE member_roles.workspace_id = ?`)
+      .bind(workspaceId)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
+  }
+
+  async countOwnedWorkspaces(userId: string) {
+    const row = await this.db.prepare(`SELECT COUNT(DISTINCT member_roles.workspace_id) AS count
+      FROM workspace_member_roles member_roles
+      INNER JOIN workspace_roles roles ON roles.workspace_id = member_roles.workspace_id AND roles.id = member_roles.role_id AND roles.system_key = 'owner'
+      INNER JOIN workspace_members members ON members.workspace_id = member_roles.workspace_id AND members.user_id = member_roles.user_id AND members.status = 'active'
+      INNER JOIN workspaces ON workspaces.id = member_roles.workspace_id
+      WHERE member_roles.user_id = ? AND workspaces.status != 'suspended'`)
+      .bind(userId)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
+  }
+
+  async activeUserPlan(userId: string): Promise<ActiveUserPlanRecord | null> {
+    const row = await this.db.prepare(`SELECT assignments.id AS assignment_id, assignments.plan_id, assignments.starts_at, assignments.ends_at, plans.name, plans.status, plans.limits_json, plans.created_at, plans.updated_at
+      FROM user_plan_assignments assignments
+      INNER JOIN plans ON plans.id = assignments.plan_id
+      WHERE assignments.user_id = ? AND assignments.status = 'active' AND (assignments.starts_at IS NULL OR assignments.starts_at <= CURRENT_TIMESTAMP) AND (assignments.ends_at IS NULL OR assignments.ends_at > CURRENT_TIMESTAMP) AND plans.status = 'active'
+      ORDER BY assignments.created_at DESC, assignments.updated_at DESC
+      LIMIT 1`)
+      .bind(userId)
+      .first<{ assignment_id: string; plan_id: string; starts_at: string | null; ends_at: string | null; name: string; status: PlanRecord["status"]; limits_json: string; created_at: string; updated_at: string }>();
+    if (!row) return null;
+    return {
+      id: row.plan_id,
+      name: row.name,
+      status: row.status,
+      limits: JSON.parse(row.limits_json || "{}") as Record<string, unknown>,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      assignmentId: row.assignment_id,
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+    };
+  }
+
   async workspaces(): Promise<WorkspaceRecord[]> {
     const rows = await this.db.prepare("SELECT id, name, status, created_at, updated_at FROM workspaces ORDER BY name").all<{ id: string; name: string; status: WorkspaceRecord["status"]; created_at: string; updated_at: string }>();
     return rows.results.map((row) => ({ id: row.id, name: row.name, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at }));
   }
 
+  async workspace(workspaceId: string): Promise<WorkspaceRecord | null> {
+    const row = await this.db.prepare("SELECT id, name, status, created_at, updated_at FROM workspaces WHERE id = ? LIMIT 1").bind(workspaceId).first<{ id: string; name: string; status: WorkspaceRecord["status"]; created_at: string; updated_at: string }>();
+    return row ? { id: row.id, name: row.name, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at } : null;
+  }
+
   async upsertWorkspace(input: { id?: string; name: string; status: WorkspaceRecord["status"] }, actorId?: string) {
     const id = input.id?.trim() || crypto.randomUUID();
+    const name = input.name.trim();
+    const actor = actorId ? await this.authUserById(actorId) : null;
+    const isAdmin = actor ? (this.env ? isPlatformAdmin(this.env, { id: actor.id, email: actor.email }) : false) : false;
+    const existing = input.id ? await this.workspace(input.id) : null;
+    const creating = !existing;
+    if (creating && !isAdmin && actorId) {
+      const plan = await this.activeUserPlan(actorId);
+      if (!plan) throw new Error("An active plan is required to create a workspace.");
+      const maxWorkspaces = typeof plan.limits.maxWorkspaces === "number" ? plan.limits.maxWorkspaces : null;
+      if (maxWorkspaces !== null && (await this.countOwnedWorkspaces(actorId)) >= maxWorkspaces) {
+        throw new Error("Workspace limit for the active plan has been reached.");
+      }
+    }
+    if (existing && !isAdmin) {
+      const actorMember = actorId ? (await this.workspaceMemberRecords(id)).find((member) => member.user.id === actorId) : null;
+      if (!actorMember?.roles.some((role) => role.systemKey === "owner")) throw new Error("Only a workspace Owner or platform Superadmin may update a workspace.");
+    }
     await this.db.prepare(`INSERT INTO workspaces (id, name, status, created_at, updated_at)
       VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET name = excluded.name, status = excluded.status, updated_at = CURRENT_TIMESTAMP`)
-      .bind(id, input.name.trim(), input.status)
+      .bind(id, name, input.status)
       .run();
-    await this.ensureWorkspaceRbac(id);
-    await this.audit(id, "workspace.upsert", { workspaceId: id, name: input.name.trim(), status: input.status }, actorId);
+    if (creating && actorId && !isAdmin) {
+      await this.ensureWorkspaceRbac(id);
+      await this.db.batch([
+        this.db.prepare(`INSERT INTO workspace_members (workspace_id, user_id, email, status, updated_at)
+          VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP)
+          ON CONFLICT(workspace_id, user_id) DO UPDATE SET email = excluded.email, status = 'active', updated_at = CURRENT_TIMESTAMP`)
+          .bind(id, actorId, actor?.email ?? null),
+        this.db.prepare("INSERT OR IGNORE INTO workspace_member_roles (workspace_id, user_id, role_id) VALUES (?, ?, ?)").bind(id, actorId, `${id}:owner`),
+      ]);
+    } else {
+      await this.ensureWorkspaceRbac(id);
+    }
+    await this.audit(id, "workspace.upsert", { workspaceId: id, name, status: input.status, created: creating, actorIsPlatformAdmin: isAdmin }, actorId);
     return (await this.workspaces()).find((workspace) => workspace.id === id) ?? null;
   }
 
   async deleteWorkspace(workspaceId: string, actorId?: string) {
-    const activeOwner = await this.db.prepare("SELECT user_id FROM workspace_member_roles WHERE workspace_id = ? AND role_id = ? LIMIT 1").bind(workspaceId, `${workspaceId}:owner`).first<{ user_id: string }>();
-    if (activeOwner) return false;
+    const actor = actorId ? await this.authUserById(actorId) : null;
+    const isAdmin = actor ? (this.env ? isPlatformAdmin(this.env, { id: actor.id, email: actor.email }) : false) : false;
+    if (!isAdmin && actorId) {
+      const actorMember = (await this.workspaceMemberRecords(workspaceId)).find((member) => member.user.id === actorId);
+      if (!actorMember?.roles.some((role) => role.systemKey === "owner")) return false;
+    }
     await this.db.prepare("DELETE FROM workspaces WHERE id = ?").bind(workspaceId).run();
     await this.audit(null, "workspace.delete", { workspaceId }, actorId);
     return true;
@@ -989,6 +1135,50 @@ export class CoreRepository {
   async removeMemberPermissionOverride(workspaceId: string, userId: string, permission: WorkspacePermission, actorId?: string) {
     await this.db.prepare("DELETE FROM workspace_member_permission_overrides WHERE workspace_id = ? AND user_id = ? AND permission = ?").bind(workspaceId, userId, permission).run();
     await this.audit(workspaceId, "rbac.member.override.remove", { userId, permission }, actorId);
+    return this.workspaceMemberRecords(workspaceId);
+  }
+
+  async assignWorkspaceMemberRoles(workspaceId: string, userId: string, roleIds: string[], actorId?: string) {
+    await this.ensureWorkspaceRbac(workspaceId);
+    const target = await this.authUserById(userId);
+    if (target?.isPlatformAdmin) throw new Error("Platform Superadmin accounts are protected and cannot be assigned workspace memberships.");
+    const existing = await this.db.prepare("SELECT user_id FROM workspace_members WHERE workspace_id = ? AND user_id = ? LIMIT 1").bind(workspaceId, userId).first<{ user_id: string }>();
+    const email = target?.email ?? null;
+    await this.db.batch([
+      this.db.prepare(`INSERT INTO workspace_members (workspace_id, user_id, email, status, updated_at)
+        VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP)
+        ON CONFLICT(workspace_id, user_id) DO UPDATE SET email = COALESCE(excluded.email, workspace_members.email), status = 'active', updated_at = CURRENT_TIMESTAMP`)
+        .bind(workspaceId, userId, email),
+      ...roleIds.map((roleId) => this.db.prepare("INSERT OR IGNORE INTO workspace_member_roles (workspace_id, user_id, role_id) VALUES (?, ?, ?)").bind(workspaceId, userId, roleId)),
+    ]);
+    await this.audit(workspaceId, "rbac.member.roles.assign", { userId, roleIds, createdMembership: !existing }, actorId);
+    return this.workspaceMemberRecords(workspaceId);
+  }
+
+  async removeWorkspaceMemberRoles(workspaceId: string, userId: string, roleIds: string[], actorId?: string) {
+    const target = await this.authUserById(userId);
+    if (target?.isPlatformAdmin) throw new Error("Platform Superadmin accounts are protected and cannot be removed from workspace roles.");
+    const currentMember = (await this.workspaceMemberRecords(workspaceId)).find((item) => item.user.id === userId);
+    const removingOwner = currentMember?.roles.some((role) => role.systemKey === "owner" && roleIds.includes(role.id));
+    if (removingOwner && await this.workspaceOwnerCount(workspaceId) <= 1) throw new Error("The last active Owner of a workspace cannot be demoted.");
+    await this.db.batch(roleIds.map((roleId) => this.db.prepare("DELETE FROM workspace_member_roles WHERE workspace_id = ? AND user_id = ? AND role_id = ?").bind(workspaceId, userId, roleId)));
+    await this.audit(workspaceId, "rbac.member.roles.remove", { userId, roleIds }, actorId);
+    return this.workspaceMemberRecords(workspaceId);
+  }
+
+  async removeWorkspaceMember(workspaceId: string, userId: string, actorId?: string) {
+    const target = await this.authUserById(userId);
+    if (target?.isPlatformAdmin) throw new Error("Platform Superadmin accounts are protected and cannot be removed from workspace memberships.");
+    const currentMember = (await this.workspaceMemberRecords(workspaceId)).find((item) => item.user.id === userId);
+    if (currentMember?.roles.some((role) => role.systemKey === "owner") && await this.workspaceOwnerCount(workspaceId) <= 1) {
+      throw new Error("The last active Owner of a workspace cannot be removed.");
+    }
+    await this.db.batch([
+      this.db.prepare("DELETE FROM workspace_member_permission_overrides WHERE workspace_id = ? AND user_id = ?").bind(workspaceId, userId),
+      this.db.prepare("DELETE FROM workspace_member_roles WHERE workspace_id = ? AND user_id = ?").bind(workspaceId, userId),
+      this.db.prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?").bind(workspaceId, userId),
+    ]);
+    await this.audit(workspaceId, "rbac.member.remove", { userId }, actorId);
     return this.workspaceMemberRecords(workspaceId);
   }
 

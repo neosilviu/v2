@@ -60,6 +60,7 @@ type AuthUserAdminRow = {
   language: string | null;
   location: string | null;
   timezone: string | null;
+  disabled_at: number | string | null;
   created_at: number | string;
   updated_at: number | string;
   passkey_count: number;
@@ -292,7 +293,7 @@ export class AuthRuntimeRepository {
   }
 
   async listUsers() {
-    const rows = await this.db.prepare(`SELECT users.id, users.name, users.email, users.email_verified, users.two_factor_enabled, users.created_at, users.updated_at,
+    const rows = await this.db.prepare(`SELECT users.id, users.name, users.email, users.email_verified, users.two_factor_enabled, users.disabled_at, users.created_at, users.updated_at,
         users.language,
         users.location,
         users.timezone,
@@ -301,11 +302,38 @@ export class AuthRuntimeRepository {
       FROM user users
       LEFT JOIN passkey passkeys ON passkeys.user_id = users.id
       LEFT JOIN session sessions ON sessions.user_id = users.id AND sessions.expires_at > ?
-      GROUP BY users.id, users.name, users.email, users.email_verified, users.two_factor_enabled, users.language, users.location, users.timezone, users.created_at, users.updated_at
+      GROUP BY users.id, users.name, users.email, users.email_verified, users.two_factor_enabled, users.disabled_at, users.language, users.location, users.timezone, users.created_at, users.updated_at
       ORDER BY users.created_at DESC`)
       .bind(Date.now())
       .all<AuthUserAdminRow>();
-    return rows.results.map((row) => ({ id: row.id, name: row.name, email: row.email, emailVerified: row.email_verified === 1, twoFactorEnabled: row.two_factor_enabled === 1, language: row.language, location: row.location, timezone: row.timezone, passkeys: row.passkey_count, sessions: row.active_session_count, createdAt: row.created_at, updatedAt: row.updated_at, isPlatformAdmin: this.platformAdminEmails.has(row.email.toLowerCase()) }));
+    return rows.results.map((row) => ({ id: row.id, name: row.name, email: row.email, emailVerified: row.email_verified === 1, twoFactorEnabled: row.two_factor_enabled === 1, language: row.language, location: row.location, timezone: row.timezone, disabledAt: row.disabled_at, passkeys: row.passkey_count, sessions: row.active_session_count, createdAt: row.created_at, updatedAt: row.updated_at, isPlatformAdmin: this.platformAdminEmails.has(row.email.toLowerCase()) }));
+  }
+
+  async userById(userId: string) {
+    const row = await this.db.prepare("SELECT id, name, email, email_verified, two_factor_enabled, language, location, timezone, disabled_at, created_at, updated_at FROM user WHERE id = ? LIMIT 1")
+      .bind(userId)
+      .first<{ id: string; name: string; email: string; email_verified: number; two_factor_enabled: number; language: string | null; location: string | null; timezone: string | null; disabled_at: number | string | null; created_at: number | string; updated_at: number | string }>();
+    return row ? { id: row.id, name: row.name, email: row.email, emailVerified: row.email_verified === 1, twoFactorEnabled: row.two_factor_enabled === 1, language: row.language, location: row.location, timezone: row.timezone, disabledAt: row.disabled_at, createdAt: row.created_at, updatedAt: row.updated_at, isPlatformAdmin: this.platformAdminEmails.has(row.email.toLowerCase()) } : null;
+  }
+
+  async userByEmail(email: string) {
+    const row = await this.db.prepare("SELECT id, name, email, email_verified, two_factor_enabled, language, location, timezone, disabled_at, created_at, updated_at FROM user WHERE lower(email) = lower(?) LIMIT 1")
+      .bind(email)
+      .first<{ id: string; name: string; email: string; email_verified: number; two_factor_enabled: number; language: string | null; location: string | null; timezone: string | null; disabled_at: number | string | null; created_at: number | string; updated_at: number | string }>();
+    return row ? { id: row.id, name: row.name, email: row.email, emailVerified: row.email_verified === 1, twoFactorEnabled: row.two_factor_enabled === 1, language: row.language, location: row.location, timezone: row.timezone, disabledAt: row.disabled_at, createdAt: row.created_at, updatedAt: row.updated_at, isPlatformAdmin: this.platformAdminEmails.has(row.email.toLowerCase()) } : null;
+  }
+
+  async disableUser(userId: string) {
+    await this.db.batch([
+      this.db.prepare("UPDATE user SET disabled_at = COALESCE(disabled_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(userId),
+      this.db.prepare("DELETE FROM session WHERE user_id = ?").bind(userId),
+    ]);
+    return this.userById(userId);
+  }
+
+  async deleteUser(userId: string) {
+    await this.db.prepare("DELETE FROM user WHERE id = ?").bind(userId).run();
+    return true;
   }
 
   async listSessions(userId: string, currentSessionId?: string | null): Promise<AuthProfileSession[]> {

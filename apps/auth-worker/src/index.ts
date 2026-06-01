@@ -85,6 +85,18 @@ authApiRoutes = authApiRoutes.get("/public/auth/profile", async (c) => {
   if (!profile) return c.json(errorResponse(failure("not_found", "Current user profile could not be loaded.")), 404);
   return c.json({ profile: { ...profile, passkeys: await repo.listPasskeys(userId), activeSessions: await repo.listSessions(userId, current?.session?.id ?? null) } });
 });
+authApiRoutes = authApiRoutes.get("/api/auth/get-session", async (c) => {
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const response = await createAuth(parsed.config).handler(c.req.raw);
+  if (!response.ok) return response;
+  const payload = await response.clone().json().catch(() => null) as { user?: { id?: unknown; email?: unknown } | null } | null;
+  const userId = typeof payload?.user?.id === "string" ? payload.user.id : "";
+  if (!userId) return response;
+  const disabled = await parsed.config.db.prepare("SELECT disabled_at FROM user WHERE id = ? LIMIT 1").bind(userId).first<{ disabled_at: number | string | null }>();
+  if (!disabled?.disabled_at) return response;
+  return c.json(errorResponse(failure("not_authorized", "Account is disabled.")), 401);
+});
 async function requireAdmin(c: AuthContext) {
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
   if (!parsed.ok) return { ok: false as const, response: c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503) };
@@ -182,6 +194,29 @@ authApiRoutes = authApiRoutes.get("/internal/auth/users", async (c) => {
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   return c.json({ users: await new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails)).listUsers() });
 });
+authApiRoutes = authApiRoutes.post("/internal/auth/users/:userId/disable", async (c) => {
+  if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal user administration requires a service binding.")), 403);
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const repo = new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails));
+  const userId = c.req.param("userId");
+  const user = await repo.userById(userId);
+  if (!user) return c.json(errorResponse(failure("not_found", "User is not available.")), 404);
+  if (user.isPlatformAdmin) return c.json(errorResponse(failure("not_authorized", "Platform superadmin accounts cannot be disabled.")), 403);
+  return c.json({ user: await repo.disableUser(userId) });
+});
+authApiRoutes = authApiRoutes.delete("/internal/auth/users/:userId", async (c) => {
+  if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal user administration requires a service binding.")), 403);
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const repo = new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails));
+  const userId = c.req.param("userId");
+  const user = await repo.userById(userId);
+  if (!user) return c.json(errorResponse(failure("not_found", "User is not available.")), 404);
+  if (user.isPlatformAdmin) return c.json(errorResponse(failure("not_authorized", "Platform superadmin accounts cannot be deleted.")), 403);
+  await repo.deleteUser(userId);
+  return c.body(null, 204);
+});
 authApiRoutes = authApiRoutes.get("/internal/auth/security-bootstrap", async (c) => {
   if (!isInternalRequest(c)) return c.json(errorResponse(failure("not_authorized", "Internal security lookup requires a service binding.")), 403);
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
@@ -203,7 +238,13 @@ async function currentAuthSession(c: AuthContext, config: ResolvedAuthConfig) {
   if (authorization) headers.set("authorization", authorization);
   const response = await createAuth(config).handler(new Request(new URL("/api/auth/get-session", config.baseURL).toString(), { headers }));
   if (!response.ok) return null;
-  return response.json().catch(() => null) as Promise<{ session?: { id?: string; userId?: string; impersonatedBy?: string | null } | null; user?: { id?: string; email?: string; name?: string | null } | null } | null>;
+  const payload = await response.clone().json().catch(() => null) as { session?: { id?: string; userId?: string; impersonatedBy?: string | null } | null; user?: { id?: string; email?: string; name?: string | null } | null } | null;
+  const userId = typeof payload?.user?.id === "string" ? payload.user.id : "";
+  if (userId) {
+    const disabled = await config.db.prepare("SELECT disabled_at FROM user WHERE id = ? LIMIT 1").bind(userId).first<{ disabled_at: number | string | null }>();
+    if (disabled?.disabled_at) return null;
+  }
+  return payload;
 }
 
 authApiRoutes = authApiRoutes.get("/internal/auth/impersonation/current", async (c) => {
@@ -401,6 +442,8 @@ authApiRoutes = authApiRoutes.post("/api/auth/sign-in/email", async (c) => {
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   const body = authSignInEmailRequestSchema.parse(await c.req.json());
+  const user = await new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails)).userByEmail(body.email);
+  if (user?.disabledAt) return c.json(errorResponse(failure("not_authorized", "Account is disabled.")), 403);
   const response = await createAuth(parsed.config).handler(new Request(new URL("/api/auth/sign-in/email", parsed.config.baseURL).toString(), {
     method: "POST",
     headers: { "content-type": "application/json", ...(c.req.header("origin") ? { origin: c.req.header("origin")! } : {}) },
@@ -474,7 +517,14 @@ authApiRoutes = authApiRoutes.post("/api/auth/profile/sessions/revoke-others", a
 authApiRoutes = authApiRoutes.on(["POST", "GET"], "/api/auth/*", async (c) => {
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
-  return createAuth(parsed.config).handler(c.req.raw);
+  const response = await createAuth(parsed.config).handler(c.req.raw);
+  if (!response.ok) return response;
+  const payload = await response.clone().json().catch(() => null) as { user?: { id?: unknown; email?: unknown } | null } | null;
+  const userId = typeof payload?.user?.id === "string" ? payload.user.id : "";
+  if (!userId) return response;
+  const disabled = await parsed.config.db.prepare("SELECT disabled_at FROM user WHERE id = ? LIMIT 1").bind(userId).first<{ disabled_at: number | string | null }>();
+  if (!disabled?.disabled_at) return response;
+  return c.json(errorResponse(failure("not_authorized", "Account is disabled.")), 401);
 });
 app = app.route("/", authApiRoutes);
 export type AuthApi = typeof authApiRoutes;

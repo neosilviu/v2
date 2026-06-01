@@ -1,4 +1,5 @@
 import { authClient } from "./auth-client";
+import { authJson } from "./api";
 
 const isPasskeyCancellationError = (error: unknown) => {
   const message = error instanceof Error
@@ -27,10 +28,11 @@ export async function changePassword(input: {
   newPassword: string;
   revokeOtherSessions?: boolean;
 }) {
-  const result = await authClient.$fetch("/change-password", {
-    body: input,
+  const result = await authJson<{ data: unknown; error: { message?: string; statusText?: string } | null }>("/change-password", {
+    body: JSON.stringify(input),
+    headers: { "content-type": "application/json" },
     method: "POST",
-  }) as { data: unknown; error: { message?: string; statusText?: string } | null };
+  });
 
   if (result.error) throw new Error(String(result.error.message ?? result.error.statusText ?? "Password change failed."));
   return result.data;
@@ -42,32 +44,34 @@ export async function updateProfileDetails(input: {
   location?: string | null;
   timezone?: string | null;
 }) {
-  const result = await authClient.$fetch("/api/auth/update-user", {
-    body: input,
+  const result = await authJson<{ data: unknown; error: { message?: string; statusText?: string } | null }>("/api/auth/update-user", {
+    body: JSON.stringify(input),
+    headers: { "content-type": "application/json" },
     method: "POST",
-  }) as { data: unknown; error: { message?: string; statusText?: string } | null };
+  });
 
   if (result.error) throw new Error(String(result.error.message ?? result.error.statusText ?? "Profile update failed."));
   return result.data;
 }
 
 export async function revokeProfileSession(sessionId: string): Promise<{ revoked: boolean; currentSessionRevoked: boolean }> {
-  const result = await authClient.$fetch("/api/auth/profile/sessions/revoke", {
-    body: { sessionId },
+  const result = await authJson<{ data: { revoked: boolean; currentSessionRevoked: boolean }; error: { message?: string; statusText?: string } | null }>("/api/auth/profile/sessions/revoke", {
+    body: JSON.stringify({ sessionId }),
+    headers: { "content-type": "application/json" },
     method: "POST",
-  }) as { data: unknown; error: { message?: string; statusText?: string } | null };
+  });
 
   if (result.error) throw new Error(String(result.error.message ?? result.error.statusText ?? "Session revoke failed."));
-  return result.data as { revoked: boolean; currentSessionRevoked: boolean };
+  return result.data;
 }
 
 export async function revokeOtherProfileSessions(): Promise<{ revokedCount: number }> {
-  const result = await authClient.$fetch("/api/auth/profile/sessions/revoke-others", {
+  const result = await authJson<{ data: { revokedCount: number }; error: { message?: string; statusText?: string } | null }>("/api/auth/profile/sessions/revoke-others", {
     method: "POST",
-  }) as { data: unknown; error: { message?: string; statusText?: string } | null };
+  });
 
   if (result.error) throw new Error(String(result.error.message ?? result.error.statusText ?? "Session revoke failed."));
-  return result.data as { revokedCount: number };
+  return result.data;
 }
 
 export async function enableTwoFactor(password?: string): Promise<{ totpURI: string; backupCodes: string[] }> {
