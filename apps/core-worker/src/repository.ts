@@ -1522,13 +1522,47 @@ export class CoreRepository {
     return [
       { contributionId: "platform.home", label: "Home", icon: "home", path: "/", section: "user", order: 10, requiredPermission: "workspace.read", componentId: "platform.home", configurable: config(false, { canDelete: false }) },
       { contributionId: "platform.workspaces", label: "Workspaces", icon: "layers", path: "/workspaces", section: "user", order: 20, requiredPermission: "workspace.read", componentId: "platform.workspaces", configurable: config(false) },
-      { contributionId: "platform.account", label: "My Account", icon: "user", path: "/account", section: "user", order: 30, requiredPermission: "workspace.read", componentId: "platform.account", configurable: config(false, { canDelete: false, canMoveSection: false }) },
+      { contributionId: "platform.account", label: "Profile", icon: "user", path: "/account", section: "user", order: 30, requiredPermission: "workspace.read", componentId: "platform.account", configurable: config(false, { canDelete: false, canMoveSection: false }) },
       { contributionId: "platform.approvals", label: "Approvals", icon: "check-circle", path: "/approvals", section: "administration", order: 110, requiredPermission: "approval.read", componentId: "platform.approvals", configurable: config(false) },
       { contributionId: "platform.settings", label: "Settings", icon: "settings", path: "/settings", section: "administration", order: 120, requiredPermission: "workspace.settings.read", componentId: "platform.settings", configurable: config(false, { canDelete: false, canMoveSection: false }) },
     ];
   }
 
   private platformShellPageSchema(page: ReturnType<CoreRepository["platformShellPages"]>[number]) {
+    if (page.contributionId === "platform.account") {
+      return declarativePageContributionSchema.parse({
+        id: page.contributionId,
+        title: page.label,
+        templateId: "account.profile",
+        access: "permission-gated",
+        actions: [
+          {
+            id: "platform.account.profile.save",
+            title: "Save profile",
+            commandId: "platform.account.profile.save",
+            intent: "submit",
+            variant: "primary",
+            access: "private",
+            risk: "safe",
+            placement: "form",
+            effects: [{ type: "refresh" }],
+          },
+          {
+            id: "platform.account.sign-out",
+            title: "Logout",
+            commandId: "platform.account.sign-out",
+            intent: "execute",
+            variant: "danger",
+            access: "private",
+            risk: "safe",
+            placement: "header",
+            effects: [{ type: "navigate", to: "/login" }],
+          },
+        ],
+        slots: [{ id: `${page.contributionId}.header`, slot: "header", blocks: [{ type: "heading", text: page.label, level: "h2" }, { type: "text", text: "Profile, security and account actions.", tone: "muted" }] }],
+        data: {},
+      });
+    }
     return declarativePageContributionSchema.parse({
       id: page.contributionId,
       title: page.label,
@@ -1545,7 +1579,7 @@ export class CoreRepository {
     const statements = this.platformShellPages().flatMap((page) => [
       this.db.prepare(`INSERT INTO plugin_ui_contributions
         (id, plugin_id, contribution_id, contribution_type, source, access_mode, zone_id, default_path, label, icon, navigation_section, display_order, renderer_mode, component_id, configurable_json, template_id, schema_json, required_permission, version, updated_at)
-        VALUES (?, 'platform', ?, 'page', 'platform', 'permission-gated', 'workspace.main', ?, ?, ?, ?, ?, 'native', ?, ?, 'admin.dashboard', ?, ?, '0.0.0', CURRENT_TIMESTAMP)
+        VALUES (?, 'platform', ?, 'page', 'platform', 'permission-gated', 'workspace.main', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '0.0.0', CURRENT_TIMESTAMP)
         ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET
           source = excluded.source,
           default_path = excluded.default_path,
@@ -1567,7 +1601,8 @@ export class CoreRepository {
           page.icon,
           page.section,
           page.order,
-          page.componentId,
+          page.contributionId === "platform.account" ? "declarative" : "native",
+          page.contributionId === "platform.account" ? null : page.componentId,
           JSON.stringify(page.configurable),
           JSON.stringify(this.platformShellPageSchema(page)),
           page.requiredPermission,

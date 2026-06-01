@@ -7,6 +7,7 @@ export const templateIdSchema = z.enum([
   "admin.detail",
   "admin.form",
   "admin.settings",
+  "account.profile",
   "admin.approvals",
   "admin.chat",
   "auth.login",

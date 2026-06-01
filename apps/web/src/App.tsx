@@ -8,7 +8,7 @@ import { AuthRequestError, ownerSetupSignUp, signInEmail, signOutAuth } from "./
 import { emptyShell } from "./shell";
 import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { TemplateRenderer } from "./platform/TemplateRenderer";
-import { AccountPage, displayUser, userInitial, UserMenu, WorkspaceSwitcher } from "./platform/AccountShell";
+import { displayUser, userInitial, UserMenu, WorkspaceSwitcher } from "./platform/account-ui";
 import { LoginPage } from "./LoginPage";
 import { PublicPage } from "./PublicPage";
 import { SettingsPage } from "./SettingsPage";
@@ -284,7 +284,6 @@ export function App() {
   const platformNativePages: Record<string, () => JSX.Element> = {
     "platform.home": () => <DashboardPage bootstrap={bootstrap} onOpenPath={openPath} />,
     "platform.workspaces": () => <WorkspacesPage bootstrap={bootstrap} onSwitchWorkspace={switchWorkspace} />,
-    "platform.account": () => <AccountPage session={session} bootstrap={bootstrap} onSessionChanged={setSession} onSignOut={() => void signOut()} onSwitchWorkspace={switchWorkspace} {...(settingsPath ? { onOpenSettings: () => openPath(settingsPath) } : {})} />,
     "platform.approvals": () => <ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} />,
     "platform.settings": () => <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={() => undefined} />,
   };

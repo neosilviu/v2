@@ -83,6 +83,19 @@ export const authUiContributionWriteSchema = z.object({
 });
 export const authSignInEmailRequestSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
 export const authUpdateUserRequestSchema = z.object({ name: z.string().nullable() });
+export const authProfileSchema = z.object({
+  profile: z.object({
+    id: z.string().min(1),
+    name: z.string().nullable(),
+    email: z.string().email(),
+    emailVerified: z.boolean(),
+    passkeys: z.number().int().nonnegative(),
+    sessions: z.number().int().nonnegative(),
+    createdAt: z.union([z.number(), z.string()]),
+    updatedAt: z.union([z.number(), z.string()]),
+    isPlatformAdmin: z.boolean(),
+  }),
+});
 export const ownerSetupSignupRequestSchema = z.object({ token: z.string().min(24), email: z.string().email(), name: z.string().min(1), password: z.string().min(8) });
 export type AuthMethod = z.output<typeof authMethodSchema>;
 export type AuthPublicLoginConfig = z.output<typeof authPublicLoginConfigSchema>;
@@ -92,4 +105,5 @@ export type AuthUiContribution = z.output<typeof authUiContributionSchema>;
 export type LoginSlot = z.output<typeof loginSlotSchema>;
 export type AuthSignInEmailRequest = z.output<typeof authSignInEmailRequestSchema>;
 export type AuthUpdateUserRequest = z.output<typeof authUpdateUserRequestSchema>;
+export type AuthProfile = z.output<typeof authProfileSchema>["profile"];
 export type OwnerSetupSignupRequest = z.output<typeof ownerSetupSignupRequestSchema>;

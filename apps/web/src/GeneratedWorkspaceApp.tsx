@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { notification } from "@v2/feedback-runtime";
 import type { Notification } from "@v2/rpc-contracts";
-import { declarativePageContributionSchema, type ActionDefinition, type DeclarativePageContribution } from "@v2/ui-schema";
+import { declarativePageContributionSchema, type DeclarativePageContribution } from "@v2/ui-schema";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import type { ShellState } from "@v2/ui-runtime";
 import { invalidateApiCaches, isCoreAuthRequiredError, loadCurrentImpersonation, loadRuntimePage, loadStartupBootstrap, saveLayout, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RuntimeNavigationItem, type ShellBootstrap } from "./api";
@@ -13,7 +13,7 @@ import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { TemplateRenderer } from "./platform/TemplateRenderer";
 import { RuntimeSurfaceZone } from "./platform/RuntimeSurfaceZone";
 import { loadRuntimeSurfaces } from "./platform/runtime-ui";
-import { AccountPage, displayUser, userInitial, UserMenu, WorkspaceSwitcher } from "./platform/AccountShell";
+import { displayUser, userInitial, UserMenu, WorkspaceSwitcher } from "./platform/account-ui";
 
 type AuthStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
 
@@ -59,6 +59,17 @@ function platformPage(selected: RuntimeNavigationItem, bootstrap: ShellBootstrap
     data: { rows: bootstrap.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name, status: workspace.status, roles: workspace.roles.map((item) => item.name).join(", ") || "Member" })) },
     slots: [{ id: "platform.workspaces.header", slot: "header", blocks: [{ type: "text", text: "Workspace navigation is provided by the runtime shell selector.", tone: "muted" }] }],
   });
+  if (selected.id === "platform.account") return schema({
+    id: selected.id,
+    title: selected.label,
+    templateId: "account.profile",
+    access: "private",
+    actions: [
+      { id: "platform.account.profile.save", title: "Save profile", commandId: "platform.account.profile.save", intent: "submit", variant: "primary", access: "private", risk: "safe", placement: "form", effects: [{ type: "refresh" }] },
+      { id: "platform.account.sign-out", title: "Logout", commandId: "platform.account.sign-out", intent: "execute", variant: "danger", access: "private", risk: "safe", placement: "header", effects: [{ type: "navigate", to: "/login" }] },
+    ],
+    data: { profile: { name: session?.user?.name ?? null, email: session?.user?.email ?? null, emailVerified: Boolean(session?.user?.email), passkeys: 0, sessions: 1, isPlatformAdmin: Boolean(session?.isSuperadmin ?? session?.isAdmin) }, workspaces: bootstrap.workspaces, currentWorkspace: bootstrap.currentWorkspace },
+  });
   return schema({ id: selected.id, title: selected.label, templateId: "admin.detail", access: "private", slots: [{ id: `${selected.id}.header`, slot: "header", blocks: [{ type: "text", text: "This platform contribution is rendered through the generic runtime outlet.", tone: "muted" }] }] });
 }
 
@@ -100,7 +111,7 @@ export function GeneratedWorkspaceApp() {
   useEffect(() => {
     let alive = true;
     setRuntimePage(null);
-    if (!selected || !bootstrap || selected.id === "platform.settings" || selected.id === "platform.approvals" || selected.id === "platform.account") return () => { alive = false; };
+    if (!selected || !bootstrap || selected.id === "platform.settings" || selected.id === "platform.approvals") return () => { alive = false; };
     if (selected.source === "platform" && selected.rendererMode === "native") { setRuntimePage(platformPage(selected, bootstrap, session)); return () => { alive = false; }; }
     void loadRuntimePage(selected.id).then((result) => { if (alive) setRuntimePage(result.page); }).catch(() => { if (alive) setRuntimePage(platformPage(selected, bootstrap, session)); });
     return () => { alive = false; };
@@ -111,11 +122,6 @@ export function GeneratedWorkspaceApp() {
   const signOut = async () => { await signOutAuth(); invalidateApiCaches(); setAuthStatus("anonymous"); window.history.replaceState(null, "", "/login"); };
   const persistLayout = async () => { try { await saveLayout(shell); setNotice("Layout saved"); emit(notification("success", "Layout saved", "Workspace interface layout was updated.")); } catch { setNotice("Layout not saved"); emit(notification("error", "Layout not saved", "The workspace layout could not be updated.")); } };
   const stopImpersonating = async () => { const result = await stopCurrentImpersonation(); setImpersonation(null); if (result.reauthenticationRequired) window.location.assign("/login"); else window.location.reload(); };
-  const submitPage = async (page: DeclarativePageContribution, values: Record<string, FormDataEntryValue>) => {
-    void page;
-    void values;
-  };
-  const actionPage = async (action: ActionDefinition) => { if (action.intent === "navigate") openPath(action.commandId); };
   const redirectAfterLogin = window.location.pathname === "/login" ? null : `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
   if (authStatus === "checking") return loading();
@@ -126,12 +132,10 @@ export function GeneratedWorkspaceApp() {
   const assistantSurfaces = shell.surfaces.filter((surface) => surface.zone === "assistant.right");
   const pageOutput = selected?.id === "platform.settings"
     ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(_, __, nextShell) => setShell(nextShell)} />
-    : selected?.id === "platform.account"
-      ? <AccountPage session={session} bootstrap={bootstrap} onSessionChanged={setSession} onSignOut={() => void signOut()} onSwitchWorkspace={switchWorkspace} {...(settingsPath ? { onOpenSettings: () => openPath(settingsPath) } : {})} />
     : selected?.id === "platform.approvals"
       ? <ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} />
       : selected && runtimePage
-        ? <TemplateRenderer page={runtimePage} runtime={{ contributionId: selected.id }} callbacks={{ onSubmit: submitPage, onAction: actionPage }} />
+        ? <TemplateRenderer page={runtimePage} runtime={{ contributionId: selected.id }} />
         : <SurfaceCard><p className="message">Loading generated page...</p></SurfaceCard>;
 
   return <>

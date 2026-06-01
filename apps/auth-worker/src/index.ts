@@ -73,6 +73,18 @@ authApiRoutes = authApiRoutes.get("/public/auth/login-config", async (c) => {
   const config = await new AuthRuntimeRepository(parsed.config.db).publicLoginConfig(c.req.query("workspaceId") ?? null, { github: Boolean(parsed.config.github) });
   return c.json(config);
 });
+authApiRoutes = authApiRoutes.get("/public/auth/profile", async (c) => {
+  const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const current = await currentAuthSession(c, parsed.config);
+  const userId = typeof current?.user?.id === "string" ? current.user.id : "";
+  if (!userId) return c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401);
+  const repo = new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails));
+  const users = await repo.listUsers();
+  const profile = users.find((user) => user.id === userId);
+  if (!profile) return c.json(errorResponse(failure("not_found", "Current user profile could not be loaded.")), 404);
+  return c.json({ profile });
+});
 async function requireAdmin(c: AuthContext) {
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
   if (!parsed.ok) return { ok: false as const, response: c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503) };

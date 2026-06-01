@@ -5,7 +5,7 @@ import type { PluginBundle, PublicContributionAccess } from "@v2/plugin-contract
 import { assessPluginBundle, unpackPluginZip } from "@v2/plugin-installer";
 import { approvalRequestDecisionRequestSchema, capabilityGrantRequestSchema, layoutWriteRequestSchema, pluginActivationRequestSchema, pluginInstallRequestSchema, settingScopeSchema, settingWriteRequestSchema, toolApprovalDecisionRequestSchema, toolApprovalLookupRequestSchema, toolExecutionRequestSchema, type SettingScope } from "@v2/rpc-contracts";
 import { RuntimeKernel } from "@v2/runtime";
-import { runtimeActionRequestSchema, runtimeDataRequestSchema, type ActionDefinition } from "@v2/ui-schema";
+import { declarativePageContributionSchema, runtimeActionRequestSchema, runtimeDataRequestSchema, type ActionDefinition } from "@v2/ui-schema";
 import { allowedOrigins, isInternalRequest, isPlatformAdmin, readSession, type CoreSessionUser } from "./access";
 import { ApprovalRequestRepository } from "./approval-requests";
 import type { CoreEnv } from "./env";
@@ -269,6 +269,10 @@ async function runtimePage(c: CoreContext, repo: CoreRepository, workspaceId: st
   if (!resolved) return c.json(errorResponse(failure("not_found", "Interface page is not available.")), 404);
   const denied = await requirePermission(c, workspaceId, resolved.contribution.requiredPermission ?? "workspace.read");
   if (denied) return denied;
+  if (contributionId === "platform.account") {
+    const page = declarativePageContributionSchema.parse({ ...resolved.page, templateId: "account.profile", data: { ...resolved.page.data, ...(await platformAccountRuntimeData(c, repo, workspaceId)) } });
+    return c.json({ ...resolved, page });
+  }
   return c.json(resolved);
 }
 async function dispatchPluginOperation(c: CoreContext, request: { workspaceId: string; pluginId: string; operationId: string; input?: unknown; routeParams?: Record<string, string>; queryParams?: Record<string, string | string[]> }) {
@@ -364,10 +368,34 @@ async function authAdminJson<T>(c: CoreContext, path: string, init?: { method?: 
   if (!response.ok) throw new Error(`Auth administration failed: ${response.status}`);
   return response.json() as Promise<T>;
 }
+async function authForwardResponse(c: CoreContext, path: string, init?: { method?: string; body?: string }): Promise<Response> {
+  const headers = new Headers();
+  const cookie = c.req.header("cookie");
+  const authorization = c.req.header("authorization");
+  const origin = c.req.header("origin");
+  if (cookie) headers.set("cookie", cookie);
+  if (authorization) headers.set("authorization", authorization);
+  if (origin) headers.set("origin", origin);
+  if (init?.body !== undefined) headers.set("content-type", "application/json");
+  return (await c.env.AUTH.fetch(`https://auth.internal${path}`, { headers, ...(init?.method ? { method: init.method } : {}), ...(init?.body !== undefined ? { body: init.body } : {}) })) as unknown as Response;
+}
 async function authInternalJson<T>(c: CoreContext, path: string): Promise<T> {
-  const response = await c.env.AUTH.fetch(`https://auth.internal${path}`, { method: "GET" });
+  const headers = new Headers();
+  const cookie = c.req.header("cookie");
+  const authorization = c.req.header("authorization");
+  if (cookie) headers.set("cookie", cookie);
+  if (authorization) headers.set("authorization", authorization);
+  const response = await c.env.AUTH.fetch(`https://auth.internal${path}`, { method: "GET", headers });
   if (!response.ok) throw new Error(`Auth internal lookup failed: ${response.status}`);
   return response.json() as Promise<T>;
+}
+async function platformAccountRuntimeData(c: CoreContext, repo: CoreRepository, workspaceId: string) {
+  const [profile, workspaces] = await Promise.all([
+    authInternalJson<{ profile: { id: string; name: string | null; email: string; emailVerified: boolean; passkeys: number; sessions: number; createdAt: number | string; updatedAt: number | string; isPlatformAdmin: boolean } }>(c, "/public/auth/profile"),
+    repo.accessibleWorkspaces(c.get("user")),
+  ]);
+  const currentWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
+  return { profile: profile.profile, workspaces, currentWorkspace };
 }
 async function platformSettingsRuntimeData(c: CoreContext, repo: CoreRepository, workspaceId: string, dataSourceId: string) {
   switch (dataSourceId) {
@@ -777,6 +805,21 @@ app.post("/runtime/ui/actions", async (c) => {
   if (!resolved) return c.json(pluginOperationEnvelope("denied", null, "Contribution is not active in this workspace."), 403);
   const action = resolved.page.actions.find((item) => item.id === request.actionId);
   if (!action) return c.json(pluginOperationEnvelope("denied", null, "Action is not declared by this contribution."), 403);
+  if (request.contributionId === "platform.account") {
+    if (action.commandId === "platform.account.profile.save") {
+      const payload = request.input && typeof request.input === "object" ? request.input as { name?: unknown } : {};
+      const response = await authForwardResponse(c, "/api/auth/update-user", { method: "POST", body: JSON.stringify({ name: typeof payload.name === "string" ? payload.name : null }) });
+      if (!response.ok) return c.json(pluginOperationEnvelope("denied", null, "Profile update failed."), response.status === 404 ? 404 : 403);
+      return c.json(pluginOperationEnvelope("ok", await platformAccountRuntimeData(c, repo, request.workspaceId)));
+    }
+    if (action.commandId === "platform.account.sign-out") {
+      const response = await authForwardResponse(c, "/api/auth/sign-out", { method: "POST" });
+      const setCookie = response.headers.get("set-cookie");
+      if (setCookie) c.header("Set-Cookie", setCookie);
+      if (!response.ok) return c.json(pluginOperationEnvelope("denied", null, "Sign out failed."), 403);
+      return c.json(pluginOperationEnvelope("ok", null));
+    }
+  }
   const runtime = await runtimeFor(repo);
   const toolOwner = runtime.plugins.all().find((plugin) => plugin.contributes.tools.some((tool) => tool.id === action.commandId));
   const tool = toolOwner?.contributes.tools.find((item) => item.id === action.commandId);

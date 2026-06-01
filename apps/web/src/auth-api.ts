@@ -17,7 +17,7 @@ type HonoRoute = {
   $delete(args?: HonoRequestArgs): Promise<Response>;
 };
 type AuthApiClient = {
-  public: { auth: { "login-config": HonoRoute } };
+  public: { auth: { "login-config": HonoRoute; profile: HonoRoute } };
   api: { auth: { "update-user": { $post(args?: HonoRequestArgs): Promise<Response> }; "sign-in": { email: { $post(args?: HonoRequestArgs): Promise<Response> } }; "sign-out": { $post(args?: HonoRequestArgs): Promise<Response> } } };
   setup: { owner: { "sign-up": { email: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
 };
@@ -63,10 +63,6 @@ export async function loadLoginConfig(workspaceId = "default"): Promise<AuthPubl
     }));
   }
   return loginConfigCache.get(key)!;
-}
-
-export async function updateAuthProfile(input: { name: string }): Promise<void> {
-  await authResponse(authApi.api.auth["update-user"].$post({ json: { name: input.name.trim() || null } }), { parse: () => undefined });
 }
 
 export async function ownerSetupSignUp(input: { token: string; email: string; name: string; password: string }): Promise<void> {
