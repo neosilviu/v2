@@ -82,15 +82,41 @@ export const authUiContributionWriteSchema = z.object({
   displayOrder: z.number().int().default(0),
 });
 export const authSignInEmailRequestSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
-export const authUpdateUserRequestSchema = z.object({ name: z.string().nullable() });
+export const authUpdateUserRequestSchema = z.object({
+  name: z.string().nullable().optional(),
+  language: z.string().nullable().optional(),
+  location: z.string().nullable().optional(),
+  timezone: z.string().nullable().optional(),
+});
+export const authProfilePasskeySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().nullable().default(null),
+  deviceType: z.string().min(1),
+  backedUp: z.boolean(),
+  createdAt: z.union([z.number(), z.string()]),
+});
+export const authProfileSessionSchema = z.object({
+  id: z.string().min(1),
+  current: z.boolean().default(false),
+  ipAddress: z.string().nullable().default(null),
+  userAgent: z.string().nullable().default(null),
+  createdAt: z.union([z.number(), z.string()]),
+  expiresAt: z.union([z.number(), z.string()]),
+  impersonatedBy: z.string().nullable().default(null),
+});
 export const authProfileSchema = z.object({
   profile: z.object({
     id: z.string().min(1),
     name: z.string().nullable(),
     email: z.string().email(),
     emailVerified: z.boolean(),
-    passkeys: z.number().int().nonnegative(),
+    twoFactorEnabled: z.boolean(),
+    language: z.string().nullable(),
+    location: z.string().nullable(),
+    timezone: z.string().nullable(),
+    passkeys: z.array(authProfilePasskeySchema),
     sessions: z.number().int().nonnegative(),
+    activeSessions: z.array(authProfileSessionSchema),
     createdAt: z.union([z.number(), z.string()]),
     updatedAt: z.union([z.number(), z.string()]),
     isPlatformAdmin: z.boolean(),
@@ -102,6 +128,8 @@ export type AuthPublicLoginConfig = z.output<typeof authPublicLoginConfigSchema>
 export type AuthPolicy = z.output<typeof authPolicySchema>;
 export type AuthPolicyWrite = z.output<typeof authPolicyWriteSchema>;
 export type AuthUiContribution = z.output<typeof authUiContributionSchema>;
+export type AuthProfilePasskey = z.output<typeof authProfilePasskeySchema>;
+export type AuthProfileSession = z.output<typeof authProfileSessionSchema>;
 export type LoginSlot = z.output<typeof loginSlotSchema>;
 export type AuthSignInEmailRequest = z.output<typeof authSignInEmailRequestSchema>;
 export type AuthUpdateUserRequest = z.output<typeof authUpdateUserRequestSchema>;

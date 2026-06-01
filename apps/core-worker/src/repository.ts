@@ -76,6 +76,7 @@ export type PluginUiContribution = {
   accessMode: AccessMode;
   zoneId: string | null;
   defaultPath: string | null;
+  visibleInNavigation?: boolean;
   label: string | null;
   icon: string | null;
   navigationSection: NavigationSection | null;
@@ -1518,51 +1519,14 @@ export class CoreRepository {
     requiredPermission: string | null;
     componentId: string;
     configurable: UiConfigurable;
+    visibleInNavigation: boolean;
   }> {
     return [
-      { contributionId: "platform.home", label: "Home", icon: "home", path: "/", section: "user", order: 10, requiredPermission: "workspace.read", componentId: "platform.home", configurable: config(false, { canDelete: false }) },
-      { contributionId: "platform.workspaces", label: "Workspaces", icon: "layers", path: "/workspaces", section: "user", order: 20, requiredPermission: "workspace.read", componentId: "platform.workspaces", configurable: config(false) },
-      { contributionId: "platform.account", label: "Profile", icon: "user", path: "/account", section: "user", order: 30, requiredPermission: "workspace.read", componentId: "platform.account", configurable: config(false, { canDelete: false, canMoveSection: false }) },
-      { contributionId: "platform.approvals", label: "Approvals", icon: "check-circle", path: "/approvals", section: "administration", order: 110, requiredPermission: "approval.read", componentId: "platform.approvals", configurable: config(false) },
-      { contributionId: "platform.settings", label: "Settings", icon: "settings", path: "/settings", section: "administration", order: 120, requiredPermission: "workspace.settings.read", componentId: "platform.settings", configurable: config(false, { canDelete: false, canMoveSection: false }) },
+      { contributionId: "platform.home", label: "Home", icon: "home", path: "/", section: "user", order: 10, requiredPermission: "workspace.read", componentId: "platform.home", configurable: config(false, { canDelete: false }), visibleInNavigation: true },
     ];
   }
 
   private platformShellPageSchema(page: ReturnType<CoreRepository["platformShellPages"]>[number]) {
-    if (page.contributionId === "platform.account") {
-      return declarativePageContributionSchema.parse({
-        id: page.contributionId,
-        title: page.label,
-        templateId: "account.profile",
-        access: "permission-gated",
-        actions: [
-          {
-            id: "platform.account.profile.save",
-            title: "Save profile",
-            commandId: "platform.account.profile.save",
-            intent: "submit",
-            variant: "primary",
-            access: "private",
-            risk: "safe",
-            placement: "form",
-            effects: [{ type: "refresh" }],
-          },
-          {
-            id: "platform.account.sign-out",
-            title: "Logout",
-            commandId: "platform.account.sign-out",
-            intent: "execute",
-            variant: "danger",
-            access: "private",
-            risk: "safe",
-            placement: "header",
-            effects: [{ type: "navigate", to: "/login" }],
-          },
-        ],
-        slots: [{ id: `${page.contributionId}.header`, slot: "header", blocks: [{ type: "heading", text: page.label, level: "h2" }, { type: "text", text: "Profile, security and account actions.", tone: "muted" }] }],
-        data: {},
-      });
-    }
     return declarativePageContributionSchema.parse({
       id: page.contributionId,
       title: page.label,
@@ -1574,6 +1538,12 @@ export class CoreRepository {
   }
 
   async ensurePlatformShellContributions(workspaceId: string) {
+    await this.db.batch([
+      ...["platform.account", "platform.settings", "platform.workspaces", "platform.approvals"].flatMap((contributionId) => [
+        this.db.prepare("DELETE FROM workspace_ui_activations WHERE workspace_id = ? AND plugin_id = 'platform' AND contribution_id = ?").bind(workspaceId, contributionId),
+        this.db.prepare("DELETE FROM plugin_ui_contributions WHERE plugin_id = 'platform' AND contribution_id = ?").bind(contributionId),
+      ]),
+    ]);
     if (await this.internalSeedCurrent(workspaceId, "shell.seed", PLATFORM_SHELL_SEED_VERSION)) return;
     await this.ensurePlatformSettingsContributions(workspaceId);
     const statements = this.platformShellPages().flatMap((page) => [
@@ -1609,8 +1579,9 @@ export class CoreRepository {
         ),
       this.db.prepare(`INSERT OR IGNORE INTO workspace_ui_activations
         (workspace_id, plugin_id, contribution_id, enabled, visible_in_navigation, zone_override, order_index)
-        VALUES (?, 'platform', ?, 1, 1, 'workspace.main', ?)`)
-        .bind(workspaceId, page.contributionId, page.order),
+        VALUES (?, 'platform', ?, 1, ?, 'workspace.main', ?)
+        ON CONFLICT(workspace_id, plugin_id, contribution_id) DO UPDATE SET enabled = excluded.enabled, visible_in_navigation = excluded.visible_in_navigation, zone_override = excluded.zone_override, order_index = excluded.order_index`)
+        .bind(workspaceId, page.contributionId, page.visibleInNavigation ? 1 : 0, page.order),
     ]);
     statements.push(this.internalSeedStatement(workspaceId, "shell.seed", PLATFORM_SHELL_SEED_VERSION));
     await this.db.batch(statements);
@@ -1864,14 +1835,14 @@ export class CoreRepository {
   }
 
   async uiContributions(workspaceId: string, permissions: Set<string>) {
-    const rows = await this.db.prepare(`SELECT contributions.plugin_id, contributions.contribution_id, contributions.contribution_type, contributions.source, contributions.access_mode, COALESCE(activations.zone_override, contributions.zone_id) AS zone_id, contributions.default_path, COALESCE(activations.label_override, contributions.label) AS label, COALESCE(activations.icon_override, contributions.icon) AS icon, COALESCE(activations.navigation_section_override, contributions.navigation_section) AS navigation_section, COALESCE(activations.order_index, contributions.display_order) AS display_order, contributions.renderer_mode, contributions.component_id, contributions.configurable_json, contributions.template_id, contributions.schema_json, contributions.required_permission, contributions.version
+    const rows = await this.db.prepare(`SELECT contributions.plugin_id, contributions.contribution_id, contributions.contribution_type, contributions.source, contributions.access_mode, COALESCE(activations.zone_override, contributions.zone_id) AS zone_id, contributions.default_path, COALESCE(activations.visible_in_navigation, 1) AS visible_in_navigation, COALESCE(activations.label_override, contributions.label) AS label, COALESCE(activations.icon_override, contributions.icon) AS icon, COALESCE(activations.navigation_section_override, contributions.navigation_section) AS navigation_section, COALESCE(activations.order_index, contributions.display_order) AS display_order, contributions.renderer_mode, contributions.component_id, contributions.configurable_json, contributions.template_id, contributions.schema_json, contributions.required_permission, contributions.version
       FROM plugin_ui_contributions contributions
       INNER JOIN workspace_plugins workspace_plugins ON workspace_plugins.plugin_id = contributions.plugin_id AND workspace_plugins.workspace_id = ? AND workspace_plugins.active = 1
       LEFT JOIN workspace_ui_activations activations ON activations.workspace_id = ? AND activations.plugin_id = contributions.plugin_id AND activations.contribution_id = contributions.contribution_id
       WHERE COALESCE(activations.enabled, 1) = 1
       ORDER BY COALESCE(activations.order_index, contributions.display_order), contributions.contribution_id`)
       .bind(workspaceId, workspaceId)
-      .all<{ plugin_id: string; contribution_id: string; contribution_type: PluginUiContribution["contributionType"]; source: UiSource; access_mode: AccessMode; zone_id: string | null; default_path: string | null; label: string | null; icon: string | null; navigation_section: NavigationSection | null; display_order: number; renderer_mode: UiRendererMode; component_id: string | null; configurable_json: string; template_id: string; schema_json: string; required_permission: string | null; version: string }>();
+      .all<{ plugin_id: string; contribution_id: string; contribution_type: PluginUiContribution["contributionType"]; source: UiSource; access_mode: AccessMode; zone_id: string | null; default_path: string | null; visible_in_navigation: number; label: string | null; icon: string | null; navigation_section: NavigationSection | null; display_order: number; renderer_mode: UiRendererMode; component_id: string | null; configurable_json: string; template_id: string; schema_json: string; required_permission: string | null; version: string }>();
     return rows.results.flatMap((row) => {
       if (row.required_permission && !permissions.has(row.required_permission) && !permissions.has("workspace.admin")) return [];
 
@@ -1897,6 +1868,7 @@ export class CoreRepository {
         accessMode: row.access_mode,
         zoneId: row.zone_id,
         defaultPath: row.default_path,
+        visibleInNavigation: row.visible_in_navigation === 1,
         label: row.label,
         icon: row.icon,
         navigationSection: row.navigation_section,
@@ -1986,14 +1958,14 @@ export class CoreRepository {
     await this.ensurePlatformShellContributions(workspaceId);
     const contributions = await this.uiContributions(workspaceId, permissions);
     return contributions
-      .filter((item) => (item.contributionType === "page" || item.contributionType === "menu") && Boolean(item.defaultPath) && Boolean(item.navigationSection))
+      .filter((item) => (item.contributionType === "page" || item.contributionType === "menu") && Boolean(item.defaultPath) && Boolean(item.navigationSection) && item.visibleInNavigation !== false)
       .sort((left, right) => left.displayOrder - right.displayOrder)
-      .map((item) => ({ id: item.contributionId, pluginId: item.pluginId, path: item.defaultPath!, label: item.label ?? item.schema.title, ...(item.icon ? { icon: item.icon } : {}), section: item.navigationSection!, displayOrder: item.displayOrder, rendererMode: item.rendererMode, ...(item.componentId ? { componentId: item.componentId } : {}), source: item.source, ...(item.requiredPermission ? { requiredPermission: item.requiredPermission } : {}) }));
+      .map((item) => ({ id: item.contributionId, pluginId: item.pluginId, path: item.defaultPath!, label: item.label ?? item.schema.title, ...(item.icon ? { icon: item.icon } : {}), section: item.navigationSection!, displayOrder: item.displayOrder, rendererMode: item.rendererMode, ...(item.componentId ? { componentId: item.componentId } : {}), source: item.source, ...(item.requiredPermission ? { requiredPermission: item.requiredPermission } : {}), visibleInNavigation: item.visibleInNavigation }));
   }
 
   async interfaceContributions(workspaceId: string): Promise<InterfaceContributionRow[]> {
     const contributions = await this.uiContributions(workspaceId, new Set(workspacePermissions));
-    return contributions.filter((item) => item.contributionType === "page" || item.contributionType === "menu").map((item) => ({ id: item.contributionId, pluginId: item.pluginId, path: item.defaultPath ?? "", label: item.label ?? item.schema.title, ...(item.icon ? { icon: item.icon } : {}), section: item.navigationSection ?? "administration", displayOrder: item.displayOrder, rendererMode: item.rendererMode, ...(item.componentId ? { componentId: item.componentId } : {}), source: item.source, ...(item.requiredPermission ? { requiredPermission: item.requiredPermission } : {}), kind: item.contributionType, active: true, visibleInNavigation: Boolean(item.defaultPath), status: "active", configurable: item.configurable }));
+    return contributions.filter((item) => item.contributionType === "page" || item.contributionType === "menu").map((item) => ({ id: item.contributionId, pluginId: item.pluginId, path: item.defaultPath ?? "", label: item.label ?? item.schema.title, ...(item.icon ? { icon: item.icon } : {}), section: item.navigationSection ?? "administration", displayOrder: item.displayOrder, rendererMode: item.rendererMode, ...(item.componentId ? { componentId: item.componentId } : {}), source: item.source, ...(item.requiredPermission ? { requiredPermission: item.requiredPermission } : {}), kind: item.contributionType, active: true, visibleInNavigation: item.visibleInNavigation !== false, status: "active", configurable: item.configurable }));
   }
 
   async createManualPage(workspaceId: string, input: ManualPageInput) {

@@ -9,6 +9,10 @@ export const user = sqliteTable("user", {
   name: text("name").notNull(),
   email: text("email").notNull(),
   emailVerified: integer("email_verified", { mode: "boolean" }).notNull(),
+  twoFactorEnabled: integer("two_factor_enabled", { mode: "boolean" }).notNull().default(false),
+  language: text("language"),
+  location: text("location"),
+  timezone: text("timezone"),
   image: text("image"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
@@ -76,6 +80,16 @@ export const passkey = sqliteTable("passkey", {
 }, (table) => ({
   userIdx: index("passkey_user_id_idx").on(table.userId),
   credentialIdx: uniqueIndex("passkey_credential_id_idx").on(table.credentialID),
+}));
+
+export const twoFactor = sqliteTable("twoFactor", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  secret: text("secret").notNull(),
+  backupCodes: text("backup_codes").notNull(),
+  verified: integer("verified", { mode: "boolean" }).notNull().default(true),
+}, (table) => ({
+  userIdx: uniqueIndex("two_factor_user_id_idx").on(table.userId),
 }));
 
 export const authMethods = sqliteTable("auth_methods", {
@@ -148,6 +162,7 @@ export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
   passkeys: many(passkey),
+  twoFactors: many(twoFactor),
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
@@ -160,4 +175,8 @@ export const accountRelations = relations(account, ({ one }) => ({
 
 export const passkeyRelations = relations(passkey, ({ one }) => ({
   user: one(user, { fields: [passkey.userId], references: [user.id] }),
+}));
+
+export const twoFactorRelations = relations(twoFactor, ({ one }) => ({
+  user: one(user, { fields: [twoFactor.userId], references: [user.id] }),
 }));

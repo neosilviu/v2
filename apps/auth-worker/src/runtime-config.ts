@@ -1,4 +1,4 @@
-import { authPolicySchema, authPolicyWriteSchema, authPublicLoginConfigSchema, authMethodWriteSchema, authUiContributionSchema, authUiContributionWriteSchema, type AuthPublicLoginConfig } from "@v2/auth-contracts";
+import { authPolicySchema, authPolicyWriteSchema, authPublicLoginConfigSchema, authMethodWriteSchema, authUiContributionSchema, authUiContributionWriteSchema, type AuthProfilePasskey, type AuthProfileSession, type AuthPublicLoginConfig } from "@v2/auth-contracts";
 
 type AuthMethodRow = {
   id: string;
@@ -56,10 +56,31 @@ type AuthUserAdminRow = {
   name: string;
   email: string;
   email_verified: number;
+  two_factor_enabled: number;
+  language: string | null;
+  location: string | null;
+  timezone: string | null;
   created_at: number | string;
   updated_at: number | string;
   passkey_count: number;
   active_session_count: number;
+};
+type AuthSessionRow = {
+  id: string;
+  user_id: string;
+  expires_at: number | string;
+  ip_address: string | null;
+  user_agent: string | null;
+  impersonated_by: string | null;
+  created_at: number | string;
+  updated_at: number | string;
+};
+type AuthPasskeyRow = {
+  id: string;
+  name: string | null;
+  device_type: string;
+  backed_up: number;
+  created_at: number | string | null;
 };
 
 export type RuntimeAuthProviderState = {
@@ -242,29 +263,80 @@ export class AuthRuntimeRepository {
       policy,
       methods: methods.map((method) => ({ ...method, configurationRef: method.configurationRef ? "server-side" : null })),
       publishedLoginContributions: uiContributions.filter((item) => item.status === "published").length,
-      serverSideAvailability: { password: true, passkey: true, github: providerState.github },
+      serverSideAvailability: { password: true, passkey: true, twoFactor: true, github: providerState.github },
       emailDelivery: { verification: false, passwordReset: false, status: "unavailable" },
       bootstrapAdmin: true,
     };
   }
 
   async sessionsSummary() {
-    const sessionCount = await this.db.prepare("SELECT COUNT(*) AS count FROM session").first<{ count: number }>().catch(() => ({ count: 0 }));
+    const sessionCount = await this.db.prepare("SELECT COUNT(*) AS count FROM session WHERE expires_at > ?").bind(Date.now()).first<{ count: number }>().catch(() => ({ count: 0 }));
     const passkeyCount = await this.db.prepare("SELECT COUNT(*) AS count FROM passkey").first<{ count: number }>().catch(() => ({ count: 0 }));
     return { sessions: sessionCount?.count ?? 0, passkeys: passkeyCount?.count ?? 0 };
   }
 
+  async listPasskeys(userId: string): Promise<AuthProfilePasskey[]> {
+    const rows = await this.db.prepare(`SELECT id, name, device_type, backed_up, created_at
+      FROM passkey
+      WHERE user_id = ?
+      ORDER BY created_at DESC, id DESC`)
+      .bind(userId)
+      .all<AuthPasskeyRow>();
+    return rows.results.map((row) => ({
+      id: row.id,
+      name: row.name,
+      deviceType: row.device_type,
+      backedUp: row.backed_up === 1,
+      createdAt: row.created_at ?? "",
+    }));
+  }
+
   async listUsers() {
-    const rows = await this.db.prepare(`SELECT users.id, users.name, users.email, users.email_verified, users.created_at, users.updated_at,
+    const rows = await this.db.prepare(`SELECT users.id, users.name, users.email, users.email_verified, users.two_factor_enabled, users.created_at, users.updated_at,
+        users.language,
+        users.location,
+        users.timezone,
         COUNT(DISTINCT passkeys.id) AS passkey_count,
         COUNT(DISTINCT sessions.id) AS active_session_count
       FROM user users
       LEFT JOIN passkey passkeys ON passkeys.user_id = users.id
-      LEFT JOIN session sessions ON sessions.user_id = users.id
-      GROUP BY users.id, users.name, users.email, users.email_verified, users.created_at, users.updated_at
+      LEFT JOIN session sessions ON sessions.user_id = users.id AND sessions.expires_at > ?
+      GROUP BY users.id, users.name, users.email, users.email_verified, users.two_factor_enabled, users.language, users.location, users.timezone, users.created_at, users.updated_at
       ORDER BY users.created_at DESC`)
+      .bind(Date.now())
       .all<AuthUserAdminRow>();
-    return rows.results.map((row) => ({ id: row.id, name: row.name, email: row.email, emailVerified: row.email_verified === 1, passkeys: row.passkey_count, sessions: row.active_session_count, createdAt: row.created_at, updatedAt: row.updated_at, isPlatformAdmin: this.platformAdminEmails.has(row.email.toLowerCase()) }));
+    return rows.results.map((row) => ({ id: row.id, name: row.name, email: row.email, emailVerified: row.email_verified === 1, twoFactorEnabled: row.two_factor_enabled === 1, language: row.language, location: row.location, timezone: row.timezone, passkeys: row.passkey_count, sessions: row.active_session_count, createdAt: row.created_at, updatedAt: row.updated_at, isPlatformAdmin: this.platformAdminEmails.has(row.email.toLowerCase()) }));
+  }
+
+  async listSessions(userId: string, currentSessionId?: string | null): Promise<AuthProfileSession[]> {
+    const rows = await this.db.prepare(`SELECT id, user_id, expires_at, ip_address, user_agent, impersonated_by, created_at, updated_at
+      FROM session
+      WHERE user_id = ? AND expires_at > ?
+      ORDER BY created_at DESC, id DESC`)
+      .bind(userId, Date.now())
+      .all<AuthSessionRow>();
+    return rows.results.map((row) => ({
+      id: row.id,
+      current: row.id === currentSessionId,
+      ipAddress: row.ip_address,
+      userAgent: row.user_agent,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      impersonatedBy: row.impersonated_by,
+    }));
+  }
+
+  async revokeSession(userId: string, sessionId: string, currentSessionId?: string | null) {
+    const row = await this.db.prepare("SELECT id FROM session WHERE id = ? AND user_id = ? LIMIT 1").bind(sessionId, userId).first<{ id: string }>();
+    if (!row) return { revoked: false, currentSessionRevoked: false };
+    const currentSessionRevoked = row.id === currentSessionId;
+    await this.db.prepare("DELETE FROM session WHERE id = ? AND user_id = ?").bind(sessionId, userId).run();
+    return { revoked: true, currentSessionRevoked };
+  }
+
+  async revokeOtherSessions(userId: string, currentSessionId: string) {
+    const response = await this.db.prepare("DELETE FROM session WHERE user_id = ? AND id != ?").bind(userId, currentSessionId).run();
+    return { revokedCount: response.meta.changes ?? 0 };
   }
 
   async listImpersonationSessions(workspaceId?: string | null) {

@@ -83,7 +83,7 @@ authApiRoutes = authApiRoutes.get("/public/auth/profile", async (c) => {
   const users = await repo.listUsers();
   const profile = users.find((user) => user.id === userId);
   if (!profile) return c.json(errorResponse(failure("not_found", "Current user profile could not be loaded.")), 404);
-  return c.json({ profile });
+  return c.json({ profile: { ...profile, passkeys: await repo.listPasskeys(userId), activeSessions: await repo.listSessions(userId, current?.session?.id ?? null) } });
 });
 async function requireAdmin(c: AuthContext) {
   const parsed = await resolveAuthConfig(c.env, c.req.query("workspaceId") ?? undefined);
@@ -417,11 +417,59 @@ authApiRoutes = authApiRoutes.post("/api/auth/update-user", async (c) => {
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   const body = authUpdateUserRequestSchema.parse(await c.req.json());
-  return createAuth(parsed.config).handler(new Request(new URL("/api/auth/update-user", parsed.config.baseURL).toString(), {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie: c.req.header("cookie") ?? "", authorization: c.req.header("authorization") ?? "" },
-    body: JSON.stringify(body),
-  }));
+  const current = await currentAuthSession(c, parsed.config);
+  const userId = typeof current?.user?.id === "string" ? current.user.id : "";
+  if (!userId) return c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401);
+  const existing = await parsed.config.db.prepare("SELECT id, email, name, language, location, timezone FROM user WHERE id = ? LIMIT 1").bind(userId).first<{ id: string; email: string; name: string; language: string | null; location: string | null; timezone: string | null }>();
+  if (!existing) return c.json(errorResponse(failure("not_found", "Current user profile could not be loaded.")), 404);
+  const nextName = typeof body.name === "string" ? body.name.trim() : existing.name.trim();
+  if (!nextName) return c.json(errorResponse(failure("validation_failed", "A display name is required.")), 400);
+  const nextLanguage = typeof body.language === "string" ? body.language.trim() || null : existing.language;
+  const nextLocation = typeof body.location === "string" ? body.location.trim() || null : existing.location;
+  const nextTimezone = typeof body.timezone === "string" ? body.timezone.trim() || null : existing.timezone;
+  await parsed.config.db.prepare("UPDATE user SET name = ?, language = ?, location = ?, timezone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .bind(nextName, nextLanguage, nextLocation, nextTimezone, userId)
+    .run();
+  const updated = await parsed.config.db.prepare("SELECT id, email, name, language, location, timezone FROM user WHERE id = ? LIMIT 1").bind(userId).first<{ id: string; email: string; name: string; language: string | null; location: string | null; timezone: string | null }>();
+  return c.json({ user: updated ?? { ...existing, name: nextName, language: nextLanguage, location: nextLocation, timezone: nextTimezone } });
+});
+authApiRoutes = authApiRoutes.get("/api/auth/profile/sessions", async (c) => {
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const current = await currentAuthSession(c, parsed.config);
+  const userId = typeof current?.user?.id === "string" ? current.user.id : "";
+  if (!userId) return c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401);
+  const repo = new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails));
+  return c.json({ sessions: await repo.listSessions(userId, current?.session?.id ?? null) });
+});
+authApiRoutes = authApiRoutes.post("/api/auth/profile/sessions/revoke", async (c) => {
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const body = await c.req.json().catch(() => null) as { sessionId?: unknown } | null;
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
+  if (!sessionId) return c.json(errorResponse(failure("validation_failed", "sessionId is required.")), 400);
+  const current = await currentAuthSession(c, parsed.config);
+  const userId = typeof current?.user?.id === "string" ? current.user.id : "";
+  const currentSessionId = typeof current?.session?.id === "string" ? current.session.id : "";
+  if (!userId || !currentSessionId) return c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401);
+  const auth = createAuth(parsed.config);
+  const context = await auth.$context;
+  const repo = new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails));
+  const result = await repo.revokeSession(userId, sessionId, currentSessionId);
+  if (!result.revoked) return c.json(errorResponse(failure("not_found", "Session could not be found.")), 404);
+  if (result.currentSessionRevoked) deleteCookie(c, context.authCookies.sessionToken.name, context.authCookies.sessionToken.attributes);
+  return c.json({ revoked: true, currentSessionRevoked: result.currentSessionRevoked });
+});
+authApiRoutes = authApiRoutes.post("/api/auth/profile/sessions/revoke-others", async (c) => {
+  const parsed = await resolveAuthConfig(c.env);
+  if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const current = await currentAuthSession(c, parsed.config);
+  const userId = typeof current?.user?.id === "string" ? current.user.id : "";
+  const currentSessionId = typeof current?.session?.id === "string" ? current.session.id : "";
+  if (!userId || !currentSessionId) return c.json(errorResponse(failure("not_authenticated", "Authentication is required.")), 401);
+  const repo = new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails));
+  const result = await repo.revokeOtherSessions(userId, currentSessionId);
+  return c.json(result);
 });
 authApiRoutes = authApiRoutes.on(["POST", "GET"], "/api/auth/*", async (c) => {
   const parsed = await resolveAuthConfig(c.env);

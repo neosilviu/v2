@@ -69,6 +69,7 @@ export const runtimeNavigationItemSchema = z.object({
   componentId: z.string().optional(),
   source: z.enum(["platform", "plugin", "manual"]),
   requiredPermission: z.string().optional(),
+  visibleInNavigation: z.boolean().optional(),
 });
 export const interfaceContributionSchema = runtimeNavigationItemSchema.extend({
   kind: z.string(),
@@ -136,7 +137,7 @@ export const authSecuritySummarySchema = z.object({
   policy: authPolicySchema,
   methods: z.array(authMethodSchema),
   publishedLoginContributions: z.number(),
-  serverSideAvailability: z.object({ password: z.boolean(), passkey: z.boolean(), github: z.boolean() }),
+  serverSideAvailability: z.object({ password: z.boolean(), passkey: z.boolean(), twoFactor: z.boolean(), github: z.boolean() }),
   emailDelivery: z.object({ verification: z.boolean(), passwordReset: z.boolean(), status: z.string() }),
   bootstrapAdmin: z.boolean(),
 });
@@ -154,6 +155,10 @@ export const shellBootstrapSchema = z.object({
   currentWorkspace: workspaceSummarySchema,
   membership: rbacMeSchema,
   layout: workspaceLayoutSchema.nullable(),
+  routes: z.object({
+    account: z.string(),
+    settings: z.string(),
+  }),
   navigation: z.array(runtimeNavigationItemSchema),
   featureAvailability: z.object({
     canReadMarketplace: z.boolean(),

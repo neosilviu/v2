@@ -1,6 +1,7 @@
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { passkey } from "@better-auth/passkey";
-import { betterAuth } from "better-auth";
+import { twoFactor } from "better-auth/plugins/two-factor";
+import { betterAuth } from "better-auth/minimal";
 import { drizzle } from "drizzle-orm/d1";
 import type { Fetcher } from "@cloudflare/workers-types";
 import * as schema from "./db/schema";
@@ -118,7 +119,10 @@ export function createAuth(config: AuthConfig) {
     session: { additionalFields: { impersonatedBy: { type: "string", required: false } } },
     emailAndPassword: { enabled: true, sendResetPassword: async ({ user, url }) => { await sendCoreMail({ purpose: "reset_password", templateKey: "reset_password", to: user.email, url }); } },
     emailVerification: { sendVerificationEmail: async ({ user, url }) => { await sendCoreMail({ purpose: "verify_email", templateKey: "verify_email", to: user.email, url }); } },
-    plugins: [passkey({ rpID: config.passkey.rpID, rpName: config.passkey.rpName, origin: config.passkey.origin, registration: { requireSession: true } })],
+    plugins: [
+      passkey({ rpID: config.passkey.rpID, rpName: config.passkey.rpName, origin: config.passkey.origin, registration: { requireSession: true } }),
+      twoFactor({ issuer: config.passkey.rpName, allowPasswordless: true, totpOptions: { issuer: config.passkey.rpName, allowPasswordless: true }, backupCodeOptions: { allowPasswordless: true } }),
+    ],
     ...(config.github ? { socialProviders: { github: config.github } } : {}),
     advanced: { cookiePrefix: "v2-auth", useSecureCookies: config.production },
   });

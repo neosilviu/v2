@@ -309,6 +309,7 @@ async function workspaceBootstrap(c: CoreContext, requestedWorkspaceId?: string)
     currentWorkspace,
     membership,
     layout: (await repo.getLayout(workspaceId)) ?? null,
+    routes: { account: "/account", settings: "/settings" },
     navigation: await repo.navigation(workspaceId, permissions),
     featureAvailability: {
       canReadMarketplace: permissions.has("marketplace.read") || permissions.has("workspace.admin"),
@@ -391,7 +392,24 @@ async function authInternalJson<T>(c: CoreContext, path: string): Promise<T> {
 }
 async function platformAccountRuntimeData(c: CoreContext, repo: CoreRepository, workspaceId: string) {
   const [profile, workspaces] = await Promise.all([
-    authInternalJson<{ profile: { id: string; name: string | null; email: string; emailVerified: boolean; passkeys: number; sessions: number; createdAt: number | string; updatedAt: number | string; isPlatformAdmin: boolean } }>(c, "/public/auth/profile"),
+    authInternalJson<{
+      profile: {
+        id: string;
+        name: string | null;
+        email: string;
+        emailVerified: boolean;
+        twoFactorEnabled: boolean;
+        language: string | null;
+        location: string | null;
+        timezone: string | null;
+        passkeys: Array<{ id: string; name: string | null; deviceType: string; backedUp: boolean; createdAt: number | string }>;
+        sessions: number;
+        activeSessions: Array<{ id: string; current: boolean; ipAddress: string | null; userAgent: string | null; createdAt: number | string; expiresAt: number | string; impersonatedBy: string | null }>;
+        createdAt: number | string;
+        updatedAt: number | string;
+        isPlatformAdmin: boolean;
+      };
+    }>(c, "/public/auth/profile"),
     repo.accessibleWorkspaces(c.get("user")),
   ]);
   const currentWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
@@ -465,6 +483,13 @@ app.get("/bootstrap", async (c) => {
 });
 app.get("/workspaces/current/bootstrap", async (c) => workspaceBootstrap(c));
 app.get("/workspaces/:workspaceId/bootstrap", async (c) => workspaceBootstrap(c, c.req.param("workspaceId")));
+app.delete("/workspaces/:workspaceId", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const denied = await requirePermission(c, workspaceId, "workspace.admin");
+  if (denied) return denied;
+  const deleted = await new CoreRepository(c.env.CORE_DB).deleteWorkspace(workspaceId, c.get("user")?.id);
+  return deleted ? c.body(null, 204) : c.json(errorResponse(failure("not_found", "Workspace is not available.")), 404);
+});
 app.get("/runtime/ui/bootstrap", async (c) => runtimeUiBootstrapPayload(c, c.req.query("workspaceId") === "current" ? undefined : c.req.query("workspaceId") ?? undefined));
 app.get("/setup/owner", async (c) => setupOwnerStatus(c));
 app.post("/setup/owner/consume", async (c) => consumeOwnerSetup(c));
@@ -806,9 +831,17 @@ app.post("/runtime/ui/actions", async (c) => {
   const action = resolved.page.actions.find((item) => item.id === request.actionId);
   if (!action) return c.json(pluginOperationEnvelope("denied", null, "Action is not declared by this contribution."), 403);
   if (request.contributionId === "platform.account") {
-    if (action.commandId === "platform.account.profile.save") {
-      const payload = request.input && typeof request.input === "object" ? request.input as { name?: unknown } : {};
-      const response = await authForwardResponse(c, "/api/auth/update-user", { method: "POST", body: JSON.stringify({ name: typeof payload.name === "string" ? payload.name : null }) });
+  if (action.commandId === "platform.account.profile.save") {
+    const payload = request.input && typeof request.input === "object" ? request.input as { name?: unknown } : {};
+    const response = await authForwardResponse(c, "/api/auth/update-user", {
+      method: "POST",
+      body: JSON.stringify({
+        name: typeof payload.name === "string" ? payload.name : null,
+        language: typeof (payload as { language?: unknown }).language === "string" ? (payload as { language?: string }).language : null,
+        location: typeof (payload as { location?: unknown }).location === "string" ? (payload as { location?: string }).location : null,
+        timezone: typeof (payload as { timezone?: unknown }).timezone === "string" ? (payload as { timezone?: string }).timezone : null,
+      }),
+    });
       if (!response.ok) return c.json(pluginOperationEnvelope("denied", null, "Profile update failed."), response.status === 404 ? 404 : 403);
       return c.json(pluginOperationEnvelope("ok", await platformAccountRuntimeData(c, repo, request.workspaceId)));
     }

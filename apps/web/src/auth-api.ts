@@ -1,7 +1,7 @@
 import { hc } from "hono/client";
 import { authPublicLoginConfigSchema, ownerSetupSignupRequestSchema, type AuthPublicLoginConfig } from "@v2/auth-contracts";
 import { errorResponseSchema } from "@v2/rpc-contracts";
-import { authUrl } from "./auth-client";
+import { authClient, authUrl } from "./auth-client";
 
 type HonoRequestArgs = {
   param?: Record<string, string>;
@@ -69,8 +69,10 @@ export async function ownerSetupSignUp(input: { token: string; email: string; na
   await authResponse(authApi.setup.owner["sign-up"].email.$post({ json: ownerSetupSignupRequestSchema.parse(input) }), { parse: () => undefined });
 }
 
-export async function signInEmail(input: { email: string; password: string }): Promise<void> {
-  await authResponse(authApi.api.auth["sign-in"].email.$post({ json: input }), { parse: () => undefined });
+export async function signInEmail(input: { email: string; password: string }): Promise<{ twoFactorRedirect?: boolean } | void> {
+  const result = await authClient.signIn.email(input);
+  if (result.error) throw new AuthRequestError(401, undefined, String(result.error.message ?? result.error.statusText ?? "Authentication failed."));
+  return result.data as { twoFactorRedirect?: boolean } | void;
 }
 
 export async function signOutAuth(): Promise<void> {

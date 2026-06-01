@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { CoreSession, WorkspaceSummary } from "../api";
+import { Badge, SurfaceCard } from "@v2/ui-kit";
 
 export function displayUser(session: CoreSession | null) {
   const user = session?.user;
@@ -26,7 +27,6 @@ export function UserMenu({
   settingsPath,
   onOpenPath,
   onSignOut,
-  secondaryAction,
 }: {
   session: CoreSession | null;
   workspace: WorkspaceSummary | null;
@@ -34,7 +34,6 @@ export function UserMenu({
   settingsPath?: string;
   onOpenPath: (path: string) => void;
   onSignOut: () => void;
-  secondaryAction?: { label: string; onClick: () => void };
 }) {
   const [open, setOpen] = useState(false);
   const closeAndRun = (action: () => void) => {
@@ -44,16 +43,32 @@ export function UserMenu({
 
   return <div className="user-menu">
     <button className="user-button" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-      <span className="avatar">{userInitial(session)}</span><span>{displayUser(session)}</span>
+      <span className="avatar">{userInitial(session)}</span>
+      <span className="user-button-copy">
+        <strong>{displayUser(session)}</strong>
+        <small>{workspace?.name ?? workspace?.id ?? "No workspace"}</small>
+      </span>
     </button>
     {open ? <div className="user-popover">
-      <strong>{displayUser(session)}</strong>
-      {session?.user?.email ? <small>{session.user.email}</small> : null}
-      <small>{workspace?.name ?? workspace?.id ?? "No workspace"}</small>
-      {accountPath ? <button type="button" onClick={() => closeAndRun(() => onOpenPath(accountPath))}>My Account</button> : null}
-      {settingsPath ? <button type="button" onClick={() => closeAndRun(() => onOpenPath(settingsPath))}>Settings</button> : null}
-      {secondaryAction ? <button type="button" onClick={() => closeAndRun(secondaryAction.onClick)}>{secondaryAction.label}</button> : null}
-      <button type="button" onClick={() => closeAndRun(onSignOut)}>Sign out</button>
+      <SurfaceCard className="user-popover-card">
+        <div className="user-popover-head">
+          <div>
+            <small>Account</small>
+            <strong>{displayUser(session)}</strong>
+            {session?.user?.email ? <p>{session.user.email}</p> : null}
+          </div>
+          <Badge>{workspace?.status ?? "workspace"}</Badge>
+        </div>
+        <div className="user-popover-body">
+          <small>Workspace</small>
+          <strong>{workspace?.name ?? workspace?.id ?? "No workspace"}</strong>
+        </div>
+        <div className="user-popover-actions">
+          {accountPath ? <button type="button" onClick={() => closeAndRun(() => onOpenPath(accountPath))}>Profile</button> : null}
+          {settingsPath ? <button type="button" onClick={() => closeAndRun(() => onOpenPath(settingsPath))}>Settings</button> : null}
+          <button type="button" onClick={() => closeAndRun(onSignOut)}>Sign out</button>
+        </div>
+      </SurfaceCard>
     </div> : null}
   </div>;
 }

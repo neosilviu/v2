@@ -3,6 +3,7 @@ import type { Notification } from "@v2/rpc-contracts";
 import type { ActionDefinition, ColumnDefinition, FieldDefinition, SettingsPanelContribution, SettingsSection } from "@v2/ui-schema";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { executeRuntimeAction, loadRuntimeData } from "../api";
+import { createSettingsNotification } from "./settings-ui";
 import { CrudRenderer } from "./CrudRenderer";
 import { TemplateRenderer } from "./TemplateRenderer";
 import { RuntimeShellEditor } from "./RuntimeShellEditor";
@@ -17,10 +18,6 @@ type SettingsRendererProps = {
   onShellChange: Parameters<typeof RuntimeShellEditor>[0]["onChange"];
   emit?: (item: Notification) => void;
 };
-
-function createNotification(level: Notification["level"], title: string, message: string): Notification {
-  return { id: crypto.randomUUID(), level, title, message, source: "settings", dismissible: true, createdAt: new Date().toISOString() };
-}
 
 function rowsFromData(data: SectionPayload): Record<string, unknown>[] {
   if (Array.isArray(data)) return data.map((row) => (row && typeof row === "object" ? row as Record<string, unknown> : {}));
@@ -113,7 +110,7 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
   const showFeedback = (level: "success" | "error" | "info", text: string) => {
     setMessageLevel(level);
     setMessage(text);
-    if (emit && level !== "info") emit(createNotification(level, level === "success" ? "Changes saved" : "Action failed", text));
+    if (emit && level !== "info") emit(createSettingsNotification(level, level === "success" ? "Changes saved" : "Action failed", text));
   };
 
   const runAction = async (action: ActionDefinition, row?: Record<string, unknown> | null, values?: Record<string, unknown>) => {

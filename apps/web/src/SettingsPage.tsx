@@ -5,6 +5,7 @@ import type { ShellState } from "@v2/ui-runtime";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
 import { loadActivePlugins, loadInstalledPlugins, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, type RuntimeSettingsTab, type RuntimeSettingsTabResolution } from "./api";
 import { SettingsRenderer } from "./platform/SettingsRenderer";
+import { createSettingsNotification } from "./platform/settings-ui";
 import { composeShellFromSurfaces } from "./shell";
 
 type SettingsPageProps = {
@@ -31,18 +32,6 @@ function selectedTabFromUrl(tabs: RuntimeSettingsTab[]) {
   return tabs.find((tab) => tab.id === desired)?.id ?? tabs[0]?.id ?? "";
 }
 
-function createNotification(level: Notification["level"], title: string, message: string): Notification {
-  return {
-    id: crypto.randomUUID(),
-    level,
-    title,
-    message,
-    source: "settings",
-    dismissible: true,
-    createdAt: new Date().toISOString(),
-  };
-}
-
 export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: SettingsPageProps) {
   const [tabs, setTabs] = useState<RuntimeSettingsTab[]>([]);
   const [selectedTabId, setSelectedTabId] = useState("");
@@ -54,6 +43,7 @@ export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: S
   const selectedTab = tabs.find((tab) => tab.id === selectedTabId) ?? null;
   const title = selectedTab?.label ?? "Settings";
   const description = selectedTab ? tabDescriptions[selectedTab.id] ?? "Manage workspace configuration." : "Select a settings section.";
+  const shellSurfacesCount = shell.surfaces.length;
 
   useEffect(() => {
     let alive = true;
@@ -119,11 +109,11 @@ export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: S
       onRuntimeChanged(installed, new Set(activeIds), composeShellFromSurfaces(surfaces));
       setStatus("Saved values reloaded");
       setError(null);
-      emit(createNotification("success", "Settings refreshed", "Saved configuration and installed applications were reloaded."));
+      emit(createSettingsNotification("success", "Settings refreshed", "Saved configuration and installed applications were reloaded."));
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Settings could not be refreshed.";
       setError(message);
-      emit(createNotification("error", "Refresh failed", message));
+      emit(createSettingsNotification("error", "Refresh failed", message));
     } finally {
       setBusy(false);
     }
@@ -141,6 +131,24 @@ export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: S
         <Button onClick={() => void refreshRuntime()} disabled={busy}>Reload saved values</Button>
       </div>
     </header>
+
+    <div className="settings-metrics">
+      <SurfaceCard className="settings-metric">
+        <small>Sections</small>
+        <strong>{tabs.length}</strong>
+        <p>Available settings areas for this workspace.</p>
+      </SurfaceCard>
+      <SurfaceCard className="settings-metric">
+        <small>Current section</small>
+        <strong>{selectedTab?.label ?? "None"}</strong>
+        <p>{selectedTab ? selectedTab.id : "Pick a section from the list."}</p>
+      </SurfaceCard>
+      <SurfaceCard className="settings-metric">
+        <small>Runtime surfaces</small>
+        <strong>{shellSurfacesCount}</strong>
+        <p>Mounted workspace surfaces contributing to this shell.</p>
+      </SurfaceCard>
+    </div>
 
     {error ? <div className="settings-feedback error" role="alert">
       <strong>Something went wrong</strong>

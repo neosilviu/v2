@@ -14,8 +14,13 @@ function accessLabel(item: InterfaceContribution) {
 }
 
 function destinationLabel(item: InterfaceContribution) {
-  if (!item.path) return "Not shown in navigation";
+  if (!item.path) return "No route";
+  if (!item.visibleInNavigation) return "Hidden from sidebar";
   return item.source === "manual" ? "Manual workspace page" : item.section === "administration" ? "Administration page" : "Workspace page";
+}
+
+function visibilityLabel(item: InterfaceContribution) {
+  return item.visibleInNavigation ? "Visible in sidebar" : "Hidden from sidebar";
 }
 
 export function ShellBuilder() {
@@ -73,8 +78,6 @@ export function ShellBuilder() {
   };
 
   const navigation = items.filter((item) => item.kind === "page").sort((left, right) => left.displayOrder - right.displayOrder);
-  const userItems = navigation.filter((item) => item.section === "user");
-  const adminItems = navigation.filter((item) => item.section === "administration");
 
   return <div className="shell-builder">
     <div className="surface-header">
@@ -87,16 +90,16 @@ export function ShellBuilder() {
     </div>
 
     <section className="settings-subpanel">
-      <div className="surface-header"><div><h3>Navigation</h3><p>Main pages grouped by user and administration sections.</p></div><Badge>{navigation.length}</Badge></div>
+      <div className="surface-header"><div><h3>Navigation</h3><p>Runtime pages grouped by user and administration sections.</p></div><Badge>{navigation.filter((item) => item.visibleInNavigation).length}</Badge></div>
       <div className="template-table-wrap domain-table">
         <table>
-          <thead><tr><th>Label</th><th>Destination</th><th>Source</th><th>Section</th><th>Visible</th><th>Order</th><th>Required access</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Label</th><th>Route</th><th>Source</th><th>Section</th><th>Sidebar</th><th>Order</th><th>Required access</th><th>Actions</th></tr></thead>
           <tbody>{navigation.map((item) => <tr key={item.id}>
             <td><strong>{item.label}</strong><small>{item.configurable.canRename ? "Editable display" : "Protected display"}</small></td>
             <td>{destinationLabel(item)}</td>
             <td>{sourceLabel(item.source)}</td>
             <td>{item.section === "administration" ? "Administration" : "User"}</td>
-            <td>{item.visibleInNavigation ? "Visible" : "Hidden"}</td>
+            <td>{visibilityLabel(item)}</td>
             <td>{item.displayOrder}</td>
             <td>{accessLabel(item)}</td>
             <td><div className="plugin-actions">
@@ -111,10 +114,10 @@ export function ShellBuilder() {
     </section>
 
     <section className="settings-subpanel">
-      <div className="surface-header"><div><h3>Layout</h3><p>Primary navigation and content areas currently supported by the shell.</p></div></div>
+      <div className="surface-header"><div><h3>Layout</h3><p>Runtime shell regions currently supported by the platform.</p></div></div>
       <div className="settings-access-grid">
         <div className="settings-access-card"><small>Top bar</small><strong>Workspace switcher and account menu</strong><p>Fixed platform area.</p></div>
-        <div className="settings-access-card"><small>Sidebar</small><strong>{userItems.length + adminItems.length} navigation items</strong><p>User and administration groups.</p></div>
+        <div className="settings-access-card"><small>Sidebar</small><strong>{navigation.filter((item) => item.visibleInNavigation).length} visible items</strong><p>User and administration groups.</p></div>
         <div className="settings-access-card"><small>Main content</small><strong>Runtime page renderer</strong><p>Native or declarative page output.</p></div>
         <div className="settings-access-card"><small>Secondary area</small><strong>Available for active panels</strong><p>Shown only when a contribution uses it.</p></div>
       </div>
@@ -131,8 +134,8 @@ export function ShellBuilder() {
         <label>Text<textarea value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.currentTarget.value })} /></label>
         <div className="plugin-actions"><Button className="primary" type="submit" disabled={busy === "manual"}>Create page</Button></div>
       </form>
-      <div className="plugin-list">{items.filter((item) => item.source === "manual").map((item) => <div className="plugin-row" key={item.id}>
-        <div><strong>{item.label}</strong><small>{item.visibleInNavigation ? "Published in navigation" : "Hidden from navigation"}</small></div>
+        <div className="plugin-list">{items.filter((item) => item.source === "manual").map((item) => <div className="plugin-row" key={item.id}>
+        <div><strong>{item.label}</strong><small>{visibilityLabel(item)}</small></div>
         <div className="plugin-actions"><Badge>{item.active ? "active" : "inactive"}</Badge><Button className="danger" disabled={!item.configurable.canDelete || busy === item.id} onClick={async () => { setBusy(item.id); await deleteManualInterfacePage(item.id).catch((error) => setStatus(error instanceof Error ? error.message : "Delete failed")); setBusy(null); await refresh(); }}>Delete</Button></div>
       </div>)}</div>
     </section>
@@ -141,7 +144,7 @@ export function ShellBuilder() {
       <div className="surface-header"><div><h3>Contributions</h3><p>Available Platform, Plugin and Manual UI contributions.</p></div><Badge>{items.length}</Badge></div>
       <div className="plugin-list">{items.map((item) => <div className="plugin-row" key={`${item.source}:${item.id}`}>
         <div><strong>{item.label}</strong><small>{sourceLabel(item.source)} · {item.kind} · {destinationLabel(item)} · {accessLabel(item)}</small></div>
-        <div className="plugin-actions"><Badge>{item.status}</Badge><Button disabled={busy === item.id} onClick={() => void update(item, { visibleInNavigation: !item.visibleInNavigation })}>{item.visibleInNavigation ? "Remove from navigation" : "Add to navigation"}</Button></div>
+        <div className="plugin-actions"><Badge>{item.status}</Badge><Button disabled={busy === item.id} onClick={() => void update(item, { visibleInNavigation: !item.visibleInNavigation })}>{item.visibleInNavigation ? "Remove from sidebar" : "Add to sidebar"}</Button></div>
       </div>)}</div>
     </section>
   </div>;

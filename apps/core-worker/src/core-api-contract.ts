@@ -47,6 +47,7 @@ export type CoreApiSchema = {
   "/layouts": RouteEndpoints<"put">;
   "/workspaces/current/bootstrap": RouteEndpoints<"get">;
   "/workspaces/:workspaceId/bootstrap": RouteEndpoints<"get">;
+  "/workspaces/:workspaceId": RouteEndpoints<"delete">;
   "/workspaces/:workspaceId/plugins": RouteEndpoints<"get">;
   "/workspaces/:workspaceId/plugins/:pluginId/operations/:operationId": RouteEndpoints<"post">;
   "/workspaces/:workspaceId/ui/surfaces": RouteEndpoints<"get">;
@@ -74,6 +75,7 @@ export type CoreApiSchema = {
 export type CoreApiCompatibility = {
   workspaces: {
     ":workspaceId": {
+      $delete: JsonDelete<{ workspaceId: string }>;
       plugins: {
         ":pluginId": {
           operations: {
