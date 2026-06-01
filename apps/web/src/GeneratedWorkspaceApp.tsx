@@ -12,7 +12,7 @@ import { emptyShell, composeShellFromSurfaces } from "./shell";
 import { TemplateRenderer } from "./platform/TemplateRenderer";
 import { RuntimeSurfaceZone } from "./platform/RuntimeSurfaceZone";
 import { loadRuntimeSurfaces } from "./platform/runtime-ui";
-import { displayUser, userInitial, UserMenu, WorkspaceSwitcher } from "./platform/account-ui";
+import { accessLabel, displayUser, userInitial, UserMenu, WorkspaceSwitcher } from "./platform/account-ui";
 
 type AuthStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
 
@@ -37,14 +37,14 @@ function navMark(item: RuntimeNavigationItem) {
 }
 
 function platformPage(selected: RuntimeNavigationItem, bootstrap: ShellBootstrap, session: CoreSession | null): DeclarativePageContribution {
-  const role = bootstrap.currentWorkspace.roles[0]?.name ?? "Member";
+  const role = accessLabel(session, bootstrap.currentWorkspace);
   if (selected.id === "platform.home") return schema({
     id: selected.id, title: selected.label, templateId: "admin.dashboard", access: "private",
     columns: [{ id: "metric", label: "Metric", field: "metric" }, { id: "value", label: "Value", field: "value" }, { id: "detail", label: "Detail", field: "detail" }],
     data: { rows: [
       { metric: "Workspace", value: bootstrap.currentWorkspace.name, detail: "Active workspace context" },
-      { metric: "Role", value: role, detail: `${bootstrap.membership.permissions.length} permitted actions` },
-      { metric: "Access", value: String(bootstrap.workspaces.length), detail: "Available workspaces" },
+      { metric: "Access", value: role, detail: `${bootstrap.membership.permissions.length} permitted actions` },
+      { metric: "Workspaces", value: String(bootstrap.workspaces.length), detail: "Available workspaces" },
     ] },
     slots: [{ id: "platform.home.header", slot: "header", blocks: [{ type: "heading", text: `Welcome, ${displayUser(session)}`, level: "h2" }, { type: "text", text: `${bootstrap.currentWorkspace.name} · ${role}`, tone: "muted" }] }],
   });
@@ -96,6 +96,7 @@ export function GeneratedWorkspaceApp() {
   const visibleNavigation = navigation.filter((item) => item.visibleInNavigation !== false);
   const accountPath = bootstrap?.routes.account;
   const settingsPath = bootstrap?.routes.settings;
+  const currentAccessLabel = bootstrap ? accessLabel(session, bootstrap.currentWorkspace) : "Member";
   const selected = navigation.find((item) => item.path === activePath)
     ?? (accountPath && activePath === accountPath
       ? { id: "platform.account", pluginId: "platform", path: accountPath, label: "Profile", section: "user", displayOrder: 5, rendererMode: "native", source: "platform", visibleInNavigation: false }
@@ -141,7 +142,7 @@ export function GeneratedWorkspaceApp() {
             {visibleNavigation.some((item) => item.section === "user") ? <section className="sidebar-section"><p className="sidebar-section-label">Workspace</p>{visibleNavigation.filter((item) => item.section === "user").map((item) => <button key={item.id} className={selected?.id === item.id ? "nav-item nav-item-active" : "nav-item"} type="button" onClick={() => openPath(item.path)}><span className="nav-item-icon">{navMark(item)}</span><span className="nav-item-label">{item.label}</span></button>)}</section> : null}
             {visibleNavigation.some((item) => item.section === "administration") ? <section className="sidebar-section"><p className="sidebar-section-label">Administration</p>{visibleNavigation.filter((item) => item.section === "administration").map((item) => <button key={item.id} className={selected?.id === item.id ? "nav-item nav-item-active" : "nav-item"} type="button" onClick={() => openPath(item.path)}><span className="nav-item-icon">{navMark(item)}</span><span className="nav-item-label">{item.label}</span></button>)}</section> : null}
           </nav>
-          <div className="sidebar-foot"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>{bootstrap.currentWorkspace.roles.map((role) => role.name).join(", ") || "Member"}</small></div></div>
+          <div className="sidebar-foot"><span className="avatar">{userInitial(session)}</span><div><strong>{displayUser(session)}</strong><small>{currentAccessLabel}</small></div></div>
         </div>
       </aside>
       <div className="shell-content">
