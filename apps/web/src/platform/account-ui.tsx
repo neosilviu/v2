@@ -11,6 +11,11 @@ export function userInitial(session: CoreSession | null) {
   return displayUser(session).slice(0, 1).toUpperCase() || "W";
 }
 
+export function accessLabel(session: CoreSession | null, workspace: WorkspaceSummary | null) {
+  if (session?.isSuperadmin || session?.isAdmin) return "Superadmin";
+  return workspace?.roles.map((role) => role.name).filter(Boolean).join(", ") || "Member";
+}
+
 export function WorkspaceSwitcher({ workspaces, workspaceId, onChange }: { workspaces: WorkspaceSummary[]; workspaceId: string; onChange: (workspaceId: string) => void }) {
   return <label className="workspace-switcher">
     <small>Workspace</small>
@@ -36,6 +41,7 @@ export function UserMenu({
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const label = accessLabel(session, workspace);
   const closeAndRun = (action: () => void) => {
     setOpen(false);
     action();
@@ -46,7 +52,7 @@ export function UserMenu({
       <span className="avatar">{userInitial(session)}</span>
       <span className="user-button-copy">
         <strong>{displayUser(session)}</strong>
-        <small>{workspace?.name ?? workspace?.id ?? "No workspace"}</small>
+        <small>{label}</small>
       </span>
     </button>
     {open ? <div className="user-popover">
@@ -57,11 +63,12 @@ export function UserMenu({
             <strong>{displayUser(session)}</strong>
             {session?.user?.email ? <p>{session.user.email}</p> : null}
           </div>
-          <Badge>{workspace?.status ?? "workspace"}</Badge>
+          <Badge>{label}</Badge>
         </div>
         <div className="user-popover-body">
           <small>Workspace</small>
           <strong>{workspace?.name ?? workspace?.id ?? "No workspace"}</strong>
+          <p>{workspace?.status ?? "No active workspace"}</p>
         </div>
         <div className="user-popover-actions">
           {accountPath ? <button type="button" onClick={() => closeAndRun(() => onOpenPath(accountPath))}>Profile</button> : null}
