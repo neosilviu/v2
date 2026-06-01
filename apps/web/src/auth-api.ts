@@ -2,6 +2,7 @@ import { hc } from "hono/client";
 import { authPublicLoginConfigSchema, ownerSetupSignupRequestSchema, type AuthPublicLoginConfig } from "@v2/auth-contracts";
 import { errorResponseSchema } from "@v2/rpc-contracts";
 import { authClient, authUrl } from "./auth-client";
+export { authJson } from "./api";
 
 type HonoRequestArgs = {
   param?: Record<string, string>;
@@ -52,18 +53,6 @@ async function authResponse<T>(request: Promise<Response>, schema: { parse(input
   const response = await request;
   if (!response.ok) throw await parseAuthError(response);
   return schema.parse(await response.json().catch(() => undefined));
-}
-
-export async function authJson<T>(pathname: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
-  const response = await fetch(new URL(pathname, authUrl).toString(), {
-    credentials: "include",
-    ...init,
-    headers,
-  });
-  const payload = await response.json().catch(() => null) as T;
-  if (!response.ok) throw await parseAuthError(response);
-  return payload;
 }
 
 export async function loadLoginConfig(workspaceId = "default"): Promise<AuthPublicLoginConfig> {

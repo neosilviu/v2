@@ -1,5 +1,5 @@
 import { authClient } from "./auth-client";
-import { authJson } from "./api";
+import { authJson } from "./auth-api";
 
 const isPasskeyCancellationError = (error: unknown) => {
   const message = error instanceof Error

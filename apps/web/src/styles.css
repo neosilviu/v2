@@ -45,7 +45,6 @@ h2 { margin: 0; font-size: 1.1rem; letter-spacing: -.02em; }
 h3 { margin: 0; font-size: .98rem; letter-spacing: -.01em; }
 p { margin: .35rem 0 0; color: var(--muted); font-size: .875rem; }
 small { color: var(--muted); }
-.hidden-file { display: none; }
 .eyebrow { margin: 0 0 .35rem; color: var(--accent); text-transform: uppercase; letter-spacing: .11em; font-size: .68rem; font-weight: 750; }
 .message { color: var(--muted); padding: 1rem; border: 1px dashed var(--border); border-radius: 12px; background: var(--panel-2); }
 
@@ -294,12 +293,6 @@ input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; accent-
 .chat-message { padding: 12px 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); }
 .chat-message.user { margin-left: 34px; border-color: #c8d9fb; background: var(--accent-soft); }
 .chat-message p { margin-top: 5px; }
-.quick-link-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 9px; margin-top: 13px; }
-.quick-link { min-height: 78px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--panel-2); text-align: left; cursor: pointer; }
-.quick-link:hover { border-color: #c8d9fb; background: var(--accent-soft); }
-.quick-link strong, .quick-link span { display: block; }
-.quick-link span { margin-top: 5px; color: var(--muted); font-size: .78rem; }
-
 /* Settings product layout */
 .settings-hub { display: grid; gap: 16px; }
 .settings-header {
@@ -385,33 +378,6 @@ input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; accent-
 .settings-subpanel { min-height: 0; }
 .settings-subpanel h3 { margin: 0; }
 .settings-subpanel .surface-header { margin-bottom: 13px; }
-.account-metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
-  gap: 10px;
-  margin-top: 14px;
-}
-.account-metric {
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel-2);
-}
-.account-metric small {
-  display: block;
-  margin-bottom: 5px;
-  color: var(--muted);
-  font-size: .66rem;
-  font-weight: 750;
-  text-transform: uppercase;
-  letter-spacing: .11em;
-}
-.account-metric strong {
-  display: block;
-  font-size: .95rem;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
 .profile-layout {
   display: grid;
   gap: 12px;
@@ -431,8 +397,7 @@ input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; accent-
 .profile-twofactor-card,
 .profile-workspace-card,
 .profile-security-card,
-.profile-logout-card,
-.profile-delete-workspace {
+.profile-logout-card {
   display: grid;
   gap: 10px;
 }
@@ -516,25 +481,6 @@ input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; accent-
   display: grid;
   gap: 12px;
 }
-.profile-delete-workspace {
-  margin-top: 2px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-.profile-delete-form {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid #f3c6c6;
-  border-radius: 13px;
-  background: var(--danger-soft);
-}
-.profile-delete-warning {
-  margin: 0;
-  color: var(--danger);
-  font-size: .86rem;
-  font-weight: 600;
-}
 .profile-workspace-form .actions,
 .profile-passkey-card .actions,
 .profile-password-card .actions,
@@ -605,24 +551,15 @@ input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; accent-
 .profile-sessions-dialog { width: min(720px, 100%); }
 .domain-form { display: grid; grid-template-columns: minmax(180px, 1fr) 150px 150px auto; align-items: end; gap: 9px; margin: 12px 0; }
 .domain-instructions { max-width: 300px; margin-top: 6px; padding: 8px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--muted-strong); font-size: .72rem; }
-.status-pill { display: inline-flex; align-items: center; min-height: 25px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-size: .72rem; }
-.status-pill.active, .status-pill.verified { color: var(--success); border-color: #a7f3d0; background: var(--success-soft); }
-.status-pill.verifying { color: var(--warning); border-color: #fed7aa; background: var(--warning-soft); }
-.status-pill.disabled { color: var(--danger); border-color: #fecaca; background: var(--danger-soft); }
 
 /* Marketplace, assistant and feedback */
-.plugin-list, .zone-list, .approval-list { display: grid; gap: 8px; margin-top: 12px; }
-.plugin-row, .zone-row, .approval-row {
+.plugin-list, .zone-list { display: grid; gap: 8px; margin-top: 12px; }
+.plugin-row, .zone-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px;
   border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2);
 }
 .plugin-row strong { display: block; font-size: .86rem; }
 .plugin-row small { display: block; margin-top: 3px; color: var(--muted); font-size: .76rem; text-transform: none; letter-spacing: 0; }
-.section-title { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 19px 0 10px; }
-.approval-inline { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 11px; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; }
-.approval-row { align-items: flex-start; }
-.approval-row strong, .approval-row small { display: block; }
-.approval-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .assistant-drawer {
   position: fixed; top: 14px; right: 14px; bottom: 14px; z-index: 75; width: min(394px, calc(100vw - 28px));
   overflow: auto; padding: 13px; border: 1px solid var(--border); border-radius: 18px;
@@ -770,6 +707,6 @@ input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; accent-
   .settings-grid { grid-template-columns: 1fr; }
   .profile-columns { grid-template-columns: 1fr; }
   .domain-form, .profile-form, .mail-form { grid-template-columns: 1fr; }
-  .plugin-row, .zone-row, .approval-row, .approval-inline { align-items: flex-start; flex-direction: column; }
+  .plugin-row, .zone-row { align-items: flex-start; flex-direction: column; }
   .mobile-scrim { display: block; position: fixed; inset: 0; z-index: 40; border: 0; background: rgba(15,23,42,.33); }
 }
