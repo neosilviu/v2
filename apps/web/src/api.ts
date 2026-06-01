@@ -300,6 +300,13 @@ export async function loadPublicPage(pathname: string): Promise<{ page: Declarat
   return response.json() as Promise<{ page: DeclarativePageContribution; routeParams: Record<string, string>; plugin: { id: string; name: string; version: string } | null }>;
 }
 
+export async function authJson<T>(path: string, init?: { method?: string; headers?: HeadersInit; body?: string }): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body !== undefined) headers.set("content-type", "application/json");
+  const response = await fetch(path, { credentials: "include", headers, ...(init?.method ? { method: init.method } : {}), ...(init?.body !== undefined ? { body: init.body } : {}) });
+  return response.json() as Promise<T>;
+}
+
 export async function loadRuntimeData(contributionId: string, dataSourceId: string, routeParams: Record<string, string> = {}): Promise<RuntimeResultEnvelope> {
   if (isPlatformSettingsOperation(dataSourceId)) {
     return coreResponse(coreApi.workspaces[":workspaceId"].settings.runtime.data.$post({ param: { workspaceId: currentWorkspaceId() }, json: { workspaceId: currentWorkspaceId(), contributionId, dataSourceId, routeParams, queryParams: {} } }), runtimeResultEnvelopeSchema);
