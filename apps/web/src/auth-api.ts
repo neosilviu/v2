@@ -54,6 +54,18 @@ async function authResponse<T>(request: Promise<Response>, schema: { parse(input
   return schema.parse(await response.json().catch(() => undefined));
 }
 
+export async function authJson<T>(pathname: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  const response = await fetch(new URL(pathname, authUrl).toString(), {
+    credentials: "include",
+    ...init,
+    headers,
+  });
+  const payload = await response.json().catch(() => null) as T;
+  if (!response.ok) throw await parseAuthError(response);
+  return payload;
+}
+
 export async function loadLoginConfig(workspaceId = "default"): Promise<AuthPublicLoginConfig> {
   const key = workspaceId || "default";
   if (!loginConfigCache.has(key)) {
