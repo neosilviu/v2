@@ -47,7 +47,10 @@ export const readDevEndpoints = () =>
       const endpoints = [];
       const port = extractNumericFlag(script, "--port");
       const inspectorPort = extractNumericFlag(script, "--inspector-port");
-      if (port) endpoints.push({ ...item, port, kind: script.includes("wrangler dev") ? "worker" : "web" });
+      if (port) {
+        const kind = script.includes("wrangler dev") || script.includes("scripts/wrangler-dev.mjs") ? "worker" : "web";
+        endpoints.push({ ...item, port, kind });
+      }
       if (inspectorPort) endpoints.push({ ...item, port: inspectorPort, kind: "inspector" });
       return endpoints;
     });

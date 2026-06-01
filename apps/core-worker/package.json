@@ -1,6 +1,6 @@
 {
   "name": "@v2/core-worker", "version": "0.0.0", "private": true, "type": "module",
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev --port 8787 --inspector-port 9287", "build": "tsc --noEmit -p tsconfig.json", "db:generate": "drizzle-kit generate --config=drizzle.config.ts" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "node ../../scripts/wrangler-dev.mjs --port 8787 --inspector-port 9287", "build": "tsc --noEmit -p tsconfig.json", "db:generate": "drizzle-kit generate --config=drizzle.config.ts" },
   "types": "./src/index.ts",
   "exports": { ".": { "types": "./src/index.ts", "default": "./src/index.ts" } },
   "dependencies": { "@v2/feedback-runtime": "workspace:*", "@v2/mail-contracts": "workspace:*", "@v2/plugin-contracts": "workspace:*", "@v2/plugin-installer": "workspace:*", "@v2/rpc-contracts": "workspace:*", "@v2/runtime": "workspace:*", "@v2/ui-schema": "workspace:*", "drizzle-orm": "catalog:", "hono": "catalog:" },

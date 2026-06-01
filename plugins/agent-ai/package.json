@@ -1,7 +1,7 @@
 {
   "name": "@v2/plugin-agent-ai", "version": "0.0.0", "private": true, "type": "module",
   "exports": { ".": "./manifest.ts", "./manifest": "./manifest.ts", "./ui/AgentSurface": "./ui/AgentSurface.tsx", "./server/repository": "./server/repository.ts", "./server/app": "./server/app.ts", "./server/db/schema": "./server/db/schema.ts" },
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev --port 8791 --inspector-port 9291", "build": "tsc --noEmit -p tsconfig.json", "db:generate": "drizzle-kit generate --config=drizzle.config.ts" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "node ../../scripts/wrangler-dev.mjs --port 8791 --inspector-port 9291", "build": "tsc --noEmit -p tsconfig.json", "db:generate": "drizzle-kit generate --config=drizzle.config.ts" },
   "dependencies": { "@v2/agent-contracts": "workspace:*", "@v2/feedback-runtime": "workspace:*", "@v2/plugin-contracts": "workspace:*", "@v2/plugin-sdk": "workspace:*", "@v2/provider-contracts": "workspace:*", "@v2/rpc-contracts": "workspace:*", "@v2/ui-kit": "workspace:*", "drizzle-orm": "catalog:", "hono": "catalog:", "react": "catalog:" },
   "devDependencies": { "@cloudflare/workers-types": "catalog:", "@types/react": "catalog:", "drizzle-kit": "catalog:", "typescript": "catalog:", "wrangler": "catalog:" }
 }

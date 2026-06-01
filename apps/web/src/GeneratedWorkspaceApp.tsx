@@ -4,8 +4,8 @@ import type { Notification } from "@v2/rpc-contracts";
 import { declarativePageContributionSchema, type ActionDefinition, type DeclarativePageContribution } from "@v2/ui-schema";
 import { Badge, Button, NotificationCenter, SurfaceCard } from "@v2/ui-kit";
 import type { ShellState } from "@v2/ui-runtime";
-import { currentWorkspaceId, invalidateApiCaches, isCoreAuthRequiredError, loadCurrentImpersonation, loadRuntimePage, loadStartupBootstrap, saveLayout, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RuntimeNavigationItem, type ShellBootstrap, type WorkspaceSummary } from "./api";
-import { signOutAuth, updateAuthProfile } from "./auth-api";
+import { invalidateApiCaches, isCoreAuthRequiredError, loadCurrentImpersonation, loadRuntimePage, loadStartupBootstrap, saveLayout, setCurrentWorkspaceId, stopCurrentImpersonation, type CoreSession, type ImpersonationContext, type RuntimeNavigationItem, type ShellBootstrap } from "./api";
+import { signOutAuth } from "./auth-api";
 import { LoginPage } from "./LoginPage";
 import { SettingsPage } from "./SettingsPage";
 import { emptyShell, composeShellFromSurfaces } from "./shell";
@@ -13,16 +13,9 @@ import { ApprovalsPanel } from "./platform/ApprovalsPanel";
 import { TemplateRenderer } from "./platform/TemplateRenderer";
 import { RuntimeSurfaceZone } from "./platform/RuntimeSurfaceZone";
 import { loadRuntimeSurfaces } from "./platform/runtime-ui";
+import { AccountPage, displayUser, userInitial, UserMenu, WorkspaceSwitcher } from "./platform/AccountShell";
 
 type AuthStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
-
-function displayUser(session: CoreSession | null) {
-  return session?.user?.name?.trim() || session?.user?.email || "Workspace user";
-}
-
-function userInitial(session: CoreSession | null) {
-  return displayUser(session).slice(0, 1).toUpperCase() || "W";
-}
 
 function schema(value: Parameters<typeof declarativePageContributionSchema.parse>[0]): DeclarativePageContribution {
   return declarativePageContributionSchema.parse(value);
@@ -66,13 +59,6 @@ function platformPage(selected: RuntimeNavigationItem, bootstrap: ShellBootstrap
     data: { rows: bootstrap.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name, status: workspace.status, roles: workspace.roles.map((item) => item.name).join(", ") || "Member" })) },
     slots: [{ id: "platform.workspaces.header", slot: "header", blocks: [{ type: "text", text: "Workspace navigation is provided by the runtime shell selector.", tone: "muted" }] }],
   });
-  if (selected.id === "platform.account") return schema({
-    id: selected.id, title: selected.label, templateId: "admin.form", access: "private",
-    fields: [{ id: "name", label: "Display name", type: "text", required: true }, { id: "email", label: "Email", type: "email", readOnly: true }],
-    data: { name: session?.user?.name ?? "", email: session?.user?.email ?? "" },
-    actions: [{ id: "platform.account.save", title: "Save profile", commandId: "platform.account.save", intent: "submit", variant: "primary" }],
-    slots: [{ id: "platform.account.header", slot: "header", blocks: [{ type: "text", text: "Profile fields are rendered from the platform page schema.", tone: "muted" }] }],
-  });
   return schema({ id: selected.id, title: selected.label, templateId: "admin.detail", access: "private", slots: [{ id: `${selected.id}.header`, slot: "header", blocks: [{ type: "text", text: "This platform contribution is rendered through the generic runtime outlet.", tone: "muted" }] }] });
 }
 
@@ -91,7 +77,6 @@ export function GeneratedWorkspaceApp() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [runtimePage, setRuntimePage] = useState<DeclarativePageContribution | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const emit = (item: Notification) => setNotifications((current) => [...current, item].slice(-5));
 
@@ -109,23 +94,26 @@ export function GeneratedWorkspaceApp() {
   useEffect(() => { const pop = () => setActivePath(window.location.pathname || "/"); window.addEventListener("popstate", pop); return () => window.removeEventListener("popstate", pop); }, []);
   const navigation = useMemo(() => [...(bootstrap?.navigation ?? [])].sort((a, b) => a.displayOrder - b.displayOrder), [bootstrap?.navigation]);
   const selected = navigation.find((item) => item.path === activePath) ?? null;
+  const accountPath = navigation.find((item) => item.id === "platform.account")?.path;
+  const settingsPath = navigation.find((item) => item.id === "platform.settings")?.path;
 
   useEffect(() => {
     let alive = true;
     setRuntimePage(null);
-    if (!selected || !bootstrap || selected.id === "platform.settings" || selected.id === "platform.approvals") return () => { alive = false; };
+    if (!selected || !bootstrap || selected.id === "platform.settings" || selected.id === "platform.approvals" || selected.id === "platform.account") return () => { alive = false; };
     if (selected.source === "platform" && selected.rendererMode === "native") { setRuntimePage(platformPage(selected, bootstrap, session)); return () => { alive = false; }; }
     void loadRuntimePage(selected.id).then((result) => { if (alive) setRuntimePage(result.page); }).catch(() => { if (alive) setRuntimePage(platformPage(selected, bootstrap, session)); });
     return () => { alive = false; };
   }, [selected?.id, bootstrap, session]);
 
-  const openPath = (path: string) => { setMobileSidebarOpen(false); setAccountMenuOpen(false); setActivePath(path); window.history.pushState(null, "", path); };
+  const openPath = (path: string) => { setMobileSidebarOpen(false); setActivePath(path); window.history.pushState(null, "", path); };
   const switchWorkspace = (workspaceId: string) => { setCurrentWorkspaceId(workspaceId); const url = new URL(window.location.href); url.searchParams.set("workspace", workspaceId); window.location.assign(`${url.pathname}${url.search}${url.hash}`); };
   const signOut = async () => { await signOutAuth(); invalidateApiCaches(); setAuthStatus("anonymous"); window.history.replaceState(null, "", "/login"); };
   const persistLayout = async () => { try { await saveLayout(shell); setNotice("Layout saved"); emit(notification("success", "Layout saved", "Workspace interface layout was updated.")); } catch { setNotice("Layout not saved"); emit(notification("error", "Layout not saved", "The workspace layout could not be updated.")); } };
   const stopImpersonating = async () => { const result = await stopCurrentImpersonation(); setImpersonation(null); if (result.reauthenticationRequired) window.location.assign("/login"); else window.location.reload(); };
   const submitPage = async (page: DeclarativePageContribution, values: Record<string, FormDataEntryValue>) => {
-    if (page.id === "platform.account") { await updateAuthProfile({ name: String(values.name ?? "") }); emit(notification("success", "Profile saved", "Your display name was updated.")); }
+    void page;
+    void values;
   };
   const actionPage = async (action: ActionDefinition) => { if (action.intent === "navigate") openPath(action.commandId); };
   const redirectAfterLogin = window.location.pathname === "/login" ? null : `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -138,6 +126,8 @@ export function GeneratedWorkspaceApp() {
   const assistantSurfaces = shell.surfaces.filter((surface) => surface.zone === "assistant.right");
   const pageOutput = selected?.id === "platform.settings"
     ? <SettingsPage shell={shell} onShellChange={setShell} emit={emit} onRuntimeChanged={(_, __, nextShell) => setShell(nextShell)} />
+    : selected?.id === "platform.account"
+      ? <AccountPage session={session} bootstrap={bootstrap} onSessionChanged={setSession} onSignOut={() => void signOut()} onSwitchWorkspace={switchWorkspace} {...(settingsPath ? { onOpenSettings: () => openPath(settingsPath) } : {})} />
     : selected?.id === "platform.approvals"
       ? <ApprovalsPanel onDecision={() => emit(notification("success", "Approval updated", "The runtime approval queue was updated."))} />
       : selected && runtimePage
@@ -166,11 +156,16 @@ export function GeneratedWorkspaceApp() {
           <div className="topbar-title-copy"><strong>{selected?.label ?? "Workspace"}</strong><span>{pageDescription(selected, bootstrap.currentWorkspace.name)}</span></div>
           <div className="topbar-actions">
             {assistantSurfaces.length ? <button className="topbar-action" type="button" onClick={() => setAssistantOpen((value) => !value)}>Assistant</button> : null}
-            <label className="workspace-switcher"><small>Workspace</small><select value={bootstrap.currentWorkspace.id} onChange={(event) => switchWorkspace(event.currentTarget.value)}>{bootstrap.workspaces.map((workspace: WorkspaceSummary) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label>
-            <div className="user-menu">
-              <button className="user-button" type="button" onClick={() => setAccountMenuOpen((value) => !value)} aria-expanded={accountMenuOpen}><span className="avatar">{userInitial(session)}</span><span>{displayUser(session)}</span><span aria-hidden="true">⌄</span></button>
-              {accountMenuOpen ? <div className="user-popover"><strong>{displayUser(session)}</strong><small>{session?.user?.email ?? ""}</small><small>{bootstrap.currentWorkspace.name}</small><button type="button" onClick={() => void persistLayout()}>Save layout</button><button type="button" onClick={() => void signOut()}>Sign out</button></div> : null}
-            </div>
+            <WorkspaceSwitcher workspaces={bootstrap.workspaces} workspaceId={bootstrap.currentWorkspace.id} onChange={switchWorkspace} />
+            <UserMenu
+              session={session}
+              workspace={bootstrap.currentWorkspace}
+              {...(accountPath ? { accountPath } : {})}
+              {...(settingsPath ? { settingsPath } : {})}
+              onOpenPath={openPath}
+              onSignOut={() => void signOut()}
+              secondaryAction={{ label: "Save layout", onClick: () => void persistLayout() }}
+            />
           </div>
         </header>
         <main className="workspace"><div className="workspace-page-header"><div><p className="eyebrow">{selected?.source === "plugin" ? "Application" : "Workspace"}</p><h1>{selected?.label ?? "Workspace"}</h1><p>{pageDescription(selected, bootstrap.currentWorkspace.name)}</p></div><Badge>{bootstrap.currentWorkspace.status}</Badge></div>{pageOutput}</main>

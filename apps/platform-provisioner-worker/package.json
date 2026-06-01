@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "wrangler dev --port 8795 --inspector-port 9295", "build": "tsc --noEmit -p tsconfig.json" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "node ../../scripts/wrangler-dev.mjs --port 8795 --inspector-port 9295", "build": "tsc --noEmit -p tsconfig.json" },
   "dependencies": { "@v2/cloudflare-platform": "workspace:*", "hono": "catalog:", "zod": "catalog:" },
   "devDependencies": { "@cloudflare/workers-types": "catalog:", "typescript": "catalog:", "wrangler": "catalog:" }
 }

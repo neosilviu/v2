@@ -4,8 +4,5 @@
   "compatibility_date": "2026-05-25",
   "dispatch_namespaces": [
     { "binding": "DISPATCHER", "namespace": "v2-plugin-runtime" }
-  ],
-  "vars": {
-    "PLUGIN_RUNTIME_LOCAL_ORIGIN": "http://localhost:8793"
-  }
+  ]
 }

@@ -148,6 +148,9 @@ function testRuntimeFirstArchitecture() {
   }
   if (!coreEnv.includes("PLUGIN_RUNTIME") || !coreIndex.includes("pluginRuntimeDispatch")) fail("Core is missing the generic plugin runtime dispatch boundary");
   if (!coreIndex.includes("runtimeKey")) fail("Core does not pass a persisted runtimeKey to plugin runtime dispatch");
+  for (const localOnly of ["http://localhost", "127.0.0.1", "\"development\""]) {
+    if (coreWrangler.includes(localOnly)) fail(`Core wrangler config must not commit local-only value ${localOnly}`);
+  }
   for (const route of ["/workspaces/:workspaceId/settings/tabs", "/workspaces/:workspaceId/settings/tabs/:tabId", "/workspaces/:workspaceId/settings/runtime/data", "/workspaces/:workspaceId/settings/runtime/actions"]) {
     if (!coreIndex.includes(route)) fail(`Core runtime Settings route ${route} is missing`);
   }
@@ -171,6 +174,9 @@ function testPlatformSeparationGuards() {
   }
   if (!runtimeBridgeWrangler.includes("dispatch_namespaces") || !runtimeBridgeWrangler.includes("\"DISPATCHER\"")) fail("Runtime Bridge is not configured with a Dispatch Namespace binding");
   if (!runtimeBridge.includes("DISPATCHER?.get(runtimeKey)")) fail("Runtime Bridge does not dispatch through env.DISPATCHER.get(runtimeKey)");
+  for (const localOnly of ["http://localhost", "127.0.0.1", "\"development\""]) {
+    if (runtimeBridgeWrangler.includes(localOnly)) fail(`Runtime Bridge wrangler config must not commit local-only value ${localOnly}`);
+  }
 
   const mcpGateway = fs.readFileSync(path.join(root, "apps/mcp-gateway/src/index.ts"), "utf8");
   const mcpWrangler = fs.readFileSync(path.join(root, "apps/mcp-gateway/wrangler.jsonc"), "utf8");
@@ -182,13 +188,25 @@ function testPlatformSeparationGuards() {
   const agentWrangler = fs.readFileSync(path.join(root, "plugins/agent-ai/wrangler.jsonc"), "utf8");
   const agentSource = fs.readFileSync(path.join(root, "plugins/agent-ai/server/worker.ts"), "utf8") + fs.readFileSync(path.join(root, "plugins/agent-ai/server/provider-routes.ts"), "utf8");
   if (agentWrangler.includes("PROVIDER_RUNTIME") || agentWrangler.includes("v2-plugin-ai-providers") || agentSource.includes("PROVIDER_RUNTIME")) fail("Agent AI still depends directly on the AI Providers plugin runtime");
+  for (const localOnly of ["http://localhost", "127.0.0.1", "\"development\""]) {
+    if (agentWrangler.includes(localOnly)) fail(`Agent AI wrangler config must not commit local-only value ${localOnly}`);
+  }
+
+  const aiProvidersWrangler = fs.readFileSync(path.join(root, "plugins/ai-providers/wrangler.jsonc"), "utf8");
+  for (const localOnly of ["http://localhost", "127.0.0.1", "\"development\""]) {
+    if (aiProvidersWrangler.includes(localOnly)) fail(`AI Providers wrangler config must not commit local-only value ${localOnly}`);
+  }
 
   const provisioner = fs.readFileSync(path.join(root, "apps/platform-provisioner-worker/src/index.ts"), "utf8");
+  const provisionerWrangler = fs.readFileSync(path.join(root, "apps/platform-provisioner-worker/wrangler.jsonc"), "utf8");
   const cloudflarePackage = fs.readFileSync(path.join(root, "packages/cloudflare-platform/src/dispatch-namespace.ts"), "utf8");
   const coreEnv = fs.readFileSync(path.join(root, "apps/core-worker/src/env.ts"), "utf8");
   if (!provisioner.includes("CLOUDFLARE_API_TOKEN") || !coreEnv.includes("PLATFORM_PROVISIONER")) fail("Cloudflare provisioning boundary is not split between Core and provisioner");
   if (coreEnv.includes("CLOUDFLARE_API_TOKEN")) fail("Core environment exposes the Cloudflare API token");
   if (!cloudflarePackage.includes("putDispatchWorker")) fail("@v2/cloudflare-platform does not expose Dispatch Namespace worker deployment helpers");
+  for (const localOnly of ["http://localhost", "127.0.0.1", "\"development\""]) {
+    if (provisionerWrangler.includes(localOnly)) fail(`Platform provisioner wrangler config must not commit local-only value ${localOnly}`);
+  }
 
   const webWrangler = fs.readFileSync(path.join(root, "apps/web/wrangler.jsonc"), "utf8");
   const webPackage = fs.readFileSync(path.join(root, "apps/web/package.json"), "utf8");
@@ -199,8 +217,11 @@ function testPlatformSeparationGuards() {
   for (const route of ["/login", "/setup/owner", "/settings", "/public/*"]) {
     if (!webRedirects.includes(`${route} /index.html 200`)) fail(`Web Pages SPA fallback is missing ${route}`);
   }
-	  if (!webWrangler.includes("VITE_CORE_API_URL") || !webWrangler.includes("VITE_AUTH_API_URL")) fail("Web Pages config is missing public Core/Auth API variables");
+	  if (webWrangler.includes("VITE_CORE_API_URL") || webWrangler.includes("VITE_AUTH_API_URL")) fail("Web Pages config must not hardcode public Core/Auth API variables");
 	  if (webWrangler.includes("example.invalid")) fail("Web Pages config must not commit fake preview/production API URLs");
+	  for (const localOnly of ["http://localhost", "127.0.0.1", "\"development\""]) {
+	    if (webWrangler.includes(localOnly)) fail(`Web Pages config must not commit local-only value ${localOnly}`);
+	  }
 	  pass("Platform/plugin separation guards completed");
 	}
 

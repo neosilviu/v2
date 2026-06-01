@@ -2,10 +2,8 @@
   "name": "v2-plugin-ai-providers",
   "main": "server/app.ts",
   "compatibility_date": "2026-05-25",
-  "ai": { "binding": "AI" },
   "d1_databases": [
     { "binding": "PROVIDERS_DB", "database_name": "v2-ai-providers", "database_id": "55e19016-8573-47f1-938c-2b8c9747fbce" }
   ],
   "services": [{ "binding": "AUTH", "service": "v2-auth-worker" }],
-  "vars": { "APP_ORIGIN": "http://localhost:5173", "TRUSTED_ORIGINS": "" }
 }

@@ -5,9 +5,9 @@ import { approvalRequestSchema, errorResponseSchema } from "@v2/rpc-contracts";
 import type { ApprovalRequest, ToolApproval, ToolExecutionResult } from "@v2/rpc-contracts";
 import type { DeclarativePageContribution, RuntimeResultEnvelope } from "@v2/ui-schema";
 import type { PluginManifest, PluginOperation, SurfaceContribution, ToolContribution } from "@v2/plugin-contracts";
-import { approvalRequestListSchema, coreSessionSchema, impersonationResponseSchema, runtimeUiBootstrapSchema, startupBootstrapSchema, marketplacePluginSchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, interfaceContributionSchema, stopImpersonationResponseSchema, type CoreSession, type ImpersonationContext, type RuntimeUiBootstrap, type StartupBootstrap, type MarketplacePlugin, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary, type InterfaceContribution } from "./platform-contracts";
+import { approvalRequestListSchema, coreSessionSchema, impersonationResponseSchema, runtimeUiBootstrapSchema, startupBootstrapSchema, pluginCatalogEntrySchema, ownerSetupConsumeResponseSchema, ownerSetupStatusSchema, pluginInstallResultSchema, rbacMeSchema, runtimeSettingsTabSchema, runtimeSettingsTabResolutionSchema, runtimeResultEnvelopeSchema, shellBootstrapSchema, interfaceContributionSchema, stopImpersonationResponseSchema, type CoreSession, type ImpersonationContext, type RuntimeUiBootstrap, type StartupBootstrap, type PluginCatalogEntry, type PluginInstallResult, type RbacMe, type RuntimeSettingsTab, type RuntimeSettingsTabResolution, type ShellBootstrap, type WorkspaceSummary, type InterfaceContribution } from "./platform-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-export type { CoreSession, ImpersonationContext, StartupBootstrap, MarketplacePlugin, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary, InterfaceContribution, RuntimeNavigationItem } from "./platform-contracts";
+export type { CoreSession, ImpersonationContext, StartupBootstrap, PluginCatalogEntry, PluginInstallResult, RbacMe, RuntimeSettingsTab, RuntimeSettingsTabResolution, ShellBootstrap, WorkspaceSummary, InterfaceContribution, RuntimeNavigationItem } from "./platform-contracts";
 
 export const coreUrl = import.meta.env.VITE_CORE_API_URL ?? "http://localhost:8787";
 type ResponseLike = Pick<Response, "ok" | "status" | "json" | "text">;
@@ -360,11 +360,11 @@ export async function loadInstalledPlugins(): Promise<PluginManifest[]> {
   return (await loadRuntimeUiBootstrap()).plugins;
 }
 
-export async function loadMarketplacePlugins(): Promise<MarketplacePlugin[]> {
-  return (await coreResponse(coreApi.marketplace.plugins.$get({ query: { workspaceId: currentWorkspaceId() } }), z.object({ plugins: z.array(marketplacePluginSchema) }))).plugins;
+export async function loadPluginCatalog(): Promise<PluginCatalogEntry[]> {
+  return (await coreResponse(coreApi.marketplace.plugins.$get({ query: { workspaceId: currentWorkspaceId() } }), z.object({ plugins: z.array(pluginCatalogEntrySchema) }))).plugins;
 }
 
-export async function installMarketplacePlugin(pluginId: string, approvalId?: string): Promise<PluginInstallResult> {
+export async function installPluginFromCatalog(pluginId: string, approvalId?: string): Promise<PluginInstallResult> {
   const result = await coreResponse(coreApi.marketplace.plugins[":pluginId"].install.$post({ param: { pluginId }, query: { workspaceId: currentWorkspaceId() }, json: approvalId ? { approvalId } : {} }), pluginInstallResultSchema);
   invalidateApiCaches();
   return result;

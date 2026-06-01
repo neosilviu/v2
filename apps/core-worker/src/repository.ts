@@ -1251,6 +1251,39 @@ export class CoreRepository {
     return plugins.filter((plugin) => allowed.has(plugin.id));
   }
 
+  async pluginCatalogRows(workspaceId: string) {
+    const catalog = await this.catalogPlugins();
+    const installed = new Set((await this.workspaceInstalled(workspaceId)).map((plugin) => plugin.id));
+    return catalog.map((entry) => ({
+      id: entry.manifest.id,
+      name: entry.manifest.name,
+      category: entry.category,
+      version: entry.manifest.version,
+      installed: installed.has(entry.manifest.id) ? "Installed" : "Not installed",
+      demoAvailable: entry.demoAvailable ? "Yes" : "No",
+      source: entry.source,
+    }));
+  }
+
+  async pluginInstalledRows(workspaceId: string) {
+    const states = await this.workspacePlugins(workspaceId);
+    const plugins = await this.db.prepare("SELECT id, name, version, worker_isolation FROM installed_plugins ORDER BY id").all<{ id: string; name: string; version: string; worker_isolation: string }>();
+    const pluginById = new Map(plugins.results.map((plugin) => [plugin.id, plugin]));
+    return states
+      .map((state) => {
+        const plugin = pluginById.get(state.pluginId);
+        if (!plugin) return undefined;
+        return {
+          id: plugin.id,
+          name: plugin.name,
+          version: plugin.version,
+          active: state.active ? "Active" : "Inactive",
+          workerIsolation: plugin.worker_isolation,
+        };
+      })
+      .filter((item): item is { id: string; name: string; version: string; active: string; workerIsolation: string } => Boolean(item));
+  }
+
   async activePlugins(workspaceId: string) {
     return (await this.workspacePlugins(workspaceId)).filter((state) => state.active).map((state) => state.pluginId);
   }

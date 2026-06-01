@@ -88,7 +88,7 @@ export const interfaceContributionSchema = runtimeNavigationItemSchema.extend({
 export const ownerSetupStatusSchema = z.object({ setup: z.object({ workspaceId: z.string(), ownerEmail: z.string(), status: z.string(), expiresAt: z.string() }) });
 export const ownerSetupConsumeResponseSchema = z.object({ status: z.literal("consumed"), workspaceId: z.string() });
 
-export const marketplacePluginSchema = z.object({
+export const pluginCatalogEntrySchema = z.object({
   manifest: pluginManifestSchema,
   category: z.string(),
   demoAvailable: z.boolean(),
@@ -97,7 +97,7 @@ export const marketplacePluginSchema = z.object({
   source: z.string().optional(),
 });
 export const pluginInstallResultSchema = z.union([
-  z.object({ status: z.literal("installed"), plugin: marketplacePluginSchema }),
+  z.object({ status: z.literal("installed"), plugin: pluginCatalogEntrySchema }),
   z.object({ status: z.literal("approval-required"), approvalId: z.string(), pluginId: z.string(), version: z.string(), sha256: z.string(), sensitiveCapabilities: z.array(z.string()) }),
 ]);
 
@@ -194,7 +194,7 @@ export type RuntimeNavigationItem = z.output<typeof runtimeNavigationItemSchema>
 export type InterfaceContribution = z.output<typeof interfaceContributionSchema>;
 export type OwnerSetupStatus = z.output<typeof ownerSetupStatusSchema>;
 export type OwnerSetupConsumeResponse = z.output<typeof ownerSetupConsumeResponseSchema>;
-export type MarketplacePlugin = z.output<typeof marketplacePluginSchema>;
+export type PluginCatalogEntry = z.output<typeof pluginCatalogEntrySchema>;
 export type PluginInstallResult = z.output<typeof pluginInstallResultSchema>;
 export type WorkspaceDomain = z.output<typeof workspaceDomainSchema>;
 export type AuthSecuritySummary = z.output<typeof authSecuritySummarySchema>;

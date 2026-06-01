@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { commandForPid, isRepoDevCommand, pidListForPort, readDevEndpoints, repoDevPids, root, sleep, stopPid } from "./dev-utils.mjs";
+import { commandForPid, isRepoDevCommand, pidListForPort, readDevEndpoints, readWorkspacePackages, repoDevPids, root, sleep, stopPid } from "./dev-utils.mjs";
 
 const endpoints = readDevEndpoints();
 const occupied = endpoints.flatMap((endpoint) =>
@@ -30,7 +30,9 @@ const stopRepoDevPorts = async () => {
   await sleep(300);
 };
 
-const turboArgs = ["turbo", "run", "dev", "--parallel"];
+const turboArgs = ["turbo", "run", "dev"];
+const persistentDevTasks = readWorkspacePackages().filter((item) => typeof item.scripts.dev === "string").length;
+turboArgs.push("--concurrency", String(Math.max(persistentDevTasks + 1, 1)));
 if (process.env.CI === "true") turboArgs.push("--filter=!@v2/plugin-ai-providers");
 
 const child = spawn("pnpm", turboArgs, {
