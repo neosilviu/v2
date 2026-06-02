@@ -455,6 +455,82 @@ input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; accent-
   display: grid;
   gap: 12px;
 }
+.marketplace-layout {
+  display: grid;
+  gap: 14px;
+}
+.marketplace-import-panel,
+.marketplace-toolbar,
+.marketplace-group {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #dbe7e3;
+  border-radius: 16px;
+  background: #fff;
+}
+.marketplace-import-panel h3,
+.marketplace-group-header h3 {
+  margin: 0;
+}
+.marketplace-import-row,
+.catalog-release-row,
+.marketplace-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.marketplace-package-file,
+.catalog-release-select,
+.marketplace-search {
+  display: grid;
+  gap: 6px;
+  min-width: min(240px, 100%);
+  color: var(--muted-strong);
+  font-size: .78rem;
+  font-weight: 700;
+}
+.marketplace-package-file input,
+.catalog-select,
+.marketplace-search input {
+  min-height: 38px;
+  border: 1px solid #d7e4df;
+  border-radius: 12px;
+  padding: 0 11px;
+  color: var(--text);
+  background: #fff;
+}
+.marketplace-scope-tabs,
+.marketplace-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.marketplace-scope-tabs button {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid #d7e4df;
+  border-radius: 999px;
+  color: #334155;
+  background: #fff;
+  cursor: pointer;
+}
+.marketplace-scope-tabs button.active {
+  color: #fff;
+  border-color: #0f766e;
+  background: #0f766e;
+}
+.marketplace-group-header {
+  display: grid;
+  gap: 3px;
+}
+.marketplace-group-header p:not(.eyebrow) {
+  margin: 0;
+  color: var(--muted);
+  font-size: .82rem;
+}
 .marketplace-catalog-card {
   display: grid;
   gap: 14px;

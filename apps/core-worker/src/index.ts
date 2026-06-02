@@ -267,19 +267,19 @@ async function provisionPluginRuntime(c: CoreContext, repo: CoreRepository, work
   return { ok: true as const, runtimeKey: payload.runtimeKey ?? runtimeKey, runtimeKind: payload.runtimeKind ?? "dispatch-namespace", deploymentId: payload.deploymentId ?? null };
 }
 
-async function installMarketplacePluginFromSettings(c: CoreContext, repo: CoreRepository, workspaceId: string, pluginId: string, approvalId?: string) {
+async function installMarketplacePluginFromSettings(c: CoreContext, repo: CoreRepository, workspaceId: string, pluginId: string, releaseId?: string, approvalId?: string, provisioningTarget?: string | null) {
   const approvals = new ApprovalRequestRepository(c.env.CORE_DB);
   const plugin = await repo.catalogPlugin(pluginId);
   if (!plugin) return c.json(pluginOperationEnvelope("denied", null, "Marketplace plugin is not available."), 404);
-  const release = await repo.publishedCatalogRelease(plugin.manifest.id);
+  const release = releaseId ? await repo.catalogRelease(plugin.manifest.id, releaseId) : await repo.publishedCatalogRelease(plugin.manifest.id);
   if (!release) return c.json(pluginOperationEnvelope("denied", null, "Marketplace plugin has no published runtime release."), 404);
   let assessment = assessPluginBundle(repo.releaseBundle(release));
   let consumedApprovalId: string | undefined;
   if (assessment.requiresApproval) {
     if (!approvalId) {
       await repo.ensureWorkspace(workspaceId);
-      const approval = await approvals.create({ workspaceId, kind: "plugin_install", subjectId: release.id, pluginId: assessment.bundle.manifest.id, risk: pluginInstallRisk(assessment), payload: pluginInstallApprovalPayload("marketplace", assessment, { releaseId: release.id }), requestedBy: c.get("user")?.id });
-      await repo.audit(workspaceId, "plugin.install.approval.requested", { approvalId: approval.id, pluginId: assessment.bundle.manifest.id, releaseId: release.id, sha256: release.sha256, sensitiveCapabilities: assessment.sensitiveCapabilities }, c.get("user")?.id);
+      const approval = await approvals.create({ workspaceId, kind: "plugin_install", subjectId: release.id, pluginId: assessment.bundle.manifest.id, risk: pluginInstallRisk(assessment), payload: pluginInstallApprovalPayload("marketplace", assessment, { releaseId: release.id, provisioningTarget: provisioningTarget ?? null }), requestedBy: c.get("user")?.id });
+      await repo.audit(workspaceId, "plugin.install.approval.requested", { approvalId: approval.id, pluginId: assessment.bundle.manifest.id, releaseId: release.id, sha256: release.sha256, sensitiveCapabilities: assessment.sensitiveCapabilities, provisioningTarget: provisioningTarget ?? null }, c.get("user")?.id);
       return c.json(pluginOperationEnvelope("approval-required", null, null, approval.id), 202);
     }
     const approved = await approvals.claimApproved({ workspaceId, approvalId, kind: "plugin_install", subjectId: release.id, pluginId: assessment.bundle.manifest.id });
@@ -288,12 +288,12 @@ async function installMarketplacePluginFromSettings(c: CoreContext, repo: CoreRe
     consumedApprovalId = approved.id;
   }
   await repo.installManifest(assessment.bundle.manifest, assessment.bundle);
-  await repo.audit(workspaceId, "plugin.runtime.provisioning", { pluginId: assessment.bundle.manifest.id, releaseId: release.id, category: plugin.category }, c.get("user")?.id);
+  await repo.audit(workspaceId, "plugin.runtime.provisioning", { pluginId: assessment.bundle.manifest.id, releaseId: release.id, category: plugin.category, provisioningTarget: provisioningTarget ?? null }, c.get("user")?.id);
   const deployed = await provisionPluginRuntime(c, repo, workspaceId, assessment.bundle.manifest.id, release.id, assessment.bundle);
   if (!deployed.ok) return c.json(pluginOperationEnvelope("unavailable", null, deployed.errorSafe), 502);
   await repo.activate(workspaceId, assessment.bundle.manifest.id);
   if (consumedApprovalId) await approvals.consume(consumedApprovalId);
-  await repo.audit(workspaceId, "marketplace.plugin.install", { pluginId: assessment.bundle.manifest.id, category: plugin.category, releaseId: release.id, approvalId: consumedApprovalId ?? null }, c.get("user")?.id);
+  await repo.audit(workspaceId, "marketplace.plugin.install", { pluginId: assessment.bundle.manifest.id, category: plugin.category, releaseId: release.id, approvalId: consumedApprovalId ?? null, provisioningTarget: provisioningTarget ?? null }, c.get("user")?.id);
   return c.json(pluginOperationEnvelope("ok", { plugin: { ...plugin, manifest: assessment.bundle.manifest, installed: true, active: true } }));
 }
 async function runtimePage(c: CoreContext, repo: CoreRepository, workspaceId: string, contributionId: string) {
@@ -892,12 +892,13 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
   const tool = toolOwner?.contributes.tools.find((item) => item.id === action.commandId);
   const permissionDenied = await requireAllPermissions(c, request.workspaceId, tool?.permissions.length ? tool.permissions as WorkspacePermission[] : [action.requiredPermission ?? resolved.requiredPermission ?? "workspace.settings.write"]);
   if (permissionDenied) return permissionDenied;
-  if (action.commandId === "platform.settings.marketplace.plugin.install") {
+  if (action.commandId === "platform.settings.marketplace.plugin.install" || action.commandId === "platform.settings.marketplace.plugin.update") {
     const input = request.input && typeof request.input === "object" ? request.input as Record<string, unknown> : {};
     const pluginId = typeof input.pluginId === "string" && input.pluginId.trim() ? input.pluginId.trim() : typeof input.id === "string" && input.id.trim() ? input.id.trim() : "";
     const approvalId = typeof input.approvalId === "string" && input.approvalId.trim() ? input.approvalId.trim() : undefined;
+    const provisioningTarget = typeof input.provisioningTarget === "string" && input.provisioningTarget.trim() ? input.provisioningTarget.trim() : undefined;
     if (!pluginId) return c.json(pluginOperationEnvelope("denied", null, "pluginId is required."), 400);
-    return installMarketplacePluginFromSettings(c, repo, request.workspaceId, pluginId, approvalId);
+    return installMarketplacePluginFromSettings(c, repo, request.workspaceId, pluginId, undefined, approvalId, provisioningTarget);
   }
   if (action.commandId.startsWith("platform.settings.")) {
     const platformResult = await platformSettingsRuntimeAction(c, repo, request.workspaceId, action, request.input, {

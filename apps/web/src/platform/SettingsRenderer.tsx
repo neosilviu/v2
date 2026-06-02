@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { Notification } from "@v2/rpc-contracts";
 import type { ActionDefinition, ColumnDefinition, FieldDefinition, SettingsPanelContribution, SettingsSection } from "@v2/ui-schema";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { executeRuntimeAction, loadRuntimeData } from "../api";
+import { executeRuntimeAction, loadRuntimeData, uploadPlugin } from "../api";
 import { createSettingsNotification } from "./settings-ui";
 import { CrudRenderer } from "./CrudRenderer";
 import { TemplateRenderer } from "./TemplateRenderer";
@@ -105,6 +105,11 @@ function booleanValue(row: Record<string, unknown>, field: string) {
   return value === true || value === "true" || value === "Installed" || value === "Enabled" || value === "Yes";
 }
 
+function arrayValue(row: Record<string, unknown>, field: string): Record<string, unknown>[] {
+  const value = row[field];
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
+}
+
 function marketplaceAction(section: SettingsSection, commandId: string) {
   return section.rowActions.find((action) => action.commandId === commandId);
 }
@@ -150,6 +155,11 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [messageLevel, setMessageLevel] = useState<"success" | "error" | "info">("info");
+  const [marketplaceScope, setMarketplaceScope] = useState<"all" | "global" | "workspace">("all");
+  const [marketplaceSearch, setMarketplaceSearch] = useState("");
+  const [pendingTargetByPluginId, setPendingTargetByPluginId] = useState<Record<string, string>>({});
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const sectionIds = useMemo(() => panel.sections.map((section) => section.dataSourceId).filter((value): value is string => Boolean(value)), [panel.sections]);
   const fallbackPage = panel.schema;
@@ -238,6 +248,31 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
     if (succeeded && !pendingAction.action.effects.some((effect) => effect.type === "closeDialog")) setPendingAction(null);
   };
 
+  const submitPackageImport = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!importFile) {
+      showFeedback("error", "Select a ZIP plugin package first.");
+      return;
+    }
+    setImporting(true);
+    setMessage(null);
+    try {
+      const result = await uploadPlugin(importFile);
+      if (result.status === "approval-required") {
+        showFeedback("info", result.approvalId ? `Approval required: ${result.approvalId}` : "Approval required before this package can be installed.");
+      } else {
+        showFeedback("success", result.manifest ? `${result.manifest.name} imported and installed.` : "Plugin package imported.");
+      }
+      setImportFile(null);
+      event.currentTarget.reset();
+      refresh();
+    } catch (error) {
+      showFeedback("error", error instanceof Error ? error.message : "Plugin package could not be imported.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   if (!panel.sections.length) return <TemplateRenderer page={fallbackPage} runtime={{ contributionId: panel.id }} />;
 
   return <div className="settings-renderer">
@@ -316,20 +351,63 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
                 </form>
                 {section.id === "security.authentication" && sectionData && typeof sectionData === "object" && Array.isArray((sectionData as { methods?: unknown[] }).methods) ? <div className="settings-mini-list">{(sectionData as { methods: Array<{ id?: string; title?: string; type?: string; status?: string }> }).methods.map((method) => <div key={method.id ?? method.title} className="settings-mini-row"><strong>{method.title ?? method.id}</strong><span>{method.type ?? "method"}</span><Badge>{method.status ?? "unknown"}</Badge></div>)}</div> : null}
               </div>
+            ) : section.id === "marketplace.import" ? (
+              <form className="marketplace-import-panel" onSubmit={submitPackageImport}>
+                <div className="stack">
+                  <p className="eyebrow">ZIP package</p>
+                  <h3>Import plugin package</h3>
+                  <p className="muted">Validated ZIP packages are stored in Core package storage, assessed for sensitive capabilities and installed through the same approval-aware flow as Marketplace releases.</p>
+                </div>
+                <div className="marketplace-import-row">
+                  <label className="marketplace-package-file">Package file<input accept=".zip,application/zip" name="file" type="file" disabled={importing || submitting} onChange={(event) => setImportFile(event.currentTarget.files?.[0] ?? null)} /></label>
+                  <Button className="primary" type="submit" disabled={importing || submitting || !importFile}>{importing ? "Importing..." : "Import ZIP"}</Button>
+                </div>
+              </form>
             ) : section.id === "marketplace.catalog" ? (
-              <div className="marketplace-card-list">
-                {rows.length ? rows.map((row, index) => {
+              <div className="marketplace-layout">
+                {(() => {
+                  const search = marketplaceSearch.trim().toLowerCase();
+                  const visibleRows = rows.filter((row) => {
+                    const scope = valueAt(row, "scope") || "workspace";
+                    const scopeMatch = marketplaceScope === "all" || scope === marketplaceScope;
+                    const haystack = [valueAt(row, "name"), valueAt(row, "pluginId"), valueAt(row, "category"), valueAt(row, "description"), valueAt(row, "source"), scope].join(" ").toLowerCase();
+                    return scopeMatch && (!search || haystack.includes(search));
+                  });
+                  const enabledCount = rows.filter((row) => booleanValue(row, "activeFlag") || booleanValue(row, "active")).length;
+                  const installedCount = rows.filter((row) => booleanValue(row, "installedFlag") || booleanValue(row, "installed")).length;
+                  const renderGroup = (scope: "global" | "workspace", title: string, description: string) => {
+                    const groupRows = visibleRows.filter((row) => (valueAt(row, "scope") || "workspace") === scope);
+                    if (!groupRows.length) return null;
+                    return <section className="marketplace-group">
+                      <div className="marketplace-group-header">
+                        <p className="eyebrow">{scope}</p>
+                        <h3>{title}</h3>
+                        <p>{description}</p>
+                      </div>
+                      <div className="marketplace-card-list">
+                        {groupRows.map((row, index) => {
                   const installed = booleanValue(row, "installedFlag") || booleanValue(row, "installed");
                   const active = booleanValue(row, "activeFlag") || booleanValue(row, "active");
+                  const pluginId = valueAt(row, "pluginId") || valueAt(row, "id");
+                  const activeReleaseId = valueAt(row, "activeReleaseId") || valueAt(row, "releaseId");
+                  const latestReleaseId = valueAt(row, "latestReleaseId") || valueAt(row, "releaseId");
+                  const latestVersion = valueAt(row, "latestVersion") || valueAt(row, "version");
+                  const updateAvailable = Boolean(installed && latestReleaseId && latestReleaseId !== activeReleaseId);
+                  const targets = arrayValue(row, "provisioningTargetOptions");
+                  const selectedTarget = pendingTargetByPluginId[pluginId] ?? valueAt(row, "provisioningTarget") ?? "core-default";
                   const installAction = marketplaceAction(section, "platform.settings.marketplace.plugin.install");
+                  const updateAction = marketplaceAction(section, "platform.settings.marketplace.plugin.update");
                   const activateAction = marketplaceAction(section, "platform.settings.marketplace.plugin.activate");
                   const deactivateAction = marketplaceAction(section, "platform.settings.marketplace.plugin.deactivate");
                   const uninstallAction = marketplaceAction(section, "platform.settings.marketplace.plugin.uninstall");
+                  const demoInstallAction = marketplaceAction(section, "platform.settings.marketplace.demo.install");
+                  const demoRemoveAction = marketplaceAction(section, "platform.settings.marketplace.demo.remove");
+                  const actionPayload = { provisioningTarget: selectedTarget };
                   return <article className="marketplace-catalog-card" key={String(row.pluginId ?? row.id ?? index)}>
                     <div className="marketplace-catalog-card-header">
                       <div className="stack">
-                        <p className="eyebrow">{valueAt(row, "category") || "Plugin"}</p>
-                        <h3>{valueAt(row, "name") || valueAt(row, "pluginId")}</h3>
+                        <p className="eyebrow">{valueAt(row, "category") || "Plugin"} · {valueAt(row, "scope") || "workspace"}</p>
+                        <h3>{valueAt(row, "name") || pluginId}</h3>
                         <p>{valueAt(row, "description") || `Release ${valueAt(row, "version")}`}</p>
                       </div>
                       <div className="marketplace-status-pills">
@@ -339,19 +417,49 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
                       </div>
                     </div>
                     <div className="marketplace-release-summary">
-                      <span>Release <strong>{valueAt(row, "version") || "draft"}</strong></span>
+                      <span>Current release <strong>{activeReleaseId || "none"}</strong></span>
+                      <span>Latest release <strong>{latestVersion || latestReleaseId || "none"}</strong></span>
                       <span>Source <strong>{valueAt(row, "source") || "catalog"}</strong></span>
+                      <span>Provisioning <strong>{valueAt(row, "runtimeStatus") || "not installed"}</strong></span>
+                      <span>Target <strong>{selectedTarget}</strong></span>
                       <span>Demo <strong>{valueAt(row, "demoAvailable") || "No"}</strong></span>
                     </div>
+                    <div className="catalog-release-row">
+                      <label className="catalog-release-select"><span className="eyebrow">Cloudflare / target</span><select className="catalog-select" value={selectedTarget} disabled={submitting} onChange={(event) => setPendingTargetByPluginId((current) => ({ ...current, [pluginId]: event.target.value }))}>{targets.length ? targets.map((target) => <option key={String(target.value)} value={String(target.value)}>{valueAt(target, "label")}</option>) : <option value="core-default">Core default</option>}</select></label>
+                    </div>
                     <div className="catalog-action-row">
-                      {!installed && installAction ? <IconButton action={installAction} disabled={submitting} onClick={() => void runAction(installAction, row, {})} /> : null}
+                      {!installed && installAction ? <Button className="primary" disabled={submitting || !latestReleaseId} onClick={() => void runAction(installAction, row, actionPayload)} type="button">Install</Button> : null}
+                      {updateAvailable && updateAction ? <Button className="primary" disabled={submitting || !latestReleaseId} onClick={() => void runAction(updateAction, row, actionPayload)} type="button">Update</Button> : null}
                       {installed && !active && activateAction ? <IconButton action={activateAction} disabled={submitting} onClick={() => void runAction(activateAction, row, {})} /> : null}
                       {installed && active && deactivateAction ? <IconButton action={deactivateAction} disabled={submitting} onClick={() => void runAction(deactivateAction, row, {})} /> : null}
+                      {installed && booleanValue(row, "demoAvailableFlag") && !booleanValue(row, "demoInstalledFlag") && demoInstallAction ? <Button disabled={submitting || !valueAt(row, "demoInstallOperationId")} onClick={() => void runAction(demoInstallAction, row, {})} type="button">Install demo</Button> : null}
+                      {installed && booleanValue(row, "demoInstalledFlag") && demoRemoveAction ? <Button className="danger" disabled={submitting} onClick={() => demoRemoveAction.confirmation ? setPendingAction({ section, action: demoRemoveAction, row }) : void runAction(demoRemoveAction, row, {})} type="button">Remove demo</Button> : null}
                       {installed && !active && uninstallAction ? <IconButton action={uninstallAction} disabled={submitting} onClick={() => uninstallAction.confirmation ? setPendingAction({ section, action: uninstallAction, row }) : void runAction(uninstallAction, row, {})} /> : null}
                       {installed && active ? <p className="muted catalog-action-hint">Disable first to make uninstall available.</p> : null}
                     </div>
                   </article>;
-                }) : <p>No marketplace plugins found.</p>}
+                        })}
+                      </div>
+                    </section>;
+                  };
+                  return <>
+                    <section className="marketplace-toolbar">
+                      <div className="marketplace-scope-tabs">
+                        {(["all", "global", "workspace"] as const).map((scope) => <button key={scope} className={marketplaceScope === scope ? "active" : ""} type="button" onClick={() => setMarketplaceScope(scope)}>{scope === "all" ? "All" : scope === "global" ? "Global" : "Workspace"}</button>)}
+                      </div>
+                      <div className="marketplace-stats">
+                        <Badge>{visibleRows.length} visible</Badge>
+                        <Badge>{enabledCount} enabled</Badge>
+                        <Badge>{installedCount} installed</Badge>
+                        <Badge>{rows.length} total</Badge>
+                      </div>
+                      <label className="marketplace-search">Search plugins<input value={marketplaceSearch} onChange={(event) => setMarketplaceSearch(event.target.value)} placeholder="Search by name, category, scope..." /></label>
+                    </section>
+                    {renderGroup("global", "Global plugins", "Available across workspaces; each workspace keeps its own install, release and runtime state.")}
+                    {renderGroup("workspace", "Workspace plugins", "Packages and releases scoped to this workspace or imported locally.")}
+                    {!visibleRows.length ? <p>No marketplace plugins found.</p> : null}
+                  </>;
+                })()}
               </div>
             ) : section.kind === "table" ? (
               <div className="stack">

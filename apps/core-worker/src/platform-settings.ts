@@ -241,24 +241,43 @@ const mailSections: SettingsSection[] = [
 
 const marketplaceCatalog = ui.table({
   id: "marketplace.catalog",
-  title: "Plugin catalog",
+  title: "Catalog",
   description: "Browse published marketplace releases and install them into this workspace.",
   dataSourceId: "platform.settings.plugins.catalog",
   columns: [
     column({ id: "name", label: "Plugin", field: "name" }),
+    column({ id: "scope", label: "Scope", field: "scope", type: "badge" }),
     column({ id: "category", label: "Category", field: "category" }),
     column({ id: "version", label: "Release", field: "version" }),
     column({ id: "installed", label: "Installed", field: "installed", type: "badge" }),
     column({ id: "active", label: "Runtime", field: "active", type: "badge" }),
+    column({ id: "runtimeStatus", label: "Provisioning", field: "runtimeStatus", type: "badge" }),
     column({ id: "demoAvailable", label: "Demo", field: "demoAvailable", type: "badge" }),
   ],
   rowActions: [
     ui.rowAction("platform.settings.marketplace.plugin.install", "Install", { variant: "primary", access: "permission-gated", requiredPermission: "plugin.install" }),
+    ui.rowAction("platform.settings.marketplace.plugin.update", "Update", { variant: "primary", access: "permission-gated", requiredPermission: "plugin.update" }),
     ui.rowAction("platform.settings.marketplace.plugin.activate", "Enable", { variant: "primary", access: "permission-gated", requiredPermission: "plugin.activate" }),
     ui.rowAction("platform.settings.marketplace.plugin.deactivate", "Disable", { access: "permission-gated", requiredPermission: "plugin.activate" }),
+    ui.rowAction("platform.settings.marketplace.demo.install", "Install demo", { access: "permission-gated", requiredPermission: "plugin.install" }),
+    ui.rowAction("platform.settings.marketplace.demo.remove", "Remove demo", { variant: "danger", access: "permission-gated", requiredPermission: "plugin.uninstall", confirmation: { title: "Remove demo data", message: "This removes demo data owned by the plugin when the plugin exposes a cleanup operation." } }),
     ui.rowAction("platform.settings.marketplace.plugin.uninstall", "Uninstall", { variant: "danger", access: "permission-gated", requiredPermission: "plugin.uninstall", confirmation: { title: "Uninstall plugin", message: "This removes the plugin from the current workspace and disables its runtime state." } }),
   ],
 });
+
+const marketplaceImport: SettingsSection = {
+  id: "marketplace.import",
+  title: "Import ZIP package",
+  description: "Import a validated plugin ZIP package into this workspace. Sensitive packages still require approval.",
+  kind: "actions",
+  fields: [],
+  columns: [],
+  actions: [
+    ui.action({ id: "platform.settings.marketplace.zip.import", title: "Import package", commandId: "platform.settings.marketplace.zip.import", intent: "execute", variant: "primary", access: "permission-gated", requiredPermission: "plugin.install", placement: "header", risk: "sensitive", effects: [{ type: "refresh" }] }),
+  ],
+  rowActions: [],
+  bulkActions: [],
+};
 
 const marketplaceInstalled = ui.table({
   id: "marketplace.installed",
@@ -301,7 +320,7 @@ export function platformSettingsTabs() {
     ui.panel({ id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read", sections: [workspaceSettings, ...mailSections] }),
     ui.panel({ id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, auditPolicy, users, members, roles, permissions, invites, workspaces, plans, assignments, ui.table({ id: "security.sessions", title: "Sessions", dataSourceId: "platform.settings.sessions.list", columns: [column({ id: "user", label: "User", field: "user" }), column({ id: "device", label: "Device", field: "device" }), column({ id: "lastActive", label: "Last active", field: "lastActive", type: "date" }), column({ id: "expiresAt", label: "Expires", field: "expiresAt", type: "date" })] }), ui.table({ id: "security.audit", title: "Audit", description: "Security-sensitive changes and administrative activity.", dataSourceId: "platform.settings.audit.list", columns: [column({ id: "createdAt", label: "Time", field: "createdAt", type: "date" }), column({ id: "actor", label: "Actor", field: "actor" }), column({ id: "action", label: "Action", field: "action" }), column({ id: "target", label: "Target", field: "target" })] })] }),
     ui.panel({ id: "platform.settings.domains", label: "Domains", icon: "globe", order: 30, permission: "domains.read", sections: [domains] }),
-    ui.panel({ id: "platform.settings.marketplace", label: "Marketplace", icon: "plug", order: 40, permission: "marketplace.read", sections: [marketplaceCatalog, marketplaceInstalled, marketplaceApprovals] }),
+    ui.panel({ id: "platform.settings.marketplace", label: "Marketplace", icon: "plug", order: 40, permission: "marketplace.read", sections: [marketplaceImport, marketplaceCatalog, marketplaceInstalled, marketplaceApprovals] }),
     ui.panel({ id: "platform.settings.interface", label: "Interface", icon: "layout", order: 50, permission: "interface.read", sections: [ui.table({ id: "interface.navigation", title: "Navigation", dataSourceId: "platform.settings.interface.navigation", columns: [column({ id: "label", label: "Label", field: "label" }), column({ id: "section", label: "Section", field: "section" }), column({ id: "path", label: "Path", field: "path" }), column({ id: "visible", label: "Visible", field: "visible", type: "badge" })], rowActions: [ui.rowAction("platform.settings.interface.nav.edit", "Edit", { access: "permission-gated", requiredPermission: "interface.write" }), ui.rowAction("platform.settings.interface.nav.hide", "Hide", { access: "permission-gated", requiredPermission: "interface.write" })] }), ui.table({ id: "interface.zones", title: "Zones", dataSourceId: "platform.settings.interface.zones", columns: [column({ id: "zoneId", label: "Zone", field: "zoneId" }), column({ id: "surfaceCount", label: "Surfaces", field: "surfaceCount" })] })] }),
   ];
 }

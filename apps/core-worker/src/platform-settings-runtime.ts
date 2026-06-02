@@ -64,6 +64,30 @@ function operationEnvelope(status: "ok" | "denied" | "approval-required" | "unav
   return { status, data, error, approvalId, auditEventId };
 }
 
+async function dispatchPluginOperation(c: PlatformSettingsRuntimeContext, repo: CoreRepository, workspaceId: string, pluginId: string, operationId: string, input: unknown, actorId?: string | null) {
+  const deployment = await repo.activePluginRuntime(workspaceId, pluginId);
+  if (!deployment) {
+    await repo.audit(workspaceId, "marketplace.plugin.operation.unavailable", { pluginId, operationId }, actorId ?? undefined);
+    return { ok: false as const, status: 503 as const, error: "Plugin runtime is not active." };
+  }
+  if (!c.env.PLUGIN_RUNTIME) {
+    await repo.audit(workspaceId, "marketplace.plugin.operation.unavailable", { pluginId, operationId, runtimeKey: deployment.runtimeKey }, actorId ?? undefined);
+    return { ok: false as const, status: 501 as const, error: "Plugin runtime dispatch is not configured." };
+  }
+  const response = await c.env.PLUGIN_RUNTIME.fetch("https://plugin-runtime.internal/dispatch", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspaceId, pluginId, runtimeKey: deployment.runtimeKey, kind: "operation", operationId, input }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    await repo.audit(workspaceId, "marketplace.plugin.operation.denied", { pluginId, operationId, runtimeKey: deployment.runtimeKey, status: response.status }, actorId ?? undefined);
+    return { ok: false as const, status: response.status === 404 ? 404 as const : 403 as const, error: "Plugin runtime rejected the operation." };
+  }
+  await repo.audit(workspaceId, "marketplace.plugin.operation.execute", { pluginId, operationId, runtimeKey: deployment.runtimeKey }, actorId ?? undefined);
+  return { ok: true as const, data: body };
+}
+
 export async function platformSettingsRuntimeData(
   _c: PlatformSettingsRuntimeContext,
   repo: CoreRepository,
@@ -362,6 +386,22 @@ export async function platformSettingsRuntimeAction(
         if (!state) return denied(404, "Plugin is not installed.");
         await repo.audit(workspaceId, "marketplace.plugin.uninstall", { pluginId }, actorId ?? undefined);
         return c.json(operationEnvelope("ok", state));
+      }
+      case "platform.settings.marketplace.demo.install":
+      case "platform.settings.marketplace.demo.remove": {
+        const pluginId = firstString(payload, "pluginId", "id");
+        if (!pluginId) return denied(400, "pluginId is required.");
+        const manifest = await repo.installedById(pluginId);
+        if (!manifest) return denied(404, "Plugin is not installed.");
+        const operation = action.commandId.endsWith("install")
+          ? manifest.api.operations.find((item) => item.id === firstString(payload, "demoInstallOperationId", "operationId") || (/demo/i.test(item.id) && /install|seed/i.test(item.id)))
+          : manifest.api.operations.find((item) => item.id === firstString(payload, "demoRemoveOperationId", "operationId") || (/demo/i.test(item.id) && /remove|cleanup|purge/i.test(item.id)));
+        if (!operation) return c.json(operationEnvelope("unavailable", null, action.commandId.endsWith("install") ? "Plugin does not expose a demo install operation." : "Plugin does not expose a demo cleanup operation."), 501);
+        const permissions = operation.permission ? [operation.permission] : [];
+        if (permissions.length && !isSuperadmin && !(await repo.hasAllPermissions(workspaceId, actor, permissions))) return denied(403, "Plugin operation permission is required.");
+        const result = await dispatchPluginOperation(c, repo, workspaceId, pluginId, operation.id, { workspaceId }, actorId);
+        if (!result.ok) return c.json(operationEnvelope("unavailable", null, result.error), result.status);
+        return c.json(operationEnvelope("ok", result.data));
       }
       case "platform.settings.approvals.approve":
       case "platform.settings.approvals.deny": {

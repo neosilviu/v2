@@ -270,6 +270,8 @@ function testSeedAndDemoContracts(manifests) {
   const cleanSource = fs.readFileSync(path.join(root, "scripts/clean.mjs"), "utf8");
   const coreSchema = fs.readFileSync(path.join(root, "apps/core-worker/src/db/schema.ts"), "utf8");
   const repoSource = fs.readFileSync(path.join(root, "apps/core-worker/src/repository.ts"), "utf8");
+  const platformSettingsSource = fs.readFileSync(path.join(root, "apps/core-worker/src/platform-settings.ts"), "utf8");
+  const settingsRendererSource = fs.readFileSync(path.join(root, "apps/web/src/platform/SettingsRenderer.tsx"), "utf8");
 
   const catalogEntries = [...syncSource.matchAll(/\{\s*module:\s*"(?<module>[^"]+)",\s*exportName:\s*"(?<exportName>[^"]+)",\s*category:\s*"(?<category>[^"]+)",\s*demoAvailable:\s*(?<demo>true|false)\s*\}/g)]
     .map((match) => ({ module: match.groups.module, exportName: match.groups.exportName, category: match.groups.category, demoAvailable: match.groups.demo === "true" }));
@@ -299,6 +301,9 @@ function testSeedAndDemoContracts(manifests) {
   if (!bootstrapSource.includes("marketplace:sync")) fail("dev setup does not sync the local Marketplace catalog seed");
   if (!bootstrapSource.includes("--skip-marketplace-sync") || !bootstrapSource.includes("V2_DEV_SKIP_MARKETPLACE_SYNC")) fail("dev setup Marketplace sync cannot be intentionally skipped for focused setup");
   if (!coreSchema.includes("pluginCatalog") || !coreSchema.includes("demoAvailable")) fail("Generated Core schema is missing plugin catalog demo metadata");
+  if (!repoSource.includes("catalogReleaseOptions") || !repoSource.includes("latestReleaseId")) fail("Marketplace catalog rows do not expose latest release metadata");
+  if (!platformSettingsSource.includes("platform.settings.marketplace.zip.import") || !platformSettingsSource.includes("platform.settings.marketplace.plugin.update") || !platformSettingsSource.includes("platform.settings.marketplace.demo.install")) fail("Platform Marketplace settings are missing ZIP import, update or demo actions");
+  if (!settingsRendererSource.includes("marketplaceScope") || !settingsRendererSource.includes("uploadPlugin") || !settingsRendererSource.includes("Cloudflare / target") || settingsRendererSource.includes("setPendingReleaseByPluginId")) fail("Settings Marketplace renderer is missing scope filters/ZIP import/provisioning target selector or still exposes manual release selection");
   if (!repoSource.includes("ensurePlatformShellContributions") || !repoSource.includes("ensurePlatformSettingsContributions")) fail("Core repository is missing platform seed/materialization entry points");
   if (/["']migrations["']/.test(cleanSource)) fail("clean scripts must not remove migration history");
   pass("Seed/demo contracts are discoverable, schema-backed and plugin-owned");

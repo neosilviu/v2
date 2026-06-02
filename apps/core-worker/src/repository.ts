@@ -49,6 +49,18 @@ export type CatalogRelease = {
   status: "draft" | "published" | "deprecated";
   source: string;
 };
+export type CatalogReleaseOption = {
+  id: string;
+  releaseId: string;
+  version: string;
+  label: string;
+  status: CatalogRelease["status"];
+  source: string;
+  sha256: string;
+  workerIsolation: PluginBundle["worker"]["isolation"];
+  uiMode: PluginBundle["ui"]["mode"];
+  sizeBytes: number;
+};
 
 export type SandboxSurfaceAsset = {
   pluginId: string;
@@ -1441,6 +1453,31 @@ export class CoreRepository {
     return row ? { id: row.id, pluginId: row.plugin_id, version: row.version, manifest: pluginManifestSchema.parse(JSON.parse(row.manifest_json)), packageObjectKey: row.package_object_key, sha256: row.sha256, sizeBytes: row.size_bytes, format: "zip", workerIsolation: row.worker_isolation, uiMode: row.ui_mode, status: row.status, source: row.source } : null;
   }
 
+  async catalogRelease(pluginId: string, releaseId: string): Promise<CatalogRelease | null> {
+    const row = await this.db.prepare("SELECT id, plugin_id, version, manifest_json, package_object_key, sha256, size_bytes, format, worker_isolation, ui_mode, status, source FROM plugin_catalog_releases WHERE plugin_id = ? AND id = ? AND status = 'published' LIMIT 1")
+      .bind(pluginId, releaseId)
+      .first<{ id: string; plugin_id: string; version: string; manifest_json: string; package_object_key: string; sha256: string; size_bytes: number; format: string; worker_isolation: PluginBundle["worker"]["isolation"]; ui_mode: PluginBundle["ui"]["mode"]; status: CatalogRelease["status"]; source: string }>();
+    return row ? { id: row.id, pluginId: row.plugin_id, version: row.version, manifest: pluginManifestSchema.parse(JSON.parse(row.manifest_json)), packageObjectKey: row.package_object_key, sha256: row.sha256, sizeBytes: row.size_bytes, format: "zip", workerIsolation: row.worker_isolation, uiMode: row.ui_mode, status: row.status, source: row.source } : null;
+  }
+
+  async catalogReleaseOptions(pluginId: string): Promise<CatalogReleaseOption[]> {
+    const rows = await this.db.prepare("SELECT id, version, sha256, size_bytes, worker_isolation, ui_mode, status, source FROM plugin_catalog_releases WHERE plugin_id = ? AND status = 'published' ORDER BY published_at DESC, updated_at DESC")
+      .bind(pluginId)
+      .all<{ id: string; version: string; sha256: string; size_bytes: number; worker_isolation: PluginBundle["worker"]["isolation"]; ui_mode: PluginBundle["ui"]["mode"]; status: CatalogRelease["status"]; source: string }>();
+    return rows.results.map((row) => ({
+      id: row.id,
+      releaseId: row.id,
+      version: row.version,
+      label: `v${row.version}`,
+      status: row.status,
+      source: row.source,
+      sha256: row.sha256,
+      workerIsolation: row.worker_isolation,
+      uiMode: row.ui_mode,
+      sizeBytes: row.size_bytes,
+    }));
+  }
+
   releaseBundle(release: CatalogRelease): PluginBundle {
     return { manifest: release.manifest, package: { objectKey: release.packageObjectKey, sha256: release.sha256, sizeBytes: release.sizeBytes, format: release.format }, worker: { isolation: release.workerIsolation }, ui: { mode: release.uiMode } };
   }
@@ -1476,22 +1513,42 @@ export class CoreRepository {
     return Promise.all(catalog.map(async (entry) => {
       const state = stateByPluginId.get(entry.manifest.id);
       const release = releaseByPluginId.get(entry.manifest.id);
+      const releaseOptions = await this.catalogReleaseOptions(entry.manifest.id);
       const deployment = state ? await this.pluginRuntimeDeployment(workspaceId, entry.manifest.id) : null;
+      const demoOperation = entry.manifest.api.operations.find((operation) => /demo/i.test(operation.id) && /install|seed/i.test(operation.id));
       return {
       id: entry.manifest.id,
       pluginId: entry.manifest.id,
       name: entry.manifest.name,
       description: `${entry.category} plugin from ${entry.source}`,
       category: entry.category,
+      scope: entry.source === "official" ? "global" : "workspace",
       version: release?.version ?? entry.manifest.version,
       releaseId: release?.id ?? "",
+      activeReleaseId: deployment?.releaseId ?? "",
+      latestReleaseId: release?.id ?? "",
+      latestVersion: release?.version ?? entry.manifest.version,
+      releases: releaseOptions,
+      releaseOptions,
       installed: state ? "Installed" : "Available",
       installedFlag: Boolean(state),
       active: state?.active ? "Enabled" : "Disabled",
       activeFlag: state?.active === true,
       runtimeStatus: deployment?.runtimeStatus ?? (state ? "pending" : "not installed"),
+      runtimeKind: deployment?.runtimeKind ?? (state ? "none" : "not installed"),
+      runtimeKey: deployment?.runtimeKey ?? "",
+      deployedVersion: deployment?.deployedVersion ?? "",
+      provisioningTarget: deployment?.runtimeKind ?? "core-default",
+      provisioningTargetOptions: [
+        { value: "core-default", label: "Core default" },
+        { value: "local-dev", label: "Local dev" },
+        { value: "dispatch-namespace", label: "Cloudflare Dispatch namespace" },
+      ],
       demoAvailable: entry.demoAvailable ? "Yes" : "No",
       demoAvailableFlag: entry.demoAvailable,
+      demoInstallOperationId: demoOperation?.id ?? "",
+      demoInstalled: "Unknown",
+      demoInstalledFlag: false,
       source: entry.source,
     };
     }));
