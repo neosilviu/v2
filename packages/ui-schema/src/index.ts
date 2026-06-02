@@ -163,13 +163,11 @@ export const settingsPanelContributionSchema = z.object({
 
 export const platformSettingsTabIds = [
   "platform.settings.general",
-  "platform.settings.audit",
   "platform.settings.security",
   "platform.settings.plans",
-  "platform.settings.domains",
-  "platform.settings.plugins",
   "platform.settings.interface",
-  "platform.settings.mail",
+  "platform.settings.marketplace",
+  "platform.settings.workspaces",
 ] as const;
 export const platformSettingsTabIdSchema = z.enum(platformSettingsTabIds);
 export const runtimeDataRequestSchema = z.object({
