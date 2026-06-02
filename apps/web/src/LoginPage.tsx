@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { AuthPublicLoginConfig, AuthUiContribution, LoginSlot } from "@v2/auth-contracts";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { AuthRequestError, loadLoginConfig, signInEmail } from "./auth-api";
+import { AuthRequestError, loadLoginConfig, signInEmail, signUpEmail } from "./auth-api";
 import { authClient, authRedirectStorageKey, authTwoFactorPendingStorageKey } from "./auth-client";
 import { verifyTwoFactorCode } from "./auth-account-client";
 import { DeclarativeBlocks } from "./platform/DeclarativeSurface";
@@ -18,6 +18,10 @@ const loginSlots: LoginSlot[] = [
   "login.legal",
 ];
 type PublicLoginMethod = AuthPublicLoginConfig["methods"][number];
+type TurnstileApi = {
+  render(container: HTMLElement, options: { sitekey: string; callback(token: string): void; "expired-callback"?: () => void; "error-callback"?: () => void }): string;
+  remove(widgetId: string): void;
+};
 
 function safeRedirectTarget(redirectTo?: string) {
   const target = redirectTo ?? new URLSearchParams(window.location.search).get("redirectTo");
@@ -39,11 +43,54 @@ function SlotRenderer({ slot, contributions }: { slot: LoginSlot; contributions:
   return <div className="login-slot" data-slot={slot}>{items.map((item) => <DeclarativeBlocks key={item.contributionId} schema={item.renderer} />)}</div>;
 }
 
-function PasswordMethod({ method, passkeyAvailable, allowSignup, redirectTo }: { method: PublicLoginMethod; passkeyAvailable: boolean; allowSignup: boolean; redirectTo: string | undefined }) {
+function turnstileApi() {
+  return (window as unknown as { turnstile?: TurnstileApi }).turnstile;
+}
+
+function TurnstileField({ siteKey, onToken }: { siteKey: string; onToken(token: string): void }) {
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!container) return;
+    let active = true;
+    let widgetId: string | null = null;
+    const render = () => {
+      const api = turnstileApi();
+      if (!active || !api || widgetId) return;
+      widgetId = api.render(container, {
+        sitekey: siteKey,
+        callback: onToken,
+        "expired-callback": () => onToken(""),
+        "error-callback": () => onToken(""),
+      });
+    };
+    const scriptId = "cf-turnstile-script";
+    if (!document.getElementById(scriptId)) {
+      const script = document.createElement("script");
+      script.id = scriptId;
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.onload = render;
+      document.head.appendChild(script);
+    } else {
+      render();
+    }
+    return () => {
+      active = false;
+      if (widgetId) turnstileApi()?.remove(widgetId);
+    };
+  }, [container, onToken, siteKey]);
+
+  return <div ref={setContainer} className="turnstile-field" />;
+}
+
+function PasswordMethod({ method, passkeyAvailable, allowSignup, turnstile, redirectTo }: { method: PublicLoginMethod; passkeyAvailable: boolean; allowSignup: boolean; turnstile: { enabled: boolean; siteKey: string | null }; redirectTo: string | undefined }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
   const [status, setStatus] = useState<string | null>(null);
 
   const submit = async (event: FormEvent) => {
@@ -53,11 +100,15 @@ function PasswordMethod({ method, passkeyAvailable, allowSignup, redirectTo }: {
       setStatus("Registration is not open.");
       return;
     }
+    if (turnstile.enabled && !turnstileToken) {
+      setStatus("Complete the verification challenge.");
+      return;
+    }
     try {
       const target = safeRedirectTarget(redirectTo);
       window.sessionStorage.setItem(authRedirectStorageKey, target);
       if (mode === "signin") {
-        const result = await signInEmail({ email, password });
+        const result = await signInEmail({ email, password, ...(turnstileToken ? { turnstileToken } : {}) });
         const twoFactorPending = window.sessionStorage.getItem(authTwoFactorPendingStorageKey) === "1";
         if (result && typeof result === "object" && "twoFactorRedirect" in result) {
           setStatus("Two-factor verification required.");
@@ -69,11 +120,7 @@ function PasswordMethod({ method, passkeyAvailable, allowSignup, redirectTo }: {
         }
       }
       else {
-        const result = await authClient.signUp.email({ name, email, password });
-        if (result.error) {
-          setStatus("Authentication failed. Check your credentials and try again.");
-          return;
-        }
+        await signUpEmail({ name, email, password, ...(turnstileToken ? { turnstileToken } : {}) });
       }
     } catch (error) {
       setStatus(error instanceof AuthRequestError ? error.message : "Authentication failed. Check your credentials and try again.");
@@ -89,6 +136,7 @@ function PasswordMethod({ method, passkeyAvailable, allowSignup, redirectTo }: {
     {mode === "signup" ? <label>Name<input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" required /></label> : null}
     <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete={passkeyAvailable ? "username webauthn" : "username"} required /></label>
     <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "signin" ? "current-password" : "new-password"} required /></label>
+    {turnstile.enabled && turnstile.siteKey ? <TurnstileField siteKey={turnstile.siteKey} onToken={setTurnstileToken} /> : null}
     <div className="login-actions"><Button className="primary" type="submit">{mode === "signin" ? "Continue" : "Create account"}</Button>{allowSignup ? <Button type="button" onClick={() => setMode(mode === "signin" ? "signup" : "signin")}>{mode === "signin" ? "Use sign up" : "Use sign in"}</Button> : null}</div>
     {status ? <p className="login-status">{status}</p> : null}
   </form>;
@@ -179,7 +227,7 @@ function LoginMethods({ config, redirectTo }: { config: AuthPublicLoginConfig; r
   const byType = (type: PublicLoginMethod["type"]) => methods.filter((method) => method.type === type);
 
   return <>
-    {byType("password").map((method) => <PasswordMethod key={method.id} method={method} passkeyAvailable={passkeySupported && config.features.passkey} allowSignup={config.policy.registrationMode === "open"} redirectTo={redirectTo} />)}
+    {byType("password").map((method) => <PasswordMethod key={method.id} method={method} passkeyAvailable={passkeySupported && config.features.passkey} allowSignup={config.policy.registrationMode === "open"} turnstile={{ enabled: config.policy.turnstileEnabled, siteKey: config.policy.turnstileSiteKey }} redirectTo={redirectTo} />)}
     {config.policy.registrationMode === "invitation-only" ? <div className="login-method"><div className="method-header"><strong>Invitation required</strong><Badge>registration</Badge></div><p className="login-status">Account creation is available only through an invitation.</p></div> : null}
     {byType("social").map((method) => <SocialMethod key={method.id} method={method} redirectTo={redirectTo} />)}
     {byType("passkey").map((method) => <PasskeyMethod key={method.id} method={method} supported={passkeySupported} redirectTo={redirectTo} />)}

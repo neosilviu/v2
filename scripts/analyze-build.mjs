@@ -126,20 +126,21 @@ for (const worker of pluginWorkers) {
 console.log(`${yellow("Frontend (initial)").padEnd(24)} ${formatBytes(bundle.initialBytes)}`);
 console.log(`${yellow("Frontend (total)").padEnd(24)} ${formatBytes(bundle.totalBytes)}`);
 console.log(`${cyan("Total").padEnd(24)} ${formatBytes(bundle.totalBytes + workers.reduce((sum, worker) => sum + Number(worker.rawBytes || 0), 0))}`);
-if (history.length > 0) {
+const summaryHistory = history.slice(0, 10);
+if (summaryHistory.length > 0) {
   console.log("\nRecent size history:");
-  for (const entry of history) console.log(historySizeLine(entry));
+  for (const entry of summaryHistory) console.log(historySizeLine(entry));
   console.log(dim("                      raw -> gzip"));
-  for (const entry of history) console.log(historySizeLineGzip(entry));
+  for (const entry of summaryHistory) console.log(historySizeLineGzip(entry));
 }
 console.log("----------------------------------------");
-const codeLocHistory = history.map((entry) => Number(entry.codeLines || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
-const trackedLocHistory = history.map((entry) => Number(entry.totalLines || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
-const coreLocHistory = history.map((entry) => Number(entry.coreLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
-const authLocHistory = history.map((entry) => Number(entry.authLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
-const frontendLocHistory = history.map((entry) => Number(entry.frontendLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
-const sharedLocHistory = history.map((entry) => Number(entry.sharedLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
-const scriptsLocHistory = history.map((entry) => Number(entry.scriptsLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
+const codeLocHistory = summaryHistory.map((entry) => Number(entry.codeLines || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
+const trackedLocHistory = summaryHistory.map((entry) => Number(entry.totalLines || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
+const coreLocHistory = summaryHistory.map((entry) => Number(entry.coreLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
+const authLocHistory = summaryHistory.map((entry) => Number(entry.authLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
+const frontendLocHistory = summaryHistory.map((entry) => Number(entry.frontendLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
+const sharedLocHistory = summaryHistory.map((entry) => Number(entry.sharedLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
+const scriptsLocHistory = summaryHistory.map((entry) => Number(entry.scriptsLoc || 0)).filter((value) => Number.isFinite(value) && value > 0).map((value) => formatInt(value)).join(" | ");
 console.log(`${green("Code LOC").padEnd(24)} ${formatInt(source.codeLines)}${codeLocHistory ? ` | ${codeLocHistory}` : ""}`);
 console.log(`${dim("Tracked LOC").padEnd(24)} ${formatInt(source.totalLines)}${trackedLocHistory ? ` | ${trackedLocHistory}` : ""} ${dim("(code + css/json/config)")}`);
 console.log(`${green("Core LOC").padEnd(24)} ${formatInt(source.areas["apps/core-worker"]?.codeLines ?? 0)}${coreLocHistory ? ` | ${coreLocHistory}` : ""}${(source.areas["apps/core-worker"]?.lines ?? 0) !== (source.areas["apps/core-worker"]?.codeLines ?? 0) ? ` ${dim(`tracked ${formatInt(source.areas["apps/core-worker"]?.lines ?? 0)}`)}` : ""}`);
@@ -150,7 +151,7 @@ console.log(`${cyan("Scripts LOC").padEnd(24)} ${formatInt(source.areas.scripts?
 if (pluginAreas.length > 0) {
   console.log("Plugins LOC:");
   for (const [area, value] of pluginAreas) {
-    const pluginLocHistory = history.map((entry) => Number(entry.codePlugins?.[area] || 0)).filter((item) => Number.isFinite(item) && item > 0).map((item) => formatInt(item)).join(" | ");
+    const pluginLocHistory = summaryHistory.map((entry) => Number(entry.codePlugins?.[area] || 0)).filter((item) => Number.isFinite(item) && item > 0).map((item) => formatInt(item)).join(" | ");
     const trackedLoc = Number(value.lines || 0);
     console.log(`${cyan(`  - ${area.replace("plugins/", "")}`.padEnd(24))} ${formatInt(Number(value.codeLines || 0))}${pluginLocHistory ? ` | ${pluginLocHistory}` : ""}${trackedLoc !== Number(value.codeLines || 0) ? ` ${dim(`tracked ${formatInt(trackedLoc)}`)}` : ""}`);
   }

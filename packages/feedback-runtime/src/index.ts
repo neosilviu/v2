@@ -66,3 +66,36 @@ export class NotificationQueue {
     return this.list();
   }
 }
+
+export function csv(input?: string): string[] {
+  return (input ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export function allowedOrigins(appOrigin?: string, trustedOrigins?: string): string[] {
+  return [...new Set([...csv(appOrigin), ...csv(trustedOrigins)])];
+}
+
+export function isInternalRequest(urlStr: string, internalHostname: string, hasOrigin: boolean): boolean {
+  try {
+    const url = new URL(urlStr);
+    return url.hostname === internalHostname && !hasOrigin;
+  } catch {
+    return false;
+  }
+}
+
+export async function readSession<T>(authFetcher: any, headers: Headers): Promise<T | null> {
+  if (!authFetcher) return null;
+  try {
+    const response = await authFetcher.fetch("https://auth.internal/api/auth/get-session", { headers });
+    if (!response.ok) return null;
+    const data = await response.json() as { user?: T | null } | null;
+    const user = data?.user;
+    return (user as any)?.id && (user as any)?.email ? (user as T) : null;
+  } catch {
+    return null;
+  }
+}

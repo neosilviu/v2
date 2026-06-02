@@ -153,6 +153,12 @@ export type WorkspacePermissionRecord = {
   roleCount: number;
   memberOverrideCount: number;
 };
+export type WorkspaceAuditPolicyRecord = {
+  auth: boolean;
+  core: boolean;
+  plugin: boolean;
+  shell: boolean;
+};
 export type PlanRecord = {
   id: string;
   name: string;
@@ -417,7 +423,7 @@ function matchRoutePattern(pattern: string, path: string): Record<string, string
 }
 
 const WORKSPACE_RBAC_SEED_VERSION = "workspace-rbac:v2";
-const PLATFORM_SETTINGS_SEED_VERSION = "platform-settings:v3";
+const PLATFORM_SETTINGS_SEED_VERSION = "platform-settings:v6";
 const PLATFORM_SHELL_SEED_VERSION = "platform-shell:v1";
 const protectedPlatformPages = new Set(["platform.home", "platform.account", "platform.settings"]);
 const reservedShellPaths = new Set(["/login", "/setup/owner", "/bootstrap"]);
@@ -1251,6 +1257,25 @@ export class CoreRepository {
     return rows.results.map((row) => ({ id: row.id, workspaceId: row.workspace_id, actorId: row.actor_id, action: row.action, payload: safeJson<Record<string, unknown> | null>(row.payload_json, null), createdAt: row.created_at }));
   }
 
+  async workspaceAuditPolicy(workspaceId: string): Promise<WorkspaceAuditPolicyRecord> {
+    const settings = await this.getSettings(workspaceId, "platform");
+    const raw = settings.auditPolicy;
+    const categories = raw && typeof raw === "object" && "categories" in raw ? (raw as { categories?: unknown }).categories : raw;
+    const value = categories && typeof categories === "object" ? categories as Record<string, unknown> : {};
+    return {
+      auth: typeof value.auth === "boolean" ? value.auth : true,
+      core: typeof value.core === "boolean" ? value.core : true,
+      plugin: typeof value.plugin === "boolean" ? value.plugin : true,
+      shell: typeof value.shell === "boolean" ? value.shell : true,
+    };
+  }
+
+  async saveWorkspaceAuditPolicy(workspaceId: string, policy: WorkspaceAuditPolicyRecord, actorId?: string) {
+    await this.saveSetting(workspaceId, "platform", "auditPolicy", { categories: policy });
+    await this.audit(workspaceId, "settings.audit.policy.update", { categories: policy }, actorId);
+    return this.workspaceAuditPolicy(workspaceId);
+  }
+
   async listDomains(workspaceId: string): Promise<WorkspaceDomain[]> {
     const rows = await this.db.prepare("SELECT id, workspace_id, hostname, kind, status, verification_method, verification_instructions_json, publication_id, is_primary, created_at, verified_at, updated_at FROM workspace_domains WHERE workspace_id = ? ORDER BY is_primary DESC, hostname")
       .bind(workspaceId)
@@ -1444,15 +1469,31 @@ export class CoreRepository {
 
   async pluginCatalogRows(workspaceId: string) {
     const catalog = await this.catalogPlugins();
-    const installed = new Set((await this.workspaceInstalled(workspaceId)).map((plugin) => plugin.id));
-    return catalog.map((entry) => ({
+    const states = await this.workspacePlugins(workspaceId);
+    const stateByPluginId = new Map(states.map((state) => [state.pluginId, state]));
+    const releases = await Promise.all(catalog.map((entry) => this.publishedCatalogRelease(entry.manifest.id)));
+    const releaseByPluginId = new Map(releases.filter((release): release is CatalogRelease => Boolean(release)).map((release) => [release.pluginId, release]));
+    return Promise.all(catalog.map(async (entry) => {
+      const state = stateByPluginId.get(entry.manifest.id);
+      const release = releaseByPluginId.get(entry.manifest.id);
+      const deployment = state ? await this.pluginRuntimeDeployment(workspaceId, entry.manifest.id) : null;
+      return {
       id: entry.manifest.id,
+      pluginId: entry.manifest.id,
       name: entry.manifest.name,
+      description: `${entry.category} plugin from ${entry.source}`,
       category: entry.category,
-      version: entry.manifest.version,
-      installed: installed.has(entry.manifest.id) ? "Installed" : "Not installed",
+      version: release?.version ?? entry.manifest.version,
+      releaseId: release?.id ?? "",
+      installed: state ? "Installed" : "Available",
+      installedFlag: Boolean(state),
+      active: state?.active ? "Enabled" : "Disabled",
+      activeFlag: state?.active === true,
+      runtimeStatus: deployment?.runtimeStatus ?? (state ? "pending" : "not installed"),
       demoAvailable: entry.demoAvailable ? "Yes" : "No",
+      demoAvailableFlag: entry.demoAvailable,
       source: entry.source,
+    };
     }));
   }
 
@@ -1496,6 +1537,19 @@ export class CoreRepository {
     await this.db.batch([
       this.db.prepare("UPDATE workspace_plugins SET active = 0, updated_at = ? WHERE workspace_id = ? AND plugin_id = ?").bind(now, workspaceId, pluginId),
       this.db.prepare("UPDATE plugin_runtime_deployments SET runtime_status = 'disabled', disabled_at = COALESCE(disabled_at, ?), updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ? AND runtime_status <> 'deleted'").bind(now, workspaceId, pluginId),
+    ]);
+    return { workspaceId, pluginId, active: false, updatedAt: now } satisfies PluginWorkspaceState;
+  }
+
+  async uninstall(workspaceId: string, pluginId: string) {
+    const now = new Date().toISOString();
+    const row = await this.db.prepare("SELECT plugin_id FROM workspace_plugins WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId).first<{ plugin_id: string }>();
+    if (!row) return undefined;
+    await this.db.batch([
+      this.db.prepare("DELETE FROM workspace_plugins WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId),
+      this.db.prepare("UPDATE plugin_runtime_deployments SET runtime_status = 'deleted', disabled_at = COALESCE(disabled_at, ?), updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ?").bind(now, workspaceId, pluginId),
+      this.db.prepare("DELETE FROM workspace_capability_grants WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId),
+      this.db.prepare("DELETE FROM workspace_ui_activations WHERE workspace_id = ? AND plugin_id = ?").bind(workspaceId, pluginId),
     ]);
     return { workspaceId, pluginId, active: false, updatedAt: now } satisfies PluginWorkspaceState;
   }
@@ -1674,25 +1728,51 @@ export class CoreRepository {
       VALUES (?, 'platform', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT(workspace_id, plugin_id) DO UPDATE SET active = 1, updated_at = CURRENT_TIMESTAMP`)
       .bind(workspaceId).run();
-    const statements = [];
+    const obsoleteSettingsContributionIds = [
+      "platform.settings.plugins",
+      "platform.settings.plugins.panel",
+      "platform.settings.workspaces",
+      "platform.settings.workspaces.panel",
+    ];
+    const statements = obsoleteSettingsContributionIds.flatMap((contributionId) => [
+      this.db.prepare("DELETE FROM workspace_ui_activations WHERE workspace_id = ? AND plugin_id = 'platform' AND contribution_id = ?").bind(workspaceId, contributionId),
+      this.db.prepare("DELETE FROM plugin_ui_contributions WHERE plugin_id = 'platform' AND contribution_id = ?").bind(contributionId),
+    ]);
     for (const item of platformSettingsTabs()) {
       statements.push(this.db.prepare(`INSERT INTO plugin_ui_contributions
         (id, plugin_id, contribution_id, contribution_type, source, access_mode, zone_id, label, icon, display_order, configurable_json, template_id, schema_json, required_permission, version, updated_at)
         VALUES (?, 'platform', ?, 'menu', 'platform', 'private', 'settings.tabs', ?, ?, ?, ?, 'admin.settings', ?, ?, '0.0.0', CURRENT_TIMESTAMP)
-        ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET schema_json = excluded.schema_json, updated_at = CURRENT_TIMESTAMP`)
+        ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET
+          label = excluded.label,
+          icon = excluded.icon,
+          display_order = excluded.display_order,
+          configurable_json = excluded.configurable_json,
+          schema_json = excluded.schema_json,
+          required_permission = excluded.required_permission,
+          updated_at = CURRENT_TIMESTAMP`)
         .bind(`platform:${item.tab.id}:0.0.0`, item.tab.id, item.tab.label, item.tab.icon ?? null, item.tab.displayOrder, JSON.stringify(config(false, { canDelete: false, canMoveSection: false })), JSON.stringify(item.tab), item.tab.requiredPermission ?? null));
       statements.push(this.db.prepare(`INSERT INTO plugin_ui_contributions
         (id, plugin_id, contribution_id, contribution_type, source, access_mode, zone_id, label, display_order, configurable_json, template_id, schema_json, required_permission, version, updated_at)
         VALUES (?, 'platform', ?, 'page', 'platform', 'private', ?, ?, ?, ?, ?, ?, ?, '0.0.0', CURRENT_TIMESTAMP)
         ON CONFLICT(plugin_id, contribution_id, version) DO UPDATE SET schema_json = excluded.schema_json, template_id = excluded.template_id, updated_at = CURRENT_TIMESTAMP`)
         .bind(`platform:${item.panel.id}:0.0.0`, item.panel.id, `settings.panel.${item.tab.id}`, item.panel.schema.title, item.tab.displayOrder, JSON.stringify(config(false, { canHide: false, canRename: false, canMoveSection: false, canChangeIcon: false })), item.panel.templateId, JSON.stringify(item.panel), item.panel.requiredPermission ?? null));
-      statements.push(this.db.prepare(`INSERT OR IGNORE INTO workspace_ui_activations
+      statements.push(this.db.prepare(`INSERT INTO workspace_ui_activations
         (workspace_id, plugin_id, contribution_id, enabled, zone_override, order_index, configuration_json)
-        VALUES (?, 'platform', ?, 1, 'settings.tabs', ?, NULL)`)
+        VALUES (?, 'platform', ?, 1, 'settings.tabs', ?, NULL)
+        ON CONFLICT(workspace_id, plugin_id, contribution_id) DO UPDATE SET
+          enabled = excluded.enabled,
+          zone_override = excluded.zone_override,
+          order_index = excluded.order_index,
+          configuration_json = excluded.configuration_json`)
         .bind(workspaceId, item.tab.id, item.tab.displayOrder));
-      statements.push(this.db.prepare(`INSERT OR IGNORE INTO workspace_ui_activations
+      statements.push(this.db.prepare(`INSERT INTO workspace_ui_activations
         (workspace_id, plugin_id, contribution_id, enabled, zone_override, order_index, configuration_json)
-        VALUES (?, 'platform', ?, 1, ?, ?, NULL)`)
+        VALUES (?, 'platform', ?, 1, ?, ?, NULL)
+        ON CONFLICT(workspace_id, plugin_id, contribution_id) DO UPDATE SET
+          enabled = excluded.enabled,
+          zone_override = excluded.zone_override,
+          order_index = excluded.order_index,
+          configuration_json = excluded.configuration_json`)
         .bind(workspaceId, item.panel.id, `settings.panel.${item.tab.id}`, item.tab.displayOrder));
     }
     statements.push(this.internalSeedStatement(workspaceId, "settings.seed", PLATFORM_SETTINGS_SEED_VERSION));

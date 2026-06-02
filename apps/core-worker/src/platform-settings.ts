@@ -38,8 +38,26 @@ const authentication = ui.form({
     field({ id: "requireEmailVerification", label: "Require email verification", type: "boolean" }),
     field({ id: "allowPasskeyRegistration", label: "Allow passkey registration", type: "boolean" }),
     field({ id: "allowPasskeySignin", label: "Allow passkey sign-in", type: "boolean" }),
+    field({ id: "turnstileEnabled", label: "Enable Turnstile for password auth", type: "boolean" }),
+    field({ id: "turnstileSiteKey", label: "Turnstile site key", type: "text" }),
+    field({ id: "turnstileSecretRef", label: "Turnstile secret reference", type: "text", autocomplete: "off" }),
+    field({ id: "turnstileSecretConfigured", label: "Turnstile secret configured", type: "boolean", readOnly: true }),
   ],
   actions: [ui.submit("platform.settings.security.policy.save", "auth.admin", "Save security policy")],
+});
+
+const auditPolicy = ui.form({
+  id: "security.audit.policy",
+  title: "Audit policy",
+  description: "Choose which platform domains write audit events for this workspace.",
+  dataSourceId: "platform.settings.audit.policy",
+  fields: [
+    field({ id: "auth", label: "Auth events", type: "boolean" }),
+    field({ id: "core", label: "Core events", type: "boolean" }),
+    field({ id: "plugin", label: "Plugin runtime events", type: "boolean" }),
+    field({ id: "shell", label: "Shell and interface events", type: "boolean" }),
+  ],
+  actions: [ui.submit("platform.settings.audit.policy.save", "workspace.admin", "Save audit policy")],
 });
 
 const roles = ui.crud({
@@ -201,6 +219,19 @@ const workspaceSettings = ui.form({
   actions: [ui.submit("platform.settings.general.save", "workspace.settings.write")],
 });
 
+const domains = ui.table({
+  id: "domains.list",
+  title: "Domains",
+  description: "Verified hostnames for admin, auth, website, storefront, chat and mail.",
+  dataSourceId: "platform.settings.domains.list",
+  columns: [
+    column({ id: "hostname", label: "Hostname", field: "hostname" }),
+    column({ id: "kind", label: "Kind", field: "kind" }),
+    column({ id: "status", label: "Status", field: "status", type: "badge" }),
+    column({ id: "primary", label: "Primary", field: "primary", type: "badge" }),
+  ],
+});
+
 const mailSections: SettingsSection[] = [
   ui.form({ id: "mail.provider", title: "Mail provider", description: "Configure delivery used for invites and account workflows.", dataSourceId: "platform.settings.mail.summary", fields: [field({ id: "kind", label: "Provider kind", type: "select", required: true, options: [{ value: "transactional-http", label: "Transactional HTTP" }, { value: "smtp", label: "SMTP" }, { value: "mock-development-only", label: "Mock development only" }] }), field({ id: "label", label: "Label", type: "text", required: true }), field({ id: "fromName", label: "From name", type: "text", required: true }), field({ id: "fromEmail", label: "From email", type: "email", required: true }), field({ id: "replyToEmail", label: "Reply-to email", type: "email" }), field({ id: "configurationRef", label: "Secret reference", type: "text" })], actions: [ui.submit("platform.settings.mail.provider.save", "mail.configure", "Save provider")] }),
   ui.table({ id: "mail.providers", title: "Mail providers", dataSourceId: "platform.settings.mail.providers", columns: [column({ id: "label", label: "Label", field: "label" }), column({ id: "kind", label: "Kind", field: "kind" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "fromEmail", label: "From email", field: "fromEmail" })], rowActions: [ui.rowAction("platform.settings.mail.provider.activate", "Activate", { variant: "primary", access: "permission-gated", requiredPermission: "mail.configure" }), ui.rowAction("platform.settings.mail.provider.disable", "Disable", { variant: "danger", access: "permission-gated", requiredPermission: "mail.configure" }), ui.rowAction("platform.settings.mail.provider.test", "Send test", { access: "permission-gated", requiredPermission: "mail.test", confirmation: { title: "Send test email", fields: [field({ id: "to", label: "Recipient", type: "email", required: true })] } })] }),
@@ -208,13 +239,69 @@ const mailSections: SettingsSection[] = [
   ui.table({ id: "mail.events", title: "Delivery events", dataSourceId: "platform.settings.mail.events", columns: [column({ id: "createdAt", label: "Created", field: "createdAt", type: "date" }), column({ id: "templateKey", label: "Template", field: "templateKey" }), column({ id: "recipient", label: "Recipient", field: "recipient" }), column({ id: "status", label: "Status", field: "status", type: "badge" })] }),
 ];
 
+const marketplaceCatalog = ui.table({
+  id: "marketplace.catalog",
+  title: "Plugin catalog",
+  description: "Browse published marketplace releases and install them into this workspace.",
+  dataSourceId: "platform.settings.plugins.catalog",
+  columns: [
+    column({ id: "name", label: "Plugin", field: "name" }),
+    column({ id: "category", label: "Category", field: "category" }),
+    column({ id: "version", label: "Release", field: "version" }),
+    column({ id: "installed", label: "Installed", field: "installed", type: "badge" }),
+    column({ id: "active", label: "Runtime", field: "active", type: "badge" }),
+    column({ id: "demoAvailable", label: "Demo", field: "demoAvailable", type: "badge" }),
+  ],
+  rowActions: [
+    ui.rowAction("platform.settings.marketplace.plugin.install", "Install", { variant: "primary", access: "permission-gated", requiredPermission: "plugin.install" }),
+    ui.rowAction("platform.settings.marketplace.plugin.activate", "Enable", { variant: "primary", access: "permission-gated", requiredPermission: "plugin.activate" }),
+    ui.rowAction("platform.settings.marketplace.plugin.deactivate", "Disable", { access: "permission-gated", requiredPermission: "plugin.activate" }),
+    ui.rowAction("platform.settings.marketplace.plugin.uninstall", "Uninstall", { variant: "danger", access: "permission-gated", requiredPermission: "plugin.uninstall", confirmation: { title: "Uninstall plugin", message: "This removes the plugin from the current workspace and disables its runtime state." } }),
+  ],
+});
+
+const marketplaceInstalled = ui.table({
+  id: "marketplace.installed",
+  title: "Installed plugins",
+  description: "Runtime plugins currently installed for this workspace.",
+  dataSourceId: "platform.settings.plugins.list",
+  columns: [
+    column({ id: "name", label: "Plugin", field: "name" }),
+    column({ id: "version", label: "Version", field: "version" }),
+    column({ id: "active", label: "Status", field: "active", type: "badge" }),
+    column({ id: "workerIsolation", label: "Isolation", field: "workerIsolation", type: "badge" }),
+  ],
+  rowActions: [
+    ui.rowAction("platform.settings.marketplace.plugin.activate", "Enable", { variant: "primary", access: "permission-gated", requiredPermission: "plugin.activate" }),
+    ui.rowAction("platform.settings.marketplace.plugin.deactivate", "Disable", { access: "permission-gated", requiredPermission: "plugin.activate" }),
+    ui.rowAction("platform.settings.marketplace.plugin.uninstall", "Uninstall", { variant: "danger", access: "permission-gated", requiredPermission: "plugin.uninstall", confirmation: { title: "Uninstall plugin", message: "This removes the plugin from the current workspace and disables its runtime state." } }),
+  ],
+});
+
+const marketplaceApprovals = ui.table({
+  id: "marketplace.approvals",
+  title: "Approvals",
+  description: "Sensitive marketplace and runtime requests waiting for an operator decision.",
+  dataSourceId: "platform.settings.approvals.list",
+  columns: [
+    column({ id: "kind", label: "Kind", field: "kind" }),
+    column({ id: "pluginId", label: "Plugin", field: "pluginId" }),
+    column({ id: "risk", label: "Risk", field: "risk", type: "badge" }),
+    column({ id: "requestedBy", label: "Requested by", field: "requestedBy" }),
+    column({ id: "requestedAt", label: "Created", field: "requestedAt", type: "date" }),
+  ],
+  rowActions: [
+    ui.rowAction("platform.settings.approvals.approve", "Approve", { variant: "primary", access: "permission-gated", requiredPermission: "tool.approve" }),
+    ui.rowAction("platform.settings.approvals.deny", "Deny", { variant: "danger", access: "permission-gated", requiredPermission: "tool.approve", confirmation: { title: "Deny approval request", message: "The request will be marked as denied and cannot be consumed." } }),
+  ],
+});
+
 export function platformSettingsTabs() {
   return [
-    ui.panel({ id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read", sections: [workspaceSettings, ui.table({ id: "general.domains", title: "Domains", description: "Verified hostnames for admin, auth, website, storefront, chat and mail.", dataSourceId: "platform.settings.domains.list", columns: [column({ id: "hostname", label: "Hostname", field: "hostname" }), column({ id: "kind", label: "Kind", field: "kind" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "primary", label: "Primary", field: "primary", type: "badge" })] }), ...mailSections] }),
-    ui.panel({ id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, users, members, roles, permissions, invites, ui.table({ id: "security.sessions", title: "Sessions", dataSourceId: "platform.settings.sessions.list", columns: [column({ id: "user", label: "User", field: "user" }), column({ id: "device", label: "Device", field: "device" }), column({ id: "lastActive", label: "Last active", field: "lastActive", type: "date" }), column({ id: "expiresAt", label: "Expires", field: "expiresAt", type: "date" })] }), ui.table({ id: "security.audit", title: "Audit", description: "Security-sensitive changes and administrative activity.", dataSourceId: "platform.settings.audit.list", columns: [column({ id: "createdAt", label: "Time", field: "createdAt", type: "date" }), column({ id: "actor", label: "Actor", field: "actor" }), column({ id: "action", label: "Action", field: "action" }), column({ id: "target", label: "Target", field: "target" })] })] }),
-    ui.panel({ id: "platform.settings.plans", label: "Plans", icon: "credit-card", order: 30, permission: "plans.read", sections: [plans, assignments] }),
-    ui.panel({ id: "platform.settings.interface", label: "Interface", icon: "layout", order: 40, permission: "interface.read", sections: [ui.table({ id: "interface.navigation", title: "Navigation", dataSourceId: "platform.settings.interface.navigation", columns: [column({ id: "label", label: "Label", field: "label" }), column({ id: "section", label: "Section", field: "section" }), column({ id: "path", label: "Path", field: "path" }), column({ id: "visible", label: "Visible", field: "visible", type: "badge" })], rowActions: [ui.rowAction("platform.settings.interface.nav.edit", "Edit", { access: "permission-gated", requiredPermission: "interface.write" }), ui.rowAction("platform.settings.interface.nav.hide", "Hide", { access: "permission-gated", requiredPermission: "interface.write" })] }), ui.table({ id: "interface.zones", title: "Zones", dataSourceId: "platform.settings.interface.zones", columns: [column({ id: "zoneId", label: "Zone", field: "zoneId" }), column({ id: "surfaceCount", label: "Surfaces", field: "surfaceCount" })] })] }),
-    ui.panel({ id: "platform.settings.marketplace", label: "Marketplace", icon: "plug", order: 50, permission: "marketplace.read", sections: [ui.table({ id: "marketplace.plugins", title: "Installed plugins", dataSourceId: "platform.settings.marketplace.plugins", columns: [column({ id: "name", label: "Plugin", field: "name" }), column({ id: "version", label: "Version", field: "version" }), column({ id: "status", label: "Status", field: "status", type: "badge" }), column({ id: "runtimeStatus", label: "Runtime", field: "runtimeStatus", type: "badge" })] }), ui.table({ id: "marketplace.approvals", title: "Approvals", dataSourceId: "platform.settings.approvals.list", columns: [column({ id: "kind", label: "Kind", field: "kind" }), column({ id: "risk", label: "Risk", field: "risk", type: "badge" }), column({ id: "requestedBy", label: "Requested by", field: "requestedBy" }), column({ id: "createdAt", label: "Created", field: "createdAt", type: "date" })] })] }),
-    ui.panel({ id: "platform.settings.workspaces", label: "Workspaces", icon: "building", order: 60, permission: "workspaces.read", sections: [workspaces] }),
+    ui.panel({ id: "platform.settings.general", label: "General", icon: "settings", order: 10, permission: "workspace.settings.read", sections: [workspaceSettings, ...mailSections] }),
+    ui.panel({ id: "platform.settings.security", label: "Security", icon: "shield", order: 20, permission: "auth.read", sections: [authentication, auditPolicy, users, members, roles, permissions, invites, workspaces, plans, assignments, ui.table({ id: "security.sessions", title: "Sessions", dataSourceId: "platform.settings.sessions.list", columns: [column({ id: "user", label: "User", field: "user" }), column({ id: "device", label: "Device", field: "device" }), column({ id: "lastActive", label: "Last active", field: "lastActive", type: "date" }), column({ id: "expiresAt", label: "Expires", field: "expiresAt", type: "date" })] }), ui.table({ id: "security.audit", title: "Audit", description: "Security-sensitive changes and administrative activity.", dataSourceId: "platform.settings.audit.list", columns: [column({ id: "createdAt", label: "Time", field: "createdAt", type: "date" }), column({ id: "actor", label: "Actor", field: "actor" }), column({ id: "action", label: "Action", field: "action" }), column({ id: "target", label: "Target", field: "target" })] })] }),
+    ui.panel({ id: "platform.settings.domains", label: "Domains", icon: "globe", order: 30, permission: "domains.read", sections: [domains] }),
+    ui.panel({ id: "platform.settings.marketplace", label: "Marketplace", icon: "plug", order: 40, permission: "marketplace.read", sections: [marketplaceCatalog, marketplaceInstalled, marketplaceApprovals] }),
+    ui.panel({ id: "platform.settings.interface", label: "Interface", icon: "layout", order: 50, permission: "interface.read", sections: [ui.table({ id: "interface.navigation", title: "Navigation", dataSourceId: "platform.settings.interface.navigation", columns: [column({ id: "label", label: "Label", field: "label" }), column({ id: "section", label: "Section", field: "section" }), column({ id: "path", label: "Path", field: "path" }), column({ id: "visible", label: "Visible", field: "visible", type: "badge" })], rowActions: [ui.rowAction("platform.settings.interface.nav.edit", "Edit", { access: "permission-gated", requiredPermission: "interface.write" }), ui.rowAction("platform.settings.interface.nav.hide", "Hide", { access: "permission-gated", requiredPermission: "interface.write" })] }), ui.table({ id: "interface.zones", title: "Zones", dataSourceId: "platform.settings.interface.zones", columns: [column({ id: "zoneId", label: "Zone", field: "zoneId" }), column({ id: "surfaceCount", label: "Surfaces", field: "surfaceCount" })] })] }),
   ];
 }

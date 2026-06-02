@@ -1,7 +1,7 @@
 import { hc } from "hono/client";
 import { authPublicLoginConfigSchema, ownerSetupSignupRequestSchema, type AuthPublicLoginConfig } from "@v2/auth-contracts";
 import { errorResponseSchema } from "@v2/rpc-contracts";
-import { authClient, authUrl } from "./auth-client";
+import { authUrl } from "./auth-client";
 export { authJson } from "./api";
 
 type HonoRequestArgs = {
@@ -19,7 +19,7 @@ type HonoRoute = {
 };
 type AuthApiClient = {
   public: { auth: { "login-config": HonoRoute; profile: HonoRoute } };
-  api: { auth: { "update-user": { $post(args?: HonoRequestArgs): Promise<Response> }; "sign-in": { email: { $post(args?: HonoRequestArgs): Promise<Response> } }; "sign-out": { $post(args?: HonoRequestArgs): Promise<Response> } } };
+  api: { auth: { "update-user": { $post(args?: HonoRequestArgs): Promise<Response> }; "sign-in": { email: { $post(args?: HonoRequestArgs): Promise<Response> } }; "sign-up": { email: { $post(args?: HonoRequestArgs): Promise<Response> } }; "sign-out": { $post(args?: HonoRequestArgs): Promise<Response> } } };
   setup: { owner: { "sign-up": { email: { $post(args?: HonoRequestArgs): Promise<Response> } } } };
 };
 export const authApi = hc(authUrl, { init: { credentials: "include" } }) as unknown as AuthApiClient;
@@ -70,10 +70,15 @@ export async function ownerSetupSignUp(input: { token: string; email: string; na
   await authResponse(authApi.setup.owner["sign-up"].email.$post({ json: ownerSetupSignupRequestSchema.parse(input) }), { parse: () => undefined });
 }
 
-export async function signInEmail(input: { email: string; password: string }): Promise<{ twoFactorRedirect?: boolean } | void> {
-  const result = await authClient.signIn.email(input);
-  if (result.error) throw new AuthRequestError(401, undefined, String(result.error.message ?? result.error.statusText ?? "Authentication failed."));
-  return result.data as { twoFactorRedirect?: boolean } | void;
+export async function signInEmail(input: { email: string; password: string; turnstileToken?: string }): Promise<{ twoFactorRedirect?: boolean } | void> {
+  const response = await authApi.api.auth["sign-in"].email.$post({ json: input });
+  if (!response.ok) throw await parseAuthError(response);
+  return await response.json().catch(() => undefined) as { twoFactorRedirect?: boolean } | void;
+}
+
+export async function signUpEmail(input: { name: string; email: string; password: string; turnstileToken?: string }): Promise<void> {
+  const response = await authApi.api.auth["sign-up"].email.$post({ json: input });
+  if (!response.ok) throw await parseAuthError(response);
 }
 
 export async function signOutAuth(): Promise<void> {

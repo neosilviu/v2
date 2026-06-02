@@ -62,10 +62,6 @@ function parseFormValues(fields: FieldDefinition[], form: HTMLFormElement) {
   return output;
 }
 
-function sectionTitle(section: SettingsSection) {
-  return section.description ? <><h3>{section.title}</h3><p>{section.description}</p></> : <h3>{section.title}</h3>;
-}
-
 function countEntries(data: SectionPayload | undefined) {
   if (Array.isArray(data)) return data.length;
   if (data && typeof data === "object" && Array.isArray((data as { rows?: unknown[] }).rows)) return (data as { rows?: unknown[] }).rows?.length ?? 0;
@@ -84,8 +80,70 @@ function actionDefinition(commandId: string, title: string, variant: "default" |
   return { id: commandId, title, commandId, intent: "execute", variant, access: "private", risk: "safe", placement: "form", effects: [] };
 }
 
+function sectionEyebrow(section: SettingsSection) {
+  if (section.id === "interface.builder") return "Interface";
+  if (section.kind === "crud") return "Records";
+  if (section.kind === "table") return "Table";
+  if (section.kind === "form") return "Form";
+  if (section.kind === "actions") return "Actions";
+  return "Section";
+}
+
+function sectionSummaryValue(section: SettingsSection, data: SectionPayload | undefined) {
+  const rows = rowsFromData(data ?? null);
+  if (section.id === "interface.builder") return "Builder";
+  if (section.kind === "crud") return `${rows.length} records`;
+  if (section.kind === "table") return `${rows.length} rows`;
+  if (section.kind === "form") return `${section.fields.length} fields`;
+  if (section.kind === "actions") return `${section.actions.length} actions`;
+  if (section.kind === "summary") return `${countEntries(data)} items`;
+  return `${countEntries(data)} items`;
+}
+
+function booleanValue(row: Record<string, unknown>, field: string) {
+  const value = row[field];
+  return value === true || value === "true" || value === "Installed" || value === "Enabled" || value === "Yes";
+}
+
+function marketplaceAction(section: SettingsSection, commandId: string) {
+  return section.rowActions.find((action) => action.commandId === commandId);
+}
+
+function actionIcon(action: ActionDefinition | { title: string; commandId?: string; variant?: string }) {
+  const key = `${action.commandId ?? ""} ${action.title}`.toLowerCase();
+  if (key.includes("reload") || key.includes("refresh")) return "↻";
+  if (key.includes("delete") || key.includes("remove") || key.includes("uninstall") || key.includes("deny")) return "×";
+  if (key.includes("disable") || key.includes("deactivate")) return "○";
+  if (key.includes("install") || key.includes("add") || key.includes("create")) return "+";
+  if (key.includes("enable") || key.includes("activate") || key.includes("approve") || key.includes("confirm") || key.includes("save")) return "✓";
+  if (key.includes("edit")) return "✎";
+  if (key.includes("view")) return "◎";
+  if (key.includes("impersonate")) return "⇄";
+  if (key.includes("test") || key.includes("send")) return "✈";
+  if (key.includes("close") || key.includes("cancel")) return "×";
+  return "•";
+}
+
+function buttonClass(action: Pick<ActionDefinition, "variant">, extra = "") {
+  return [action.variant === "primary" ? "primary" : action.variant === "danger" ? "danger" : "", "settings-icon-button", extra].filter(Boolean).join(" ");
+}
+
+function IconButton({ action, disabled, onClick, type }: { action: ActionDefinition; disabled?: boolean; onClick?: () => void; type?: "button" | "submit" }) {
+  return <Button
+    aria-label={action.title}
+    className={buttonClass(action)}
+    disabled={disabled}
+    onClick={onClick}
+    title={action.title}
+    type={type}
+  >
+    {actionIcon(action)}
+  </Button>;
+}
+
 export function SettingsRenderer({ panel, shell, onShellChange, emit }: SettingsRendererProps) {
   const [loaded, setLoaded] = useState<Record<string, LoadedSection>>({});
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   const [status, setStatus] = useState("Loading saved configuration...");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
@@ -114,7 +172,16 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
       }
     })).then((entries) => {
       if (!alive) return;
-      setLoaded(Object.fromEntries(entries));
+      const nextLoaded = Object.fromEntries(entries);
+      setLoaded(nextLoaded);
+      setOpenSections((current) => {
+        const next = { ...current };
+        for (const [index, section] of panel.sections.entries()) {
+          if (next[section.id] === undefined) next[section.id] = index === 0;
+          if (nextLoaded[section.id]?.error) next[section.id] = true;
+        }
+        return next;
+      });
       setStatus("Saved configuration loaded");
     });
     return () => { alive = false; };
@@ -134,6 +201,12 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
       const payload = { ...(row ?? {}), ...(values ?? {}) };
       const result = await executeRuntimeAction(panel.id, action.commandId, payload);
       if (result.status !== "ok") {
+        if (result.status === "approval-required") {
+          const approvalMessage = result.approvalId ? `Approval required: ${result.approvalId}` : "Approval required before this action can continue.";
+          showFeedback("info", approvalMessage);
+          refresh();
+          return false;
+        }
         showFeedback("error", result.error ?? "Changes could not be saved.");
         return false;
       }
@@ -165,118 +238,148 @@ export function SettingsRenderer({ panel, shell, onShellChange, emit }: Settings
     if (succeeded && !pendingAction.action.effects.some((effect) => effect.type === "closeDialog")) setPendingAction(null);
   };
 
-  const securitySummary = panel.id === "platform.settings.security"
-    ? [
-        { label: "Users", value: countEntries(loaded["security.users"]?.data), hint: "Auth identities" },
-        { label: "Memberships", value: countEntries(loaded["security.members"]?.data), hint: "Workspace members" },
-        { label: "Roles", value: countEntries(loaded["security.roles"]?.data), hint: "Defined roles" },
-        { label: "Invites", value: countEntries(loaded["security.invites"]?.data), hint: "Pending invitations" },
-        { label: "Sessions", value: countEntries(loaded["security.sessions"]?.data), hint: "Active sessions" },
-      ]
-    : [];
-
   if (!panel.sections.length) return <TemplateRenderer page={fallbackPage} runtime={{ contributionId: panel.id }} />;
 
   return <div className="settings-renderer">
-    <div className="settings-panel-toolbar">
-      <div>
-        <p>{status}</p>
-        {message ? <div className={`settings-feedback ${messageLevel}`} role={messageLevel === "error" ? "alert" : "status"}>{message}</div> : null}
-      </div>
-      <Button onClick={() => refresh()} disabled={submitting}>Reload values</Button>
-    </div>
-    {securitySummary.length ? <div className="settings-summary-grid">
-      {securitySummary.map((item) => <SurfaceCard className="settings-summary-card" key={item.label}>
-        <small>{item.label}</small>
-        <strong>{item.value}</strong>
-        <p>{item.hint}</p>
-      </SurfaceCard>)}
-    </div> : null}
-    <div className="settings-grid">
+    <SurfaceCard className="settings-panel-frame">
+      {message ? <div className={`settings-feedback ${messageLevel}`} role={messageLevel === "error" ? "alert" : "status"}>{message}</div> : null}
+      <div className="settings-section-list">
       {panel.sections.map((section) => {
         const sectionData = loaded[section.id]?.data ?? null;
         const sectionError = loaded[section.id]?.error;
-        if (section.id === "interface.builder") {
-          return <section className="settings-subpanel" key={section.id}>
-            <div className="surface-header"><div>{sectionTitle(section)}</div></div>
-            {sectionError ? <p className="settings-inline-error">{sectionError}</p> : null}
-            <ShellBuilder />
-            {section.actions.length ? <div className="plugin-actions settings-section-actions">{section.actions.map((action) => <Button key={action.id} className={action.variant === "primary" ? "primary" : action.variant === "danger" ? "danger" : ""} disabled={submitting} onClick={() => action.confirmation ? setPendingAction({ section, action }) : void runAction(action, null, { layout: shell })}>{submitting ? "Saving..." : action.title}</Button>)}</div> : null}
-          </section>;
-        }
-        if (section.kind === "crud" && section.crud) {
-          const sharedProps = {
-            title: section.title,
-            status: sectionError ?? undefined,
-            busy: submitting,
-            rows: rowsFromData(sectionData),
-            columns: section.columns,
-            fields: section.fields,
-            crud: section.crud,
-            onRefresh: refresh,
-            onCreate: (values: Record<string, unknown>) => runAction(actionDefinition(section.crud!.createActionId, "Add", "primary"), null, values),
-            onUpdate: (row: Record<string, unknown>, values: Record<string, unknown>) => runAction(actionDefinition(section.crud!.updateActionId, "Save", "primary"), row, values),
-            onDelete: (row: Record<string, unknown>) => runAction(actionDefinition(section.crud!.deleteActionId, "Remove", "danger"), row, {}),
-            onRowAction: (action: ActionDefinition, row: Record<string, unknown>) => runAction(action, row, {}),
-          };
-          return section.description
-            ? <CrudRenderer key={section.id} {...sharedProps} description={section.description} />
-            : <CrudRenderer key={section.id} {...sharedProps} />;
-        }
-        if (section.kind === "form") {
-          const authMethods = section.id === "security.authentication" && sectionData && typeof sectionData === "object" && Array.isArray((sectionData as { methods?: unknown[] }).methods)
-            ? (sectionData as { methods: Array<{ id?: string; title?: string; type?: string; status?: string }> }).methods
-            : [];
-          const formKey = `${section.id}:${refreshNonce}:${sectionError ? "error" : sectionData === null ? "loading" : "ready"}`;
-          return <SurfaceCard className="settings-subpanel" key={section.id}>
-            <div className="surface-header"><div>{sectionTitle(section)}</div>{panel.sections.length > 1 ? <Badge>{section.fields.length} fields</Badge> : null}</div>
-            {sectionError ? <p className="settings-inline-error">{sectionError}</p> : null}
-            <form className="mail-form" key={formKey} onSubmit={(event) => {
-              event.preventDefault();
-              const values = parseFormValues(section.fields, event.currentTarget);
-              const action = section.actions.find((item) => item.intent === "submit") ?? section.actions[0];
-              if (action) void runAction(action, null, values);
-            }}>
-              {section.fields.map((field) => {
-                const defaultValue = defaultFieldValue(sectionData, field);
-                if (field.type === "boolean") return <label className="template-check" key={field.id}><input name={field.id} type="checkbox" defaultChecked={Boolean(defaultValue)} disabled={field.readOnly || submitting} />{field.label}</label>;
-                if (field.type === "select") return <label key={field.id}>{field.label}<select name={field.id} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
-                if (field.type === "textarea") return <label key={field.id}>{field.label}<textarea name={field.id} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required} /></label>;
-                return <label key={field.id}>{field.label}<input name={field.id} type={fieldType(field)} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required} autoComplete={field.autocomplete} /></label>;
-              })}
-              <div className="plugin-actions settings-section-actions">
-                {section.actions.map((action) => <Button key={action.id} className={action.variant === "primary" ? "primary" : action.variant === "danger" ? "danger" : ""} type="submit" disabled={submitting}>{submitting ? "Saving..." : action.title}</Button>)}
+        const rows = rowsFromData(sectionData);
+        const isOpen = openSections[section.id] ?? false;
+        return <details
+          className="settings-section-accordion settings-resource-card settings-subpanel"
+          id={`settings-section-${section.id}`}
+          key={section.id}
+          open={isOpen}
+          onToggle={(event) => {
+            const open = event.currentTarget.open;
+            setOpenSections((current) => ({ ...current, [section.id]: open }));
+          }}
+        >
+          <summary className="settings-section-summary">
+            <div className="settings-section-summary-copy">
+              <p className="eyebrow">{sectionEyebrow(section)}</p>
+              <div className="settings-section-title">
+                <h3>{section.title}</h3>
+                {section.description ? <p>{section.description}</p> : null}
               </div>
-            </form>
-            {authMethods.length ? <div className="settings-mini-list">{authMethods.map((method) => <div key={method.id ?? method.title} className="settings-mini-row"><strong>{method.title ?? method.id}</strong><span>{method.type ?? "method"}</span><Badge>{method.status ?? "unknown"}</Badge></div>)}</div> : null}
-          </SurfaceCard>;
-        }
-        if (section.kind === "table" || section.kind === "summary" || section.kind === "actions") {
-          const rows = rowsFromData(sectionData);
-          return <SurfaceCard className="settings-subpanel" key={section.id}>
-            <div className="surface-header"><div>{sectionTitle(section)}</div>{section.kind === "table" ? <Badge>{rows.length}</Badge> : null}</div>
+            </div>
+            <div className="settings-section-summary-meta">
+              <Badge>{sectionSummaryValue(section, sectionData)}</Badge>
+              {sectionError ? <Badge>Attention</Badge> : null}
+            </div>
+          </summary>
+          <div className="settings-section-body">
             {sectionError ? <p className="settings-inline-error">{sectionError}</p> : null}
-            {section.kind === "table" ? <div className="template-table-wrap domain-table"><table>
-              <thead><tr>{section.columns.map((column) => <th key={column.id}>{column.label}</th>)}{section.rowActions.length ? <th>Actions</th> : null}</tr></thead>
-              <tbody>{rows.length ? rows.map((row, index) => <tr key={String(row.id ?? index)}>
-                {section.columns.map((column: ColumnDefinition) => <td key={column.id}>{column.type === "badge" ? <Badge>{valueAt(row, column.field)}</Badge> : <span>{valueAt(row, column.field)}</span>}</td>)}
-                {section.rowActions.length ? <td><div className="plugin-actions">{section.rowActions.map((action) => <Button key={action.id} disabled={submitting} className={action.variant === "danger" ? "danger" : action.variant === "primary" ? "primary" : ""} onClick={() => action.confirmation ? setPendingAction({ section, action, row }) : void runAction(action, row, {})}>{action.title}</Button>)}</div></td> : null}
-              </tr>) : <tr><td colSpan={section.columns.length + (section.rowActions.length ? 1 : 0)}>No records found.</td></tr>}</tbody>
-            </table></div> : null}
-            {section.kind === "actions" ? <div className="plugin-actions settings-section-actions">{section.actions.map((action) => <Button key={action.id} disabled={submitting} className={action.variant === "primary" ? "primary" : action.variant === "danger" ? "danger" : ""} onClick={() => action.confirmation ? setPendingAction({ section, action }) : void runAction(action)}>{action.title}</Button>)}</div> : null}
-          </SurfaceCard>;
-        }
-        return null;
+            {section.id === "interface.builder" ? (
+              <div className="stack">
+                <ShellBuilder />
+                {section.actions.length ? <div className="plugin-actions settings-section-actions">{section.actions.map((action) => <IconButton key={action.id} action={action} disabled={submitting} onClick={() => action.confirmation ? setPendingAction({ section, action }) : void runAction(action, null, { layout: shell })} />)}</div> : null}
+              </div>
+            ) : section.kind === "crud" && section.crud ? (
+              <CrudRenderer
+                compactHeader
+                title={section.title}
+                status={undefined}
+                busy={submitting}
+                rows={rows}
+                columns={section.columns}
+                fields={section.fields}
+                crud={section.crud}
+                onRefresh={refresh}
+                onCreate={(values: Record<string, unknown>) => runAction(actionDefinition(section.crud!.createActionId, "Add", "primary"), null, values)}
+                onUpdate={(row: Record<string, unknown>, values: Record<string, unknown>) => runAction(actionDefinition(section.crud!.updateActionId, "Save", "primary"), row, values)}
+                onDelete={(row: Record<string, unknown>) => runAction(actionDefinition(section.crud!.deleteActionId, "Remove", "danger"), row, {})}
+                onRowAction={(action: ActionDefinition, row: Record<string, unknown>) => runAction(action, row, {})}
+              />
+            ) : section.kind === "form" ? (
+              <div className="stack">
+                <form className="mail-form" key={`${section.id}:${refreshNonce}:${sectionError ? "error" : sectionData === null ? "loading" : "ready"}`} onSubmit={(event) => {
+                  event.preventDefault();
+                  const values = parseFormValues(section.fields, event.currentTarget);
+                  const action = section.actions.find((item) => item.intent === "submit") ?? section.actions[0];
+                  if (action) void runAction(action, null, values);
+                }}>
+                  {section.fields.map((field) => {
+                    const defaultValue = defaultFieldValue(sectionData, field);
+                    if (field.type === "boolean") return <label className="template-check" key={field.id}><input name={field.id} type="checkbox" defaultChecked={Boolean(defaultValue)} disabled={field.readOnly || submitting} />{field.label}</label>;
+                    if (field.type === "select") return <label key={field.id}>{field.label}<select name={field.id} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
+                    if (field.type === "textarea") return <label key={field.id}>{field.label}<textarea name={field.id} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required} /></label>;
+                    return <label key={field.id}>{field.label}<input name={field.id} type={fieldType(field)} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required} autoComplete={field.autocomplete} /></label>;
+                  })}
+                  <div className="plugin-actions settings-section-actions">
+                    {section.actions.map((action) => <IconButton key={action.id} action={action} disabled={submitting} type="submit" />)}
+                  </div>
+                </form>
+                {section.id === "security.authentication" && sectionData && typeof sectionData === "object" && Array.isArray((sectionData as { methods?: unknown[] }).methods) ? <div className="settings-mini-list">{(sectionData as { methods: Array<{ id?: string; title?: string; type?: string; status?: string }> }).methods.map((method) => <div key={method.id ?? method.title} className="settings-mini-row"><strong>{method.title ?? method.id}</strong><span>{method.type ?? "method"}</span><Badge>{method.status ?? "unknown"}</Badge></div>)}</div> : null}
+              </div>
+            ) : section.id === "marketplace.catalog" ? (
+              <div className="marketplace-card-list">
+                {rows.length ? rows.map((row, index) => {
+                  const installed = booleanValue(row, "installedFlag") || booleanValue(row, "installed");
+                  const active = booleanValue(row, "activeFlag") || booleanValue(row, "active");
+                  const installAction = marketplaceAction(section, "platform.settings.marketplace.plugin.install");
+                  const activateAction = marketplaceAction(section, "platform.settings.marketplace.plugin.activate");
+                  const deactivateAction = marketplaceAction(section, "platform.settings.marketplace.plugin.deactivate");
+                  const uninstallAction = marketplaceAction(section, "platform.settings.marketplace.plugin.uninstall");
+                  return <article className="marketplace-catalog-card" key={String(row.pluginId ?? row.id ?? index)}>
+                    <div className="marketplace-catalog-card-header">
+                      <div className="stack">
+                        <p className="eyebrow">{valueAt(row, "category") || "Plugin"}</p>
+                        <h3>{valueAt(row, "name") || valueAt(row, "pluginId")}</h3>
+                        <p>{valueAt(row, "description") || `Release ${valueAt(row, "version")}`}</p>
+                      </div>
+                      <div className="marketplace-status-pills">
+                        <Badge>{installed ? "Installed" : "Available"}</Badge>
+                        <Badge>{active ? "Enabled" : "Disabled"}</Badge>
+                        <Badge>{valueAt(row, "runtimeStatus") || "Runtime"}</Badge>
+                      </div>
+                    </div>
+                    <div className="marketplace-release-summary">
+                      <span>Release <strong>{valueAt(row, "version") || "draft"}</strong></span>
+                      <span>Source <strong>{valueAt(row, "source") || "catalog"}</strong></span>
+                      <span>Demo <strong>{valueAt(row, "demoAvailable") || "No"}</strong></span>
+                    </div>
+                    <div className="catalog-action-row">
+                      {!installed && installAction ? <IconButton action={installAction} disabled={submitting} onClick={() => void runAction(installAction, row, {})} /> : null}
+                      {installed && !active && activateAction ? <IconButton action={activateAction} disabled={submitting} onClick={() => void runAction(activateAction, row, {})} /> : null}
+                      {installed && active && deactivateAction ? <IconButton action={deactivateAction} disabled={submitting} onClick={() => void runAction(deactivateAction, row, {})} /> : null}
+                      {installed && !active && uninstallAction ? <IconButton action={uninstallAction} disabled={submitting} onClick={() => uninstallAction.confirmation ? setPendingAction({ section, action: uninstallAction, row }) : void runAction(uninstallAction, row, {})} /> : null}
+                      {installed && active ? <p className="muted catalog-action-hint">Disable first to make uninstall available.</p> : null}
+                    </div>
+                  </article>;
+                }) : <p>No marketplace plugins found.</p>}
+              </div>
+            ) : section.kind === "table" ? (
+              <div className="stack">
+                <div className="template-table-wrap domain-table"><table>
+                  <thead><tr>{section.columns.map((column) => <th key={column.id}>{column.label}</th>)}{section.rowActions.length ? <th>Actions</th> : null}</tr></thead>
+                  <tbody>{rows.length ? rows.map((row, index) => <tr key={String(row.id ?? index)}>
+                    {section.columns.map((column: ColumnDefinition) => <td key={column.id}>{column.type === "badge" ? <Badge>{valueAt(row, column.field)}</Badge> : <span>{valueAt(row, column.field)}</span>}</td>)}
+                    {section.rowActions.length ? <td><div className="plugin-actions">{section.rowActions.map((action) => <IconButton key={action.id} action={action} disabled={submitting} onClick={() => action.confirmation ? setPendingAction({ section, action, row }) : void runAction(action, row, {})} />)}</div></td> : null}
+                  </tr>) : <tr><td colSpan={section.columns.length + (section.rowActions.length ? 1 : 0)}>No records found.</td></tr>}</tbody>
+                </table></div>
+                {section.actions.length ? <div className="plugin-actions settings-section-actions">{section.actions.map((action) => <IconButton key={action.id} action={action} disabled={submitting} onClick={() => action.confirmation ? setPendingAction({ section, action }) : void runAction(action)} />)}</div> : null}
+              </div>
+            ) : section.kind === "actions" ? (
+              <div className="plugin-actions settings-section-actions">{section.actions.map((action) => <IconButton key={action.id} action={action} disabled={submitting} onClick={() => action.confirmation ? setPendingAction({ section, action }) : void runAction(action)} />)}</div>
+            ) : null}
+          </div>
+        </details>;
       })}
-    </div>
+      </div>
+    </SurfaceCard>
     {pendingAction ? <div className="settings-dialog-backdrop">
       <SurfaceCard className="settings-dialog">
-        <div className="surface-header"><div><small>{pendingAction.section.title}</small><h3>{pendingAction.action.confirmation?.title ?? pendingAction.action.title}</h3></div><Button onClick={() => setPendingAction(null)} disabled={submitting}>Close</Button></div>
+        <div className="surface-header"><div><small>{pendingAction.section.title}</small><h3>{pendingAction.action.confirmation?.title ?? pendingAction.action.title}</h3></div><Button aria-label="Close" className="settings-icon-button" onClick={() => setPendingAction(null)} disabled={submitting} title="Close">×</Button></div>
         {pendingAction.action.confirmation?.message ? <p>{pendingAction.action.confirmation.message}</p> : null}
         <form className="mail-form" onSubmit={submitPendingAction}>
           {pendingAction.action.confirmation?.reasonRequired ? <label>Reason<textarea name="reason" required disabled={submitting} /></label> : null}
           {pendingAction.action.confirmation?.fields.filter((field) => !(pendingAction.action.confirmation?.reasonRequired && field.id === "reason")).map((field) => field.type === "boolean" ? <label className="template-check" key={field.id}><input name={field.id} type="checkbox" disabled={submitting} />{field.label}</label> : field.type === "select" ? <label key={field.id}>{field.label}<select name={field.id} defaultValue={field.options[0]?.value ?? ""} disabled={submitting} required={field.required}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label> : field.type === "textarea" ? <label key={field.id}>{field.label}<textarea name={field.id} required={field.required} disabled={submitting} /></label> : <label key={field.id}>{field.label}<input name={field.id} type={fieldType(field)} required={field.required} disabled={submitting} /></label>)}
-          <div className="plugin-actions settings-dialog-actions"><Button onClick={() => setPendingAction(null)} disabled={submitting} type="button">Cancel</Button><Button className="primary" type="submit" disabled={submitting}>{submitting ? "Working..." : "Confirm"}</Button></div>
+          <div className="plugin-actions settings-dialog-actions"><Button aria-label="Cancel" className="settings-icon-button" onClick={() => setPendingAction(null)} disabled={submitting} title="Cancel" type="button">×</Button><Button aria-label="Confirm" className="primary settings-icon-button" type="submit" disabled={submitting} title="Confirm">✓</Button></div>
         </form>
       </SurfaceCard>
     </div> : null}

@@ -1,3 +1,4 @@
+import { readResponse, type HonoRequestArgs, type HonoRoute } from "@v2/plugin-sdk";
 import { hc } from "hono/client";
 import type { AgentChannel, AgentMessage, AgentProviderBinding, AgentToolCall } from "@v2/agent-contracts";
 import type { ProviderConnection } from "@v2/provider-contracts";
@@ -5,19 +6,7 @@ import type { ProviderConnection } from "@v2/provider-contracts";
 const workspaceId = "default";
 const configuredBaseUrl = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_AGENT_AI_API_URL;
 const agentUrl = (configuredBaseUrl ?? "http://localhost:8791").replace(/\/$/, "");
-type HonoRequestArgs = {
-  param?: Record<string, string>;
-  query?: Record<string, unknown>;
-  json?: unknown;
-  body?: BodyInit | null;
-  headers?: HeadersInit;
-};
-type HonoRoute = {
-  $get(args?: HonoRequestArgs): Promise<Response>;
-  $post(args?: HonoRequestArgs): Promise<Response>;
-  $put(args?: HonoRequestArgs): Promise<Response>;
-  $delete(args?: HonoRequestArgs): Promise<Response>;
-};
+
 type AgentApiClient = {
   workspaces: {
     ":workspaceId": {
@@ -43,11 +32,7 @@ type AgentApiClient = {
 };
 const agentApi = hc(agentUrl, { init: { credentials: "include" } }) as unknown as AgentApiClient;
 
-async function read<T>(request: Promise<Response>): Promise<T> {
-  const response = await request;
-  if (!response.ok) throw new Error(`Agent AI request failed: ${response.status}`);
-  return response.json() as Promise<T>;
-}
+const read = <T>(request: Promise<Response>) => readResponse<T>(request, "Agent AI");
 
 export const loadChannels = async () => (await read<{ channels: AgentChannel[] }>(agentApi.workspaces[":workspaceId"].channels.$get({ param: { workspaceId } }))).channels;
 export const loadProviderBindings = async () => (await read<{ providers: AgentProviderBinding[] }>(agentApi.workspaces[":workspaceId"].providers.$get({ param: { workspaceId } }))).providers;

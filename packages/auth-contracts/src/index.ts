@@ -12,6 +12,10 @@ export const authPolicySchema = z.object({
   requireEmailVerification: z.boolean().default(false),
   allowPasskeyRegistration: z.boolean().default(false),
   allowPasskeySignin: z.boolean().default(false),
+  turnstileEnabled: z.boolean().default(false),
+  turnstileSiteKey: z.string().min(1).nullable().default(null),
+  turnstileSecretRef: z.string().min(1).nullable().default(null),
+  turnstileSecretConfigured: z.boolean().default(false),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
@@ -58,9 +62,9 @@ export const authPublicLoginConfigSchema = z.object({
   methods: z.array(authMethodSchema.omit({ configurationRef: true }).extend({ status: z.literal("enabled"), publicVisible: z.literal(true) })),
   uiContributions: z.array(authUiContributionSchema.extend({ status: z.literal("published") })),
   features: z.object({ password: z.boolean(), passkey: z.boolean(), social: z.boolean() }),
-  policy: authPolicySchema.pick({ registrationMode: true, requireEmailVerification: true, allowPasskeyRegistration: true, allowPasskeySignin: true }),
+  policy: authPolicySchema.pick({ registrationMode: true, requireEmailVerification: true, allowPasskeyRegistration: true, allowPasskeySignin: true, turnstileEnabled: true, turnstileSiteKey: true }),
 });
-export const authPolicyWriteSchema = authPolicySchema.omit({ id: true, createdAt: true, updatedAt: true }).extend({ workspaceId: z.string().min(1).nullable().optional() });
+export const authPolicyWriteSchema = authPolicySchema.omit({ id: true, createdAt: true, updatedAt: true, turnstileSecretConfigured: true }).extend({ workspaceId: z.string().min(1).nullable().optional() });
 export const authMethodWriteSchema = z.object({
   workspaceId: z.string().min(1).nullable().optional(),
   type: authMethodTypeSchema,
@@ -81,7 +85,8 @@ export const authUiContributionWriteSchema = z.object({
   status: authUiContributionStatusSchema.default("draft"),
   displayOrder: z.number().int().default(0),
 });
-export const authSignInEmailRequestSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
+export const authSignInEmailRequestSchema = z.object({ email: z.string().email(), password: z.string().min(1), turnstileToken: z.string().min(1).optional() });
+export const authSignUpEmailRequestSchema = z.object({ email: z.string().email(), password: z.string().min(1), name: z.string().min(1), turnstileToken: z.string().min(1).optional() });
 export const authUpdateUserRequestSchema = z.object({
   name: z.string().nullable().optional(),
   language: z.string().nullable().optional(),

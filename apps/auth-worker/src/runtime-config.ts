@@ -34,6 +34,9 @@ type AuthPolicyRow = {
   require_email_verification: number;
   allow_passkey_registration: number;
   allow_passkey_signin: number;
+  turnstile_enabled: number;
+  turnstile_site_key: string | null;
+  turnstile_secret_ref: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -107,8 +110,8 @@ export class AuthRuntimeRepository {
         (id, workspace_id, type, provider_id, title, status, public_visible, display_order, configuration_ref)
         VALUES ('social.github', NULL, 'social', 'github', 'GitHub', 'draft', 0, 20, 'env:GITHUB_CLIENT_ID')`)] : []),
       this.db.prepare(`INSERT OR IGNORE INTO auth_policies
-        (id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin)
-        VALUES ('global', NULL, 'disabled', 0, 0, 0)`),
+        (id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin, turnstile_enabled, turnstile_site_key, turnstile_secret_ref)
+        VALUES ('global', NULL, 'disabled', 0, 0, 0, 0, NULL, NULL)`),
       this.db.prepare(`INSERT OR IGNORE INTO auth_ui_contributions
         (id, workspace_id, contribution_id, slot, template_id, schema_json, renderer_json, status, display_order)
         VALUES ('login.header.default', NULL, 'login.header.default', 'login.header', 'auth.login', ?, ?, 'published', 0)`)
@@ -122,7 +125,7 @@ export class AuthRuntimeRepository {
 
   async publicPolicy(workspaceId?: string | null) {
     const workspace = this.scoped(workspaceId);
-    const row = await this.db.prepare(`SELECT id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin, created_at, updated_at
+    const row = await this.db.prepare(`SELECT id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin, turnstile_enabled, turnstile_site_key, turnstile_secret_ref, created_at, updated_at
       FROM auth_policies
       WHERE workspace_id IS NULL OR workspace_id = ?
       ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END
@@ -136,9 +139,13 @@ export class AuthRuntimeRepository {
       requireEmailVerification: row.require_email_verification === 1,
       allowPasskeyRegistration: row.allow_passkey_registration === 1,
       allowPasskeySignin: row.allow_passkey_signin === 1,
+      turnstileEnabled: row.turnstile_enabled === 1,
+      turnstileSiteKey: row.turnstile_site_key,
+      turnstileSecretRef: row.turnstile_secret_ref,
+      turnstileSecretConfigured: Boolean(row.turnstile_secret_ref),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-    } : { id: "global", workspaceId: null, registrationMode: "disabled", requireEmailVerification: false, allowPasskeyRegistration: false, allowPasskeySignin: false });
+    } : { id: "global", workspaceId: null, registrationMode: "disabled", requireEmailVerification: false, allowPasskeyRegistration: false, allowPasskeySignin: false, turnstileEnabled: false, turnstileSiteKey: null, turnstileSecretRef: null, turnstileSecretConfigured: false });
   }
 
   async publicLoginConfig(workspaceId?: string | null, providerState: RuntimeAuthProviderState = { github: false }): Promise<AuthPublicLoginConfig> {
@@ -201,6 +208,8 @@ export class AuthRuntimeRepository {
         requireEmailVerification: policy.requireEmailVerification,
         allowPasskeyRegistration: policy.allowPasskeyRegistration,
         allowPasskeySignin: policy.allowPasskeySignin,
+        turnstileEnabled: policy.turnstileEnabled,
+        turnstileSiteKey: policy.turnstileSiteKey,
       },
     });
   }
@@ -264,7 +273,7 @@ export class AuthRuntimeRepository {
       policy,
       methods: methods.map((method) => ({ ...method, configurationRef: method.configurationRef ? "server-side" : null })),
       publishedLoginContributions: uiContributions.filter((item) => item.status === "published").length,
-      serverSideAvailability: { password: true, passkey: true, twoFactor: true, github: providerState.github },
+      serverSideAvailability: { password: true, passkey: true, twoFactor: true, turnstile: true, github: providerState.github },
       emailDelivery: { verification: false, passwordReset: false, status: "unavailable" },
       bootstrapAdmin: true,
     };
@@ -503,17 +512,20 @@ export class AuthRuntimeRepository {
     const workspace = request.workspaceId ?? null;
     const id = workspace ? `workspace:${workspace}` : "global";
     await this.db.prepare(`INSERT INTO auth_policies
-      (id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      (id, workspace_id, registration_mode, require_email_verification, allow_passkey_registration, allow_passkey_signin, turnstile_enabled, turnstile_site_key, turnstile_secret_ref, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
         registration_mode = excluded.registration_mode,
         require_email_verification = excluded.require_email_verification,
         allow_passkey_registration = excluded.allow_passkey_registration,
         allow_passkey_signin = excluded.allow_passkey_signin,
+        turnstile_enabled = excluded.turnstile_enabled,
+        turnstile_site_key = excluded.turnstile_site_key,
+        turnstile_secret_ref = excluded.turnstile_secret_ref,
         updated_at = CURRENT_TIMESTAMP`)
-      .bind(id, workspace, request.registrationMode, request.requireEmailVerification ? 1 : 0, request.allowPasskeyRegistration ? 1 : 0, request.allowPasskeySignin ? 1 : 0)
+      .bind(id, workspace, request.registrationMode, request.requireEmailVerification ? 1 : 0, request.allowPasskeyRegistration ? 1 : 0, request.allowPasskeySignin ? 1 : 0, request.turnstileEnabled ? 1 : 0, request.turnstileSiteKey ?? null, request.turnstileSecretRef ?? null)
       .run();
-    return { id, ...request, workspaceId: workspace };
+    return { id, ...request, workspaceId: workspace, turnstileSecretConfigured: Boolean(request.turnstileSecretRef) };
   }
 }

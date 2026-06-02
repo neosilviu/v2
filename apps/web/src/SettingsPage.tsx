@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { PluginManifest } from "@v2/plugin-contracts";
 import type { Notification } from "@v2/rpc-contracts";
 import type { ShellState } from "@v2/ui-runtime";
-import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
+import { Button, SurfaceCard } from "@v2/ui-kit";
 import { loadActivePlugins, loadInstalledPlugins, loadSettingsTab, loadSettingsTabs, loadWorkspaceUiSurfaces, type RuntimeSettingsTab, type RuntimeSettingsTabResolution } from "./api";
 import { SettingsRenderer } from "./platform/SettingsRenderer";
 import { createSettingsNotification } from "./platform/settings-ui";
@@ -13,15 +13,6 @@ type SettingsPageProps = {
   onShellChange: (state: ShellState) => void;
   emit: (item: Notification) => void;
   onRuntimeChanged: (plugins: PluginManifest[], activePluginIds: Set<string>, shell: ShellState) => void;
-};
-
-const tabDescriptions: Record<string, string> = {
-  "platform.settings.general": "Workspace name, branding, locale, public contact details and mail delivery.",
-  "platform.settings.security": "Users, roles, authentication, sessions and access control.",
-  "platform.settings.plans": "Workspace plan definitions and plan assignments.",
-  "platform.settings.interface": "Navigation, layout and interface customization.",
-  "platform.settings.marketplace": "Installed runtimes, marketplace catalog and activation controls.",
-  "platform.settings.workspaces": "Tenant workspaces, status and lifecycle controls.",
 };
 
 function selectedTabFromUrl(tabs: RuntimeSettingsTab[]) {
@@ -37,11 +28,6 @@ export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: S
   const [status, setStatus] = useState("Loading settings...");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const selectedTab = tabs.find((tab) => tab.id === selectedTabId) ?? null;
-  const title = selectedTab?.label ?? "Settings";
-  const description = selectedTab ? tabDescriptions[selectedTab.id] ?? "Manage workspace configuration." : "Select a settings section.";
-  const shellSurfacesCount = shell.surfaces.length;
 
   useEffect(() => {
     let alive = true;
@@ -117,56 +103,23 @@ export function SettingsPage({ shell, onShellChange, emit, onRuntimeChanged }: S
     }
   };
 
-  return <div className="settings-hub">
-    <header className="settings-header settings-product-header">
-      <div className="settings-header-copy">
-        <small>Workspace administration</small>
-        <h2>{title}</h2>
-        <p>{description}</p>
-      </div>
-      <div className="settings-header-actions">
-        <Badge>{busy ? "Loading" : error ? "Attention required" : "Ready"}</Badge>
-        <Button onClick={() => void refreshRuntime()} disabled={busy}>Reload saved values</Button>
-      </div>
-    </header>
-
-    <div className="settings-metrics">
-      <SurfaceCard className="settings-metric">
-        <small>Sections</small>
-        <strong>{tabs.length}</strong>
-        <p>Available settings areas for this workspace.</p>
-      </SurfaceCard>
-      <SurfaceCard className="settings-metric">
-        <small>Current section</small>
-        <strong>{selectedTab?.label ?? "None"}</strong>
-        <p>{selectedTab ? selectedTab.id : "Pick a section from the list."}</p>
-      </SurfaceCard>
-      <SurfaceCard className="settings-metric">
-        <small>Runtime surfaces</small>
-        <strong>{shellSurfacesCount}</strong>
-        <p>Mounted workspace surfaces contributing to this shell.</p>
-      </SurfaceCard>
+  return <section className="settings-hub settings-shell stack">
+    <div className="toolbar toolbar-tabs page-inline-tabs settings-tab-strip" aria-label="Settings sections">
+      {tabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "surface-tab surface-tab-active" : "surface-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
+        <span>{tab.label}</span>
+      </button>)}
     </div>
 
     {error ? <div className="settings-feedback error" role="alert">
       <strong>Something went wrong</strong>
       <span>{error}</span>
-      <Button onClick={() => void refreshRuntime()} disabled={busy}>Try again</Button>
+      <Button aria-label="Try again" className="settings-icon-button" onClick={() => void refreshRuntime()} disabled={busy} title="Try again">↻</Button>
     </div> : null}
 
-    <div className="settings-layout settings-product-layout">
-      <nav className="settings-tabs settings-navigation" aria-label="Settings sections">
-        {tabs.map((tab) => <button key={tab.id} className={tab.id === selectedTabId ? "settings-tab active" : "settings-tab"} type="button" onClick={() => setSelectedTabId(tab.id)}>
-          <span>{tab.label}</span>
-          <small>{tabDescriptions[tab.id] ?? ("ownerName" in tab ? tab.ownerName : "Workspace")}</small>
-        </button>)}
-      </nav>
-
-      <section className="settings-panel" aria-busy={busy}>
-        {!resolution
-          ? <SurfaceCard className="settings-empty"><h2>{busy ? "Loading settings..." : "No settings available"}</h2><p>{busy ? "Loading saved configuration for this workspace." : status}</p></SurfaceCard>
-          : <SettingsRenderer key={resolution.panel.id} panel={resolution.panel} shell={shell} onShellChange={onShellChange} emit={emit} />}
-      </section>
-    </div>
-  </div>;
+    <section className="settings-panel" aria-busy={busy}>
+      {!resolution
+        ? <SurfaceCard className="settings-empty"><h2>{busy ? "Loading settings..." : "No settings available"}</h2><p>{busy ? "Loading saved configuration for this workspace." : status}</p></SurfaceCard>
+        : <SettingsRenderer key={resolution.panel.id} panel={resolution.panel} shell={shell} onShellChange={onShellChange} emit={emit} />}
+    </section>
+  </section>;
 }

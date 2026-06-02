@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, setSignedCookie } from "hono/cookie";
 import { errorResponse, failure } from "@v2/feedback-runtime";
-import { authSignInEmailRequestSchema, authUpdateUserRequestSchema, ownerSetupSignupRequestSchema } from "@v2/auth-contracts";
+import { authSignInEmailRequestSchema, authSignUpEmailRequestSchema, authUpdateUserRequestSchema, ownerSetupSignupRequestSchema } from "@v2/auth-contracts";
 import type { AppErrorCode } from "@v2/rpc-contracts";
 import { createAuth, isAuthAdmin, parseAuthConfig, resolveAuthConfig, type AuthEnv } from "./auth";
 import { AuthRuntimeRepository } from "./runtime-config";
@@ -32,6 +32,35 @@ function isInternalRequest(c: AuthContext) {
 
 function needsBrowserCors(path: string) {
   return path.startsWith("/api/auth/") || path.startsWith("/public/auth/") || path.startsWith("/admin/auth/") || path.startsWith("/setup/owner/");
+}
+
+function resolveSecretRef(env: AuthEnv, ref: string | null | undefined) {
+  if (!ref?.startsWith("env:")) return null;
+  const key = ref.slice(4);
+  const value = (env as unknown as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+async function verifyTurnstileToken(c: AuthContext, token: string, secret: string) {
+  const body = new URLSearchParams({ secret, response: token });
+  const remoteIp = c.req.header("cf-connecting-ip");
+  if (remoteIp) body.set("remoteip", remoteIp);
+  const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body });
+  if (!response.ok) return false;
+  const result = await response.json().catch(() => null) as { success?: unknown } | null;
+  return result?.success === true;
+}
+
+async function requireTurnstile(c: AuthContext, config: ResolvedAuthConfig, token: string | undefined) {
+  const workspaceId = c.req.query("workspaceId") ?? config.workspaceId;
+  const policy = await new AuthRuntimeRepository(config.db).publicPolicy(workspaceId);
+  if (!policy.turnstileEnabled) return null;
+  if (!policy.turnstileSiteKey || !policy.turnstileSecretRef) return c.json(errorResponse(failure("dependency_unavailable", "Turnstile is enabled but not fully configured.")), 503);
+  if (!token) return c.json(errorResponse(failure("validation_failed", "Turnstile verification is required.")), 403);
+  const secret = resolveSecretRef(c.env, policy.turnstileSecretRef);
+  if (!secret) return c.json(errorResponse(failure("dependency_unavailable", "Turnstile secret reference cannot be resolved server-side.")), 503);
+  if (!await verifyTurnstileToken(c, token, secret)) return c.json(errorResponse(failure("not_authorized", "Turnstile verification failed.")), 403);
+  return null;
 }
 
 authApiRoutes = authApiRoutes.get("/health", (c) => c.json({ ok: true, service: "auth-worker", configured: parseAuthConfig(c.env).ok }));
@@ -321,12 +350,15 @@ authApiRoutes = authApiRoutes.post("/api/auth/sign-up/email", async (c) => {
   const workspaceId = c.req.query("workspaceId");
   const parsed = await resolveAuthConfig(c.env, workspaceId ?? undefined);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
+  const body = authSignUpEmailRequestSchema.parse(await c.req.json());
   const policy = await new AuthRuntimeRepository(parsed.config.db).publicPolicy(workspaceId ?? parsed.config.workspaceId);
   if (policy.registrationMode !== "open") return c.json(errorResponse(failure("not_authorized", "Password registration is not open.")), 403);
+  const turnstileError = await requireTurnstile(c, parsed.config, body.turnstileToken);
+  if (turnstileError) return turnstileError;
   return createAuth(parsed.config).handler(new Request(new URL("/api/auth/sign-up/email", parsed.config.baseURL).toString(), {
     method: "POST",
     headers: { "content-type": "application/json", ...(c.req.header("origin") ? { origin: c.req.header("origin")! } : {}) },
-    body: await c.req.text(),
+    body: JSON.stringify({ email: body.email, password: body.password, name: body.name }),
   }));
 });
 function ownerSetupError(c: AuthContext, status: 400 | 401 | 403 | 404 | 409 | 422 | 503, code: AppErrorCode, message: string, details?: Record<string, unknown>) {
@@ -442,12 +474,14 @@ authApiRoutes = authApiRoutes.post("/api/auth/sign-in/email", async (c) => {
   const parsed = await resolveAuthConfig(c.env);
   if (!parsed.ok) return c.json(errorResponse(failure("dependency_unavailable", "Authentication service is not configured.")), 503);
   const body = authSignInEmailRequestSchema.parse(await c.req.json());
+  const turnstileError = await requireTurnstile(c, parsed.config, body.turnstileToken);
+  if (turnstileError) return turnstileError;
   const user = await new AuthRuntimeRepository(parsed.config.db, new Set(parsed.config.adminEmails)).userByEmail(body.email);
   if (user?.disabledAt) return c.json(errorResponse(failure("not_authorized", "Account is disabled.")), 403);
   const response = await createAuth(parsed.config).handler(new Request(new URL("/api/auth/sign-in/email", parsed.config.baseURL).toString(), {
     method: "POST",
     headers: { "content-type": "application/json", ...(c.req.header("origin") ? { origin: c.req.header("origin")! } : {}) },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ email: body.email, password: body.password }),
   }));
   return response;
 });

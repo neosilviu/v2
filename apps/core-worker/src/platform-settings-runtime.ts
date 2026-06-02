@@ -4,6 +4,7 @@ import { isPlatformAdmin, type CoreSessionUser } from "./access";
 import type { CoreRepository, WorkspacePermission, WorkspaceRecord } from "./repository";
 import type { CoreEnv } from "./env";
 import type { ActionDefinition } from "@v2/ui-schema";
+import { ApprovalRequestRepository } from "./approval-requests";
 
 type PlatformSettingsRuntimeContext = Context<{ Bindings: CoreEnv; Variables: { user: CoreSessionUser | null; internal: boolean } }>;
 
@@ -97,6 +98,8 @@ export async function platformSettingsRuntimeData(
       return await repo.workspaceInvitations(workspaceId);
     case "platform.settings.audit.events":
       return await repo.auditEvents(workspaceId);
+    case "platform.settings.audit.policy":
+      return await repo.workspaceAuditPolicy(workspaceId);
     case "platform.settings.mail.summary":
       return await repo.mailSummary(workspaceId);
     case "platform.settings.mail.providers":
@@ -111,6 +114,8 @@ export async function platformSettingsRuntimeData(
       return await repo.pluginCatalogRows(workspaceId);
     case "platform.settings.plugins.list":
       return await repo.pluginInstalledRows(workspaceId);
+    case "platform.settings.approvals.list":
+      return await new ApprovalRequestRepository(_c.env.CORE_DB).listPending(workspaceId);
     default:
       return null;
   }
@@ -142,10 +147,25 @@ export async function platformSettingsRuntimeAction(
           requireEmailVerification: firstBoolean(payload, "requireEmailVerification") ?? false,
           allowPasskeyRegistration: firstBoolean(payload, "allowPasskeyRegistration") ?? false,
           allowPasskeySignin: firstBoolean(payload, "allowPasskeySignin") ?? false,
+          turnstileEnabled: firstBoolean(payload, "turnstileEnabled") ?? false,
+          turnstileSiteKey: firstString(payload, "turnstileSiteKey"),
+          turnstileSecretRef: firstString(payload, "turnstileSecretRef"),
         };
         const response = await deps.authAdminJson<{ policy: unknown }>("/admin/auth/policy", { method: "PUT", body: JSON.stringify(body) });
-        await repo.audit(workspaceId, "platform.settings.security.policy.save", { workspaceId, registrationMode: body.registrationMode }, actorId ?? undefined);
+        await repo.audit(workspaceId, "platform.settings.security.policy.save", { workspaceId, registrationMode: body.registrationMode, turnstileEnabled: body.turnstileEnabled }, actorId ?? undefined);
         return c.json(operationEnvelope("ok", response.policy));
+      }
+      case "platform.settings.audit.policy.save": {
+        if (!isSuperadmin) return denied(403, "Platform admin access is required to update audit policy.");
+        const current = await repo.workspaceAuditPolicy(workspaceId);
+        const policy = {
+          auth: firstBoolean(payload, "auth") ?? current.auth,
+          core: firstBoolean(payload, "core") ?? current.core,
+          plugin: firstBoolean(payload, "plugin") ?? current.plugin,
+          shell: firstBoolean(payload, "shell") ?? current.shell,
+        };
+        const saved = await repo.saveWorkspaceAuditPolicy(workspaceId, policy, actorId ?? undefined);
+        return c.json(operationEnvelope("ok", saved));
       }
       case "platform.settings.users.disable":
       case "platform.settings.users.delete": {
@@ -316,6 +336,42 @@ export async function platformSettingsRuntimeAction(
         if (!inviteId) return denied(400, "invitationId is required.");
         const invite = await repo.revokeWorkspaceInvitation(workspaceId, inviteId, actorId ?? undefined);
         return c.json(operationEnvelope("ok", invite));
+      }
+      case "platform.settings.marketplace.plugin.activate": {
+        const pluginId = firstString(payload, "pluginId", "id");
+        if (!pluginId) return denied(400, "pluginId is required.");
+        const deployment = await repo.pluginRuntimeDeployment(workspaceId, pluginId);
+        if (!deployment || !["deployed", "active", "disabled"].includes(deployment.runtimeStatus)) return denied(409, "Plugin runtime deployment must be confirmed before activation.");
+        const state = await repo.activate(workspaceId, pluginId);
+        if (!state) return denied(404, "Plugin is not installed.");
+        await repo.audit(workspaceId, "marketplace.plugin.activate", { pluginId }, actorId ?? undefined);
+        return c.json(operationEnvelope("ok", state));
+      }
+      case "platform.settings.marketplace.plugin.deactivate": {
+        const pluginId = firstString(payload, "pluginId", "id");
+        if (!pluginId) return denied(400, "pluginId is required.");
+        const state = await repo.deactivate(workspaceId, pluginId);
+        if (!state) return denied(404, "Plugin is not installed.");
+        await repo.audit(workspaceId, "marketplace.plugin.deactivate", { pluginId }, actorId ?? undefined);
+        return c.json(operationEnvelope("ok", state));
+      }
+      case "platform.settings.marketplace.plugin.uninstall": {
+        const pluginId = firstString(payload, "pluginId", "id");
+        if (!pluginId) return denied(400, "pluginId is required.");
+        const state = await repo.uninstall(workspaceId, pluginId);
+        if (!state) return denied(404, "Plugin is not installed.");
+        await repo.audit(workspaceId, "marketplace.plugin.uninstall", { pluginId }, actorId ?? undefined);
+        return c.json(operationEnvelope("ok", state));
+      }
+      case "platform.settings.approvals.approve":
+      case "platform.settings.approvals.deny": {
+        const approvalId = firstString(payload, "approvalId", "id");
+        if (!approvalId) return denied(400, "approvalId is required.");
+        const decision = action.commandId === "platform.settings.approvals.approve" ? "approved" : "denied";
+        const approval = await new ApprovalRequestRepository(c.env.CORE_DB).decide(workspaceId, approvalId, decision, actorId ?? undefined);
+        if (!approval) return denied(409, "Approval is not pending.");
+        await repo.audit(workspaceId, `approval.${decision}`, { approvalId: approval.id, kind: approval.kind, subjectId: approval.subjectId, pluginId: approval.pluginId }, actorId ?? undefined);
+        return c.json(operationEnvelope("ok", approval));
       }
       case "platform.settings.mail.provider.save": {
         const provider = await repo.saveMailProvider(workspaceId, {

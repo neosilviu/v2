@@ -9,6 +9,7 @@ type CrudRendererProps = {
   description?: string;
   status: string | undefined;
   busy?: boolean;
+  compactHeader?: boolean;
   rows: CrudRow[];
   columns: ColumnDefinition[];
   fields: FieldDefinition[];
@@ -37,6 +38,23 @@ function rowTitle(row: CrudRow, crud: CrudDefinition) {
   return String(valueAt(row, crud.rowIdField));
 }
 
+function actionIcon(label: string) {
+  const key = label.toLowerCase();
+  if (key.includes("reload") || key.includes("refresh")) return "↻";
+  if (key.includes("add") || key.includes("create")) return "+";
+  if (key.includes("edit") || key.includes("save")) return "✎";
+  if (key.includes("remove") || key.includes("delete") || key.includes("uninstall")) return "×";
+  if (key.includes("disable") || key.includes("deactivate") || key.includes("deny")) return "○";
+  if (key.includes("activate") || key.includes("enable") || key.includes("approve")) return "✓";
+  if (key.includes("view")) return "◎";
+  if (key.includes("impersonate")) return "⇄";
+  return "•";
+}
+
+function actionClass(variant?: string) {
+  return [variant === "danger" ? "danger" : variant === "primary" ? "primary" : "", "settings-icon-button"].filter(Boolean).join(" ");
+}
+
 function normalizeInput(fields: FieldDefinition[], form: HTMLFormElement) {
   const values = new FormData(form);
   const output: Record<string, unknown> = {};
@@ -62,7 +80,7 @@ function fieldDefaultValue(row: CrudRow | null, field: FieldDefinition) {
   return String(value);
 }
 
-export function CrudRenderer({ title, description, status, busy, rows, columns, fields, crud, onRefresh, onCreate, onUpdate, onDelete, onRowAction }: CrudRendererProps) {
+export function CrudRenderer({ title, description, status, busy, compactHeader, rows, columns, fields, crud, onRefresh, onCreate, onUpdate, onDelete, onRowAction }: CrudRendererProps) {
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -112,14 +130,22 @@ export function CrudRenderer({ title, description, status, busy, rows, columns, 
   };
 
   return <SurfaceCard className="settings-list-card">
-    <div className="surface-header">
+    {compactHeader ? null : <div className="surface-header">
       <div><h3>{title}</h3>{description ? <p>{description}</p> : null}{status ? <p className="settings-inline-error">{status}</p> : null}</div>
       <div className="plugin-actions">
         <Badge>{rows.length}</Badge>
-        {onRefresh ? <Button onClick={() => onRefresh()} disabled={busy || submitting}>Reload</Button> : null}
-        <Button className="primary" onClick={() => openDialog({ mode: "create", row: null })} disabled={busy || submitting}>Add {crud.entityLabel}</Button>
+        {onRefresh ? <Button aria-label="Reload" className="settings-icon-button" onClick={() => onRefresh()} disabled={busy || submitting} title="Reload">↻</Button> : null}
+        <Button aria-label={`Add ${crud.entityLabel}`} className="primary settings-icon-button" onClick={() => openDialog({ mode: "create", row: null })} disabled={busy || submitting} title={`Add ${crud.entityLabel}`}>+</Button>
       </div>
-    </div>
+    </div>}
+    {compactHeader ? <div className="settings-crud-toolbar">
+      {status ? <p className="settings-inline-error">{status}</p> : null}
+      <div className="plugin-actions">
+        <Badge>{rows.length}</Badge>
+        {onRefresh ? <Button aria-label="Reload" className="settings-icon-button" onClick={() => onRefresh()} disabled={busy || submitting} title="Reload">↻</Button> : null}
+        <Button aria-label={`Add ${crud.entityLabel}`} className="primary settings-icon-button" onClick={() => openDialog({ mode: "create", row: null })} disabled={busy || submitting} title={`Add ${crud.entityLabel}`}>+</Button>
+      </div>
+    </div> : null}
     <div className="template-table-wrap domain-table">
       <table>
         <thead>
@@ -130,9 +156,9 @@ export function CrudRenderer({ title, description, status, busy, rows, columns, 
             {columns.map((column) => <td key={column.id}>{column.type === "badge" ? <Badge>{String(valueAt(row, column.field))}</Badge> : <span>{String(valueAt(row, column.field))}</span>}</td>)}
             <td>
               <div className="plugin-actions">
-                <Button disabled={busy || submitting} onClick={() => openDialog({ mode: "edit", row })}>Edit</Button>
-                <Button className="danger" disabled={busy || submitting} onClick={() => openDialog({ mode: "delete", row })}>Remove</Button>
-                {onRowAction ? crud.rowActions.map((action) => <Button key={action.id} className={action.variant === "danger" ? "danger" : action.variant === "primary" ? "primary" : ""} disabled={busy || submitting} onClick={() => void onRowAction(action, row)}>{action.title}</Button>) : null}
+                <Button aria-label="Edit" className="settings-icon-button" disabled={busy || submitting} onClick={() => openDialog({ mode: "edit", row })} title="Edit">✎</Button>
+                <Button aria-label="Remove" className="danger settings-icon-button" disabled={busy || submitting} onClick={() => openDialog({ mode: "delete", row })} title="Remove">×</Button>
+                {onRowAction ? crud.rowActions.map((action) => <Button key={action.id} aria-label={action.title} className={actionClass(action.variant)} disabled={busy || submitting} onClick={() => void onRowAction(action, row)} title={action.title}>{actionIcon(action.title)}</Button>) : null}
               </div>
             </td>
           </tr>) : <tr><td colSpan={columns.length + 1}>{crud.listEmptyMessage ?? `No ${crud.entityLabelPlural.toLowerCase()} found.`}</td></tr>}
@@ -143,14 +169,14 @@ export function CrudRenderer({ title, description, status, busy, rows, columns, 
       <SurfaceCard className="settings-dialog">
         <div className="surface-header">
           <div><small>{crud.entityLabel}</small><h3>{dialogTitle}</h3></div>
-          <Button onClick={() => setDialog(null)} disabled={submitting}>Close</Button>
+          <Button aria-label="Close" className="settings-icon-button" onClick={() => setDialog(null)} disabled={submitting} title="Close">×</Button>
         </div>
         {message ? <p className="settings-inline-error" role="alert">{message}</p> : null}
         {dialog.mode === "delete" ? <div>
           <p>Remove <strong>{rowTitle(dialog.row, crud)}</strong>? This action cannot be undone.</p>
           <div className="plugin-actions settings-dialog-actions">
-            <Button onClick={() => setDialog(null)} disabled={submitting}>Cancel</Button>
-            <Button className="danger" onClick={() => void confirmDelete()} disabled={submitting}>Remove</Button>
+            <Button aria-label="Cancel" className="settings-icon-button" onClick={() => setDialog(null)} disabled={submitting} title="Cancel">×</Button>
+            <Button aria-label="Remove" className="danger settings-icon-button" onClick={() => void confirmDelete()} disabled={submitting} title="Remove">×</Button>
           </div>
         </div> : <form className="mail-form" onSubmit={submit} key={`${dialog.mode}:${dialog.mode === "edit" ? String(dialog.row[crud.rowIdField]) : "new"}`}>
           {fields.map((field) => {
@@ -167,8 +193,8 @@ export function CrudRenderer({ title, description, status, busy, rows, columns, 
             return <label key={field.id}>{field.label}<input name={field.id} type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "password" ? "password" : field.type === "date" ? "date" : field.type === "color" ? "color" : "text"} defaultValue={String(defaultValue)} disabled={field.readOnly || submitting} required={field.required} autoComplete={field.autocomplete} /></label>;
           })}
           <div className="plugin-actions settings-dialog-actions">
-            <Button onClick={() => setDialog(null)} disabled={submitting} type="button">Cancel</Button>
-            <Button className="primary" type="submit" disabled={submitting}>{submitting ? "Saving..." : dialog.mode === "create" ? "Add" : "Save changes"}</Button>
+            <Button aria-label="Cancel" className="settings-icon-button" onClick={() => setDialog(null)} disabled={submitting} title="Cancel" type="button">×</Button>
+            <Button aria-label={dialog.mode === "create" ? "Add" : "Save changes"} className="primary settings-icon-button" type="submit" disabled={submitting} title={dialog.mode === "create" ? "Add" : "Save changes"}>{dialog.mode === "create" ? "+" : "✓"}</Button>
           </div>
         </form>}
       </SurfaceCard>

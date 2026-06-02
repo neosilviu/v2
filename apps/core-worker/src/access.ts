@@ -1,3 +1,4 @@
+import { csv, allowedOrigins as sharedAllowedOrigins, isInternalRequest as sharedIsInternalRequest } from "@v2/feedback-runtime";
 import type { CoreEnv } from "./env";
 
 type PlatformAdminEnv = Pick<CoreEnv, "PLATFORM_ADMIN_EMAILS" | "RECOVERY_ADMIN_EMAILS" | "RECOVERY_ADMIN_ENABLED">;
@@ -13,20 +14,12 @@ type SessionEntry = { user: CoreSessionUser | null; expiresAt: number };
 const sessionAssertionCache = new Map<string, SessionEntry>();
 const SESSION_ASSERTION_TTL_MS = 30_000;
 
-function csv(input?: string): string[] {
-  return (input ?? "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 export function allowedOrigins(env: CoreEnv): string[] {
-  return [...new Set([...csv(env.APP_ORIGIN), ...csv(env.TRUSTED_ORIGINS)])];
+  return sharedAllowedOrigins(env.APP_ORIGIN, env.TRUSTED_ORIGINS);
 }
 
 export function isInternalRequest(request: Request): boolean {
-  const url = new URL(request.url);
-  return url.hostname === "core.internal" && !request.headers.has("origin");
+  return sharedIsInternalRequest(request.url, "core.internal", request.headers.has("origin"));
 }
 
 function credentialKey(headers: Headers) {

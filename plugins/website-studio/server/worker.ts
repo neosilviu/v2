@@ -147,12 +147,26 @@ app.post("/runtime/execute", async (c) => {
     const page = await pageWithSections(c.env.WEBSITE_DB, workspaceId, pageId);
     if (!page) return c.json(errorResponse(failure("not_found", "Website page is not available.")), 404);
     await upsertSection(c.env.WEBSITE_DB, pageId, Number(input.sortOrder ?? Date.now()), input);
-    return c.json({ page: await pageWithSections(c.env.WEBSITE_DB, workspaceId, pageId) });
+    const updatedPage = await pageWithSections(c.env.WEBSITE_DB, workspaceId, pageId);
+    if (c.env.WEBSITE_KV && updatedPage) {
+      const cacheKey = `published:${workspaceId}:${updatedPage.slug}`;
+      if (updatedPage.status === "published") {
+        await c.env.WEBSITE_KV.put(cacheKey, JSON.stringify(updatedPage), { expirationTtl: 3600 });
+      } else {
+        await c.env.WEBSITE_KV.delete(cacheKey);
+      }
+    }
+    return c.json({ page: updatedPage });
   }
   if (operationId === "website.publishPage" && pageId) {
     const result = await c.env.WEBSITE_DB.prepare("UPDATE website_pages SET status = 'published', published_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND id = ?").bind(workspaceId, pageId).run();
     if (result.meta.changes === 0) return c.json(errorResponse(failure("not_found", "Website page is not available.")), 404);
-    return c.json({ page: await pageWithSections(c.env.WEBSITE_DB, workspaceId, pageId) });
+    const page = await pageWithSections(c.env.WEBSITE_DB, workspaceId, pageId);
+    if (c.env.WEBSITE_KV && page) {
+      const cacheKey = `published:${workspaceId}:${page.slug}`;
+      await c.env.WEBSITE_KV.put(cacheKey, JSON.stringify(page), { expirationTtl: 3600 });
+    }
+    return c.json({ page });
   }
   if (operationId === "website.readPageContext" && pageId) {
     const result = await c.env.WEBSITE_DB.prepare("SELECT surface_id, readable_json, allowed_tools_json FROM website_context_shares WHERE workspace_id = ? AND page_id = ? AND enabled = 1 LIMIT 1").bind(workspaceId, pageId).first();
@@ -161,9 +175,24 @@ app.post("/runtime/execute", async (c) => {
   }
   if (operationId === "website.readPageContext") {
     const slug = typeof routeParams.slug === "string" ? routeParams.slug : "home";
+    const cacheKey = `published:${workspaceId}:${slug}`;
+    if (c.env.WEBSITE_KV) {
+      const cached = await c.env.WEBSITE_KV.get(cacheKey);
+      if (cached) {
+        try {
+          return c.json({ page: JSON.parse(cached) });
+        } catch {
+          // Fallback to database on JSON parse failure
+        }
+      }
+    }
     const row = await c.env.WEBSITE_DB.prepare("SELECT id FROM website_pages WHERE workspace_id = ? AND slug = ? AND status = 'published' LIMIT 1").bind(workspaceId, slug).first<{ id: string }>();
     if (!row) return c.json(errorResponse(failure("not_found", "Published page is not available.")), 404);
-    return c.json({ page: await pageWithSections(c.env.WEBSITE_DB, workspaceId, row.id) });
+    const page = await pageWithSections(c.env.WEBSITE_DB, workspaceId, row.id);
+    if (c.env.WEBSITE_KV && page) {
+      await c.env.WEBSITE_KV.put(cacheKey, JSON.stringify(page), { expirationTtl: 3600 });
+    }
+    return c.json({ page });
   }
   return c.json(errorResponse(failure("not_found", "Runtime operation is not available.")), 404);
 });

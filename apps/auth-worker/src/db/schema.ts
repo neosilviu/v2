@@ -134,6 +134,9 @@ export const authPolicies = sqliteTable("auth_policies", {
   requireEmailVerification: integer("require_email_verification", { mode: "boolean" }).notNull().default(false),
   allowPasskeyRegistration: integer("allow_passkey_registration", { mode: "boolean" }).notNull().default(false),
   allowPasskeySignin: integer("allow_passkey_signin", { mode: "boolean" }).notNull().default(false),
+  turnstileEnabled: integer("turnstile_enabled", { mode: "boolean" }).notNull().default(false),
+  turnstileSiteKey: text("turnstile_site_key"),
+  turnstileSecretRef: text("turnstile_secret_ref"),
   createdAt: text("created_at").notNull().default(now),
   updatedAt: text("updated_at").notNull().default(now),
 }, (table) => ({

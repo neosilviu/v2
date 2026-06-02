@@ -18,6 +18,7 @@ export interface AuthEnv {
   RECOVERY_ADMIN_EMAILS?: string;
   RECOVERY_ADMIN_ENABLED?: string;
   PLATFORM_ADMIN_EMAILS?: string;
+  TURNSTILE_SECRET?: string;
   CORE?: Fetcher;
   AUTH_WORKSPACE_ID?: string;
 }
