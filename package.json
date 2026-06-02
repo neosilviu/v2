@@ -18,6 +18,7 @@
     "guard:architecture": "pnpm build:analyze -- --strict && pnpm test:generated -- --check-migrations && pnpm guard:hono-rpc",
     "test:generated": "node --experimental-strip-types scripts/test-generated.mjs",
     "perf:local": "node scripts/perf-local.mjs",
+    "loadtest:local": "node scripts/loadtest-local.mjs",
     "test:e2e": "playwright test",
     "smoke:local": "node scripts/smoke-local-e2e.mjs",
     "bootstrap:workspace:dev": "node scripts/bootstrap-workspace-dev.mjs",
