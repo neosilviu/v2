@@ -13,5 +13,6 @@ export interface CoreEnv {
   PLATFORM_ADMIN_EMAILS?: string;
   ENVIRONMENT?: string;
   MAIL_PROVIDER_CONFIGS_JSON?: string;
+  CLOUDFLARE_CONNECTION_CONFIGS_JSON?: string;
   PROVISIONING_SECRET?: string;
 }

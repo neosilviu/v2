@@ -126,6 +126,9 @@ importers:
 
   apps/core-worker:
     dependencies:
+      '@v2/cloudflare-platform':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-platform
       '@v2/feedback-runtime':
         specifier: workspace:*
         version: link:../../packages/feedback-runtime
