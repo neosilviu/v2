@@ -2323,7 +2323,7 @@ export class CoreRepository {
   async plans(): Promise<PlanRecord[]> {
     const rows = await this.db
       .prepare(
-        "SELECT id, name, status, limits_json, created_at, updated_at FROM plans ORDER BY name",
+        "SELECT id, name, status, limits_json, created_at, updated_at FROM plans ORDER BY name LIMIT 500",
       )
       .all<{
         id: string;
@@ -2407,7 +2407,7 @@ export class CoreRepository {
   async userPlanAssignments(): Promise<UserPlanAssignmentRecord[]> {
     const rows = await this.db
       .prepare(
-        "SELECT id, user_id, plan_id, status, starts_at, ends_at, created_at, updated_at FROM user_plan_assignments ORDER BY created_at DESC",
+        "SELECT id, user_id, plan_id, status, starts_at, ends_at, created_at, updated_at FROM user_plan_assignments ORDER BY created_at DESC LIMIT 500",
       )
       .all<{
         id: string;
@@ -2636,13 +2636,88 @@ export class CoreRepository {
     }));
   }
 
+  async domainById(workspaceId: string, id: string): Promise<WorkspaceDomain | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT id, workspace_id, hostname, kind, status, verification_method, verification_instructions_json, publication_id, is_primary, created_at, verified_at, updated_at FROM workspace_domains WHERE workspace_id = ? AND id = ? LIMIT 1",
+      )
+      .bind(workspaceId, id)
+      .first<{
+        id: string;
+        workspace_id: string;
+        hostname: string;
+        kind: WorkspaceDomain["kind"];
+        status: WorkspaceDomain["status"];
+        verification_method: WorkspaceDomain["verificationMethod"];
+        verification_instructions_json: string | null;
+        publication_id: string | null;
+        is_primary: number;
+        created_at: string;
+        verified_at: string | null;
+        updated_at: string;
+      }>();
+    if (!row) return null;
+    return {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      hostname: row.hostname,
+      kind: row.kind,
+      status: row.status,
+      verificationMethod: row.verification_method,
+      verificationInstructions: safeJson<Record<string, unknown> | null>(
+        row.verification_instructions_json,
+        null,
+      ),
+      publicationId: row.publication_id,
+      isPrimary: row.is_primary === 1,
+      createdAt: row.created_at,
+      verifiedAt: row.verified_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   async activeDomains(workspaceId: string, kinds: WorkspaceDomain["kind"][]) {
-    const allowedKinds = new Set(kinds);
-    return (await this.listDomains(workspaceId)).filter(
-      (domain) =>
-        allowedKinds.has(domain.kind) &&
-        (domain.status === "active" || domain.status === "verified"),
-    );
+    if (!kinds.length) return [];
+    const placeholders = kinds.map(() => "?").join(", ");
+    const rows = await this.db
+      .prepare(
+        `SELECT id, workspace_id, hostname, kind, status, verification_method, verification_instructions_json, publication_id, is_primary, created_at, verified_at, updated_at
+        FROM workspace_domains
+        WHERE workspace_id = ? AND kind IN (${placeholders}) AND status IN ('active', 'verified')
+        ORDER BY is_primary DESC, hostname`,
+      )
+      .bind(workspaceId, ...kinds)
+      .all<{
+        id: string;
+        workspace_id: string;
+        hostname: string;
+        kind: WorkspaceDomain["kind"];
+        status: WorkspaceDomain["status"];
+        verification_method: WorkspaceDomain["verificationMethod"];
+        verification_instructions_json: string | null;
+        publication_id: string | null;
+        is_primary: number;
+        created_at: string;
+        verified_at: string | null;
+        updated_at: string;
+      }>();
+    return rows.results.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      hostname: row.hostname,
+      kind: row.kind,
+      status: row.status,
+      verificationMethod: row.verification_method,
+      verificationInstructions: safeJson<Record<string, unknown> | null>(
+        row.verification_instructions_json,
+        null,
+      ),
+      publicationId: row.publication_id,
+      isPrimary: row.is_primary === 1,
+      createdAt: row.created_at,
+      verifiedAt: row.verified_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   async createDomain(
@@ -2688,11 +2763,7 @@ export class CoreRepository {
       { domainId: id, hostname, kind: input.kind },
       actorId,
     );
-    return (
-      (await this.listDomains(workspaceId)).find(
-        (domain) => domain.id === id,
-      ) ?? null
-    );
+    return this.domainById(workspaceId, id);
   }
 
   async updateDomainStatus(
@@ -2713,11 +2784,7 @@ export class CoreRepository {
       { domainId: id },
       actorId,
     );
-    return (
-      (await this.listDomains(workspaceId)).find(
-        (domain) => domain.id === id,
-      ) ?? null
-    );
+    return this.domainById(workspaceId, id);
   }
 
   async verifyDomain(workspaceId: string, id: string, actorId?: string) {
@@ -2728,11 +2795,7 @@ export class CoreRepository {
       .bind(workspaceId, id)
       .run();
     await this.audit(workspaceId, "domain.verify", { domainId: id }, actorId);
-    return (
-      (await this.listDomains(workspaceId)).find(
-        (domain) => domain.id === id,
-      ) ?? null
-    );
+    return this.domainById(workspaceId, id);
   }
 
   async activateDomain(workspaceId: string, id: string, actorId?: string) {
@@ -2791,6 +2854,40 @@ export class CoreRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
+  }
+
+  async mailProviderById(workspaceId: string, id: string) {
+    const row = await this.db
+      .prepare(
+        "SELECT id, workspace_id, kind, label, status, enabled, from_name, from_email, reply_to_email, configuration_ref, safe_config_json, is_default_transactional, last_tested_at, last_test_status, last_error, created_at, updated_at FROM workspace_mail_providers WHERE workspace_id = ? AND id = ? LIMIT 1",
+      )
+      .bind(workspaceId, id)
+      .first<MailProviderRow>();
+    if (!row) return null;
+    return {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      kind: row.kind,
+      label: row.label,
+      status: row.status,
+      enabled: row.enabled === 1,
+      fromName: row.from_name,
+      fromEmail: row.from_email,
+      replyToEmail: row.reply_to_email,
+      safeConfig: safeJson(row.safe_config_json, {
+        usernameConfigured: false,
+        passwordConfigured: false,
+        secretHint: null,
+      }),
+      configurationRef: row.configuration_ref,
+      configured: Boolean(row.configuration_ref),
+      isDefaultTransactional: row.is_default_transactional === 1,
+      lastTestedAt: row.last_tested_at,
+      lastTestStatus: row.last_test_status,
+      lastError: row.last_error,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 
   async activeMailProvider(workspaceId: string) {
@@ -2857,11 +2954,7 @@ export class CoreRepository {
       { providerId: id, kind: input.kind, label: input.label },
       actorId,
     );
-    return (
-      (await this.listMailProviders(workspaceId)).find(
-        (provider) => provider.id === id,
-      ) ?? null
-    );
+    return this.mailProviderById(workspaceId, id);
   }
 
   async activateMailProvider(
@@ -2887,11 +2980,7 @@ export class CoreRepository {
       { providerId: id },
       actorId,
     );
-    return (
-      (await this.listMailProviders(workspaceId)).find(
-        (provider) => provider.id === id,
-      ) ?? null
-    );
+    return this.mailProviderById(workspaceId, id);
   }
 
   async disableMailProvider(workspaceId: string, id: string, actorId?: string) {
@@ -2907,11 +2996,40 @@ export class CoreRepository {
       { providerId: id },
       actorId,
     );
-    return (
-      (await this.listMailProviders(workspaceId)).find(
-        (provider) => provider.id === id,
-      ) ?? null
-    );
+    return this.mailProviderById(workspaceId, id);
+  }
+
+  async mailTemplateByKeyAndStatus(workspaceId: string, templateKey: string, status: string) {
+    const row = await this.db
+      .prepare(
+        "SELECT id, workspace_id, template_key, subject_template, body_text_template, body_html_template, status, locale, created_at, updated_at FROM workspace_mail_templates WHERE workspace_id = ? AND template_key = ? AND status = ? LIMIT 1",
+      )
+      .bind(workspaceId, templateKey, status)
+      .first<{
+        id: string;
+        workspace_id: string;
+        template_key: string;
+        subject_template: string;
+        body_text_template: string;
+        body_html_template: string | null;
+        status: string;
+        locale: string | null;
+        created_at: string;
+        updated_at: string;
+      }>();
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      templateKey: row.template_key,
+      subjectTemplate: row.subject_template,
+      bodyTextTemplate: row.body_text_template,
+      bodyHtmlTemplate: row.body_html_template,
+      status: row.status,
+      locale: row.locale,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 
   async listMailTemplates(workspaceId: string): Promise<MailTemplate[]> {
@@ -2995,11 +3113,7 @@ export class CoreRepository {
         errorSafe: "No active mail provider is configured.",
       };
     const template = request.templateKey
-      ? (await this.listMailTemplates(workspaceId)).find(
-          (item) =>
-            item.templateKey === request.templateKey &&
-            item.status === "active",
-        )
+      ? await this.mailTemplateByKeyAndStatus(workspaceId, request.templateKey, "active")
       : undefined;
     const subject =
       request.subject ??
@@ -3308,7 +3422,7 @@ export class CoreRepository {
 
   async installed() {
     const rows = await this.db
-      .prepare("SELECT manifest_json FROM installed_plugins ORDER BY id")
+      .prepare("SELECT manifest_json FROM installed_plugins ORDER BY id LIMIT 200")
       .all<{ manifest_json: string }>();
     return rows.results.map((row) =>
       pluginManifestSchema.parse(JSON.parse(row.manifest_json)),
@@ -3423,7 +3537,7 @@ export class CoreRepository {
     const states = await this.workspacePlugins(workspaceId);
     const plugins = await this.db
       .prepare(
-        "SELECT id, name, version, worker_isolation FROM installed_plugins ORDER BY id",
+        "SELECT id, name, version, worker_isolation FROM installed_plugins ORDER BY id LIMIT 200",
       )
       .all<{
         id: string;
@@ -5286,6 +5400,19 @@ export class CoreRepository {
     return rows.results.map((row) => this.cloudflareConnectionRecord(row));
   }
 
+  async cloudflareConnectionById(workspaceId: string, id: string): Promise<WorkspaceCloudflareConnection | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT id, workspace_id, label, account_id, configuration_ref, token_hint, allowed_zones_json, status, default_for_provisioning, last_checked_at, last_error, created_at, updated_at
+        FROM workspace_cloudflare_accounts
+        WHERE workspace_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(workspaceId, id)
+      .first<WorkspaceCloudflareConnectionRow>();
+    if (!row) return null;
+    return this.cloudflareConnectionRecord(row);
+  }
+
   async cloudflareProvisioningTargetOptions(workspaceId: string) {
     const connections = await this.listCloudflareConnections(workspaceId);
     return [
@@ -5361,11 +5488,7 @@ export class CoreRepository {
       { connectionId: id, label },
       actorId,
     );
-    return (
-      (await this.listCloudflareConnections(workspaceId)).find(
-        (connection) => connection.id === id,
-      ) ?? null
-    );
+    return this.cloudflareConnectionById(workspaceId, id);
   }
 
   async deleteCloudflareConnection(
@@ -5392,9 +5515,7 @@ export class CoreRepository {
     workspaceId: string,
     connectionId: string,
   ) {
-    const connection = (await this.listCloudflareConnections(workspaceId)).find(
-      (item) => item.id === connectionId,
-    );
+    const connection = await this.cloudflareConnectionById(workspaceId, connectionId);
     if (!connection) throw new Error("Cloudflare connection was not found.");
     if (!connection.configurationRef)
       throw new Error("Cloudflare configuration reference is not set.");
@@ -5444,10 +5565,7 @@ export class CoreRepository {
       );
       return {
         ok: true,
-        connection:
-          (await this.listCloudflareConnections(workspaceId)).find(
-            (item) => item.id === connectionId,
-          ) ?? null,
+        connection: await this.cloudflareConnectionById(workspaceId, connectionId),
       };
     } catch (error) {
       const message =
@@ -5496,10 +5614,7 @@ export class CoreRepository {
       return {
         ok: true,
         zones,
-        connection:
-          (await this.listCloudflareConnections(workspaceId)).find(
-            (item) => item.id === connectionId,
-          ) ?? null,
+        connection: await this.cloudflareConnectionById(workspaceId, connectionId),
       };
     } catch (error) {
       const message =

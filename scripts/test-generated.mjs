@@ -907,6 +907,34 @@ function testProductionRuntimeHardening() {
     fail(
       "Public runtime data/actions do not dispatch through the generic runtime bridge",
     );
+
+  // Guard: prevent list-then-find anti-pattern (loading all DB records to find one by ID)
+  const listFindPatterns = [
+    /await\s+\w+\.listDomains\([^)]*\)\)\.find\(/,
+    /await\s+\w+\.listUsers\([^)]*\)\)\.find\(/,
+    /await\s+\w+\.installed\([^)]*\)\)\.find\(/,
+    /await\s+\w+\.plans\([^)]*\)\)\.find\(/,
+    /await\s+this\.list\w+\([^)]*\)\)\.find\(/,
+  ];
+  for (const pattern of listFindPatterns) {
+    if (pattern.test(repoSource))
+      fail(`CoreRepository uses list-then-find anti-pattern (${pattern.source.slice(0, 40)}...) — add a targeted byId() method instead`);
+    if (pattern.test(coreIndex))
+      fail(`Core index uses list-then-find anti-pattern (${pattern.source.slice(0, 40)}...) — use a targeted byId() repository method instead`);
+    if (pattern.test(authIndex))
+      fail(`Auth index uses list-then-find anti-pattern (${pattern.source.slice(0, 40)}...) — use a targeted byId() repository method instead`);
+  }
+  // Guard: critical admin queries must have a LIMIT
+  const unboundedAdminQueries = [
+    "FROM user_plan_assignments ORDER BY created_at DESC\"",
+    "FROM plans ORDER BY name\"",
+    "FROM installed_plugins ORDER BY id\"",
+  ];
+  for (const pattern of unboundedAdminQueries) {
+    if (repoSource.includes(pattern))
+      fail(`CoreRepository has unbounded query without LIMIT: ...${pattern.slice(-50)}`);
+  }
+
   pass("Production runtime hardening source scan completed");
 }
 

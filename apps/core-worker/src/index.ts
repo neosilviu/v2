@@ -3233,9 +3233,7 @@ app.post("/workspaces/:workspaceId/domains/:domainId/verify", async (c) => {
   const denied = await requirePermission(c, workspaceId, "domains.verify");
   if (denied) return denied;
   const repo = new CoreRepository(c.env.CORE_DB);
-  const domain = (await repo.listDomains(workspaceId)).find(
-    (entry) => entry.id === c.req.param("domainId"),
-  );
+  const domain = await repo.domainById(workspaceId, c.req.param("domainId"));
   if (!domain)
     return c.json(
       errorResponse(failure("not_found", "Domain is not available.")),
