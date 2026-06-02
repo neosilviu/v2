@@ -1,8 +1,14 @@
-import type { ActionDefinition, DeclarativePageContribution } from "@v2/ui-schema";
+import type {
+  ActionDefinition,
+  DeclarativePageContribution,
+} from "@v2/ui-schema";
 
 export type TemplateCallbacks = {
   onAction?: (action: ActionDefinition) => void | Promise<void>;
-  onSubmit?: (page: DeclarativePageContribution, values: Record<string, FormDataEntryValue>) => void | Promise<void>;
+  onSubmit?: (
+    page: DeclarativePageContribution,
+    values: Record<string, FormDataEntryValue>,
+  ) => void | Promise<void>;
 };
 
 export type ProfilePageProps = {

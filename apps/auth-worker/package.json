@@ -1,7 +1,31 @@
 {
-  "name": "@v2/auth-worker", "version": "0.0.0", "private": true, "type": "module",
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "dev": "node ../../scripts/wrangler-dev.mjs --port 8788 --inspector-port 9288", "build": "tsc --noEmit -p tsconfig.json", "db:generate": "drizzle-kit generate --config=drizzle.config.ts" },
-  "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@better-auth/drizzle-adapter": "catalog:", "@better-auth/passkey": "catalog:", "@v2/auth-contracts": "workspace:*", "@v2/feedback-runtime": "workspace:*", "@v2/rpc-contracts": "workspace:*", "better-auth": "catalog:", "drizzle-orm": "catalog:", "hono": "catalog:" },
-  "devDependencies": { "@cloudflare/workers-types": "catalog:", "drizzle-kit": "catalog:", "typescript": "catalog:", "wrangler": "catalog:" }
+  "name": "@v2/auth-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "node ../../scripts/wrangler-dev.mjs --port 8788 --inspector-port 9288",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "db:generate": "drizzle-kit generate --config=drizzle.config.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@better-auth/drizzle-adapter": "catalog:",
+    "@better-auth/passkey": "catalog:",
+    "@v2/auth-contracts": "workspace:*",
+    "@v2/feedback-runtime": "workspace:*",
+    "@v2/rpc-contracts": "workspace:*",
+    "better-auth": "catalog:",
+    "drizzle-orm": "catalog:",
+    "hono": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "drizzle-kit": "catalog:",
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
+  }
 }

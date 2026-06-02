@@ -3,6 +3,6 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-05-25",
   "dispatch_namespaces": [
-    { "binding": "DISPATCHER", "namespace": "v2-plugin-runtime" }
-  ]
+    { "binding": "DISPATCHER", "namespace": "v2-plugin-runtime" },
+  ],
 }

@@ -1,17 +1,55 @@
 import type { Hono } from "hono";
 import type { CoreEnv } from "./env";
 
-type CoreApiEnv = { Bindings: CoreEnv; Variables: { user: { id: string; email: string; name?: string | null; impersonatedBy?: string | null } | null; internal: boolean } };
+type CoreApiEnv = {
+  Bindings: CoreEnv;
+  Variables: {
+    user: {
+      id: string;
+      email: string;
+      name?: string | null;
+      impersonatedBy?: string | null;
+    } | null;
+    internal: boolean;
+  };
+};
 
-type EndpointAny<I = {}> = { input: I; output: any; outputFormat: any; status: any };
-type RouteEndpoints<Methods extends string, I = {}> = { [Method in Methods as `$${Lowercase<Method>}`]: EndpointAny<I> };
+type EndpointAny<I = {}> = {
+  input: I;
+  output: any;
+  outputFormat: any;
+  status: any;
+};
+type RouteEndpoints<Methods extends string, I = {}> = {
+  [Method in Methods as `$${Lowercase<Method>}`]: EndpointAny<I>;
+};
 
-type JsonPost<TParam extends Record<string, string>, TJson> = { $post: (args: { param: TParam; json: TJson }) => Promise<Response> };
-type JsonPostQuery<TParam extends Record<string, string>, TJson, TQuery extends Record<string, string | string[]>> = { $post: (args: { param: TParam; json: TJson; query: TQuery }) => Promise<Response> };
-type JsonPostNoParam<TJson> = { $post: (args: { json: TJson }) => Promise<Response> };
-type JsonGet<TParam extends Record<string, string>> = { $get: (args: { param: TParam }) => Promise<Response> };
-type JsonPut<TParam extends Record<string, string>, TJson> = { $put: (args: { param: TParam; json: TJson }) => Promise<Response> };
-type JsonDelete<TParam extends Record<string, string>> = { $delete: (args: { param: TParam }) => Promise<Response> };
+type JsonPost<TParam extends Record<string, string>, TJson> = {
+  $post: (args: { param: TParam; json: TJson }) => Promise<Response>;
+};
+type JsonPostQuery<
+  TParam extends Record<string, string>,
+  TJson,
+  TQuery extends Record<string, string | string[]>,
+> = {
+  $post: (args: {
+    param: TParam;
+    json: TJson;
+    query: TQuery;
+  }) => Promise<Response>;
+};
+type JsonPostNoParam<TJson> = {
+  $post: (args: { json: TJson }) => Promise<Response>;
+};
+type JsonGet<TParam extends Record<string, string>> = {
+  $get: (args: { param: TParam }) => Promise<Response>;
+};
+type JsonPut<TParam extends Record<string, string>, TJson> = {
+  $put: (args: { param: TParam; json: TJson }) => Promise<Response>;
+};
+type JsonDelete<TParam extends Record<string, string>> = {
+  $delete: (args: { param: TParam }) => Promise<Response>;
+};
 
 export type CoreApiSchema = {
   "/health": RouteEndpoints<"get">;
@@ -64,7 +102,9 @@ export type CoreApiSchema = {
   "/workspaces/:workspaceId/interface/contributions": RouteEndpoints<"get">;
   "/workspaces/:workspaceId/interface/contributions/:contributionId": RouteEndpoints<"put">;
   "/workspaces/:workspaceId/interface/pages": RouteEndpoints<"post">;
-  "/workspaces/:workspaceId/interface/pages/:contributionId": RouteEndpoints<"get" | "delete">;
+  "/workspaces/:workspaceId/interface/pages/:contributionId": RouteEndpoints<
+    "get" | "delete"
+  >;
   "/workspaces/:workspaceId/tool-approvals": RouteEndpoints<"get">;
   "/workspaces/:workspaceId/approval-requests": RouteEndpoints<"get">;
   "/public/:workspaceId/runtime/data": RouteEndpoints<"post">;
@@ -79,21 +119,53 @@ export type CoreApiCompatibility = {
       plugins: {
         ":pluginId": {
           operations: {
-            ":operationId": JsonPost<{ workspaceId: string; pluginId: string; operationId: string }, { input?: unknown; routeParams?: Record<string, string>; queryParams?: Record<string, string | string[]> }>;
+            ":operationId": JsonPost<
+              { workspaceId: string; pluginId: string; operationId: string },
+              {
+                input?: unknown;
+                routeParams?: Record<string, string>;
+                queryParams?: Record<string, string | string[]>;
+              }
+            >;
           };
         };
       };
       interface: {
         contributions: {
-          ":contributionId": JsonPut<{ workspaceId: string; contributionId: string }, Record<string, unknown>>;
+          ":contributionId": JsonPut<
+            { workspaceId: string; contributionId: string },
+            Record<string, unknown>
+          >;
         };
         pages: JsonPost<{ workspaceId: string }, Record<string, unknown>> & {
-          ":contributionId": JsonGet<{ workspaceId: string; contributionId: string }> & JsonDelete<{ workspaceId: string; contributionId: string }>;
+          ":contributionId": JsonGet<{
+            workspaceId: string;
+            contributionId: string;
+          }> &
+            JsonDelete<{ workspaceId: string; contributionId: string }>;
         };
         settings: {
           runtime: {
-            data: JsonPost<{ workspaceId: string }, { workspaceId: string; contributionId: string; dataSourceId: string; routeParams: Record<string, string>; queryParams: Record<string, string | string[]> }>;
-            actions: JsonPost<{ workspaceId: string }, { workspaceId: string; contributionId: string; actionId: string; input?: unknown; routeParams: Record<string, string> }>;
+            data: JsonPost<
+              { workspaceId: string },
+              {
+                workspaceId: string;
+                contributionId: string;
+                dataSourceId: string;
+                routeParams: Record<string, string>;
+                queryParams: Record<string, string | string[]>;
+              }
+            >;
+            actions: JsonPost<
+              { workspaceId: string },
+              {
+                workspaceId: string;
+                contributionId: string;
+                actionId: string;
+                input?: unknown;
+                routeParams: Record<string, string>;
+              }
+            >;
           };
         };
       };
@@ -104,24 +176,53 @@ export type CoreApiCompatibility = {
   public: {
     ":workspaceId": {
       runtime: {
-        data: JsonPost<{ workspaceId: string }, { workspaceId: string; contributionId: string; dataSourceId: string; routeParams: Record<string, string>; queryParams: Record<string, string[]> }>;
-        actions: JsonPost<{ workspaceId: string }, { workspaceId: string; contributionId: string; actionId: string; input?: unknown; routeParams: Record<string, string> }>;
+        data: JsonPost<
+          { workspaceId: string },
+          {
+            workspaceId: string;
+            contributionId: string;
+            dataSourceId: string;
+            routeParams: Record<string, string>;
+            queryParams: Record<string, string[]>;
+          }
+        >;
+        actions: JsonPost<
+          { workspaceId: string },
+          {
+            workspaceId: string;
+            contributionId: string;
+            actionId: string;
+            input?: unknown;
+            routeParams: Record<string, string>;
+          }
+        >;
       };
     };
   };
   marketplace: {
     plugins: {
       ":pluginId": {
-        install: JsonPostQuery<{ pluginId: string }, { approvalId?: string }, { workspaceId: string }>;
+        install: JsonPostQuery<
+          { pluginId: string },
+          { approvalId?: string },
+          { workspaceId: string }
+        >;
       };
     };
   };
   "tool-approvals": {
-    decision: JsonPostNoParam<{ workspaceId: string; approvalId: string; decision: "approved" | "denied" }>;
+    decision: JsonPostNoParam<{
+      workspaceId: string;
+      approvalId: string;
+      decision: "approved" | "denied";
+    }>;
   };
   "approval-requests": {
     ":approvalId": {
-      decision: JsonPost<{ approvalId: string }, { workspaceId: string; decision: "approved" | "denied" }>;
+      decision: JsonPost<
+        { approvalId: string },
+        { workspaceId: string; decision: "approved" | "denied" }
+      >;
     };
   };
 };

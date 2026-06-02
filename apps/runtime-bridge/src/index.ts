@@ -15,21 +15,36 @@ type DispatchRequest = {
   queryParams?: unknown;
 };
 
-function runtimeUnavailable(message = "Plugin runtime is not deployed in the dispatch namespace.") {
+function runtimeUnavailable(
+  message = "Plugin runtime is not deployed in the dispatch namespace.",
+) {
   return { status: "unavailable" as const, error: message };
 }
 
 function isInternalDispatchRequest(request: Request) {
   const url = new URL(request.url);
-  return url.hostname === "plugin-runtime.internal" || url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  return (
+    url.hostname === "plugin-runtime.internal" ||
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1"
+  );
 }
 
-async function dispatchToLocalRuntime(env: BridgeEnv, body: Required<Pick<DispatchRequest, "workspaceId" | "kind" | "operationId">> & DispatchRequest) {
+async function dispatchToLocalRuntime(
+  env: BridgeEnv,
+  body: Required<
+    Pick<DispatchRequest, "workspaceId" | "kind" | "operationId">
+  > &
+    DispatchRequest,
+) {
   if (!env.PLUGIN_RUNTIME_LOCAL_ORIGIN) return null;
   const upstream = new URL(env.PLUGIN_RUNTIME_LOCAL_ORIGIN);
   const request = new Request(`${upstream.origin}/runtime/execute`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-v2-runtime-bridge-dev": "1" },
+    headers: {
+      "content-type": "application/json",
+      "x-v2-runtime-bridge-dev": "1",
+    },
     body: JSON.stringify({
       workspaceId: body.workspaceId,
       kind: body.kind,
@@ -46,15 +61,34 @@ async function dispatchToLocalRuntime(env: BridgeEnv, body: Required<Pick<Dispat
 app.get("/health", (c) => c.json({ ok: true, service: "runtime-bridge" }));
 
 app.post("/dispatch", async (c) => {
-  if (!isInternalDispatchRequest(c.req.raw)) return c.json({ status: "denied", error: "Runtime dispatch is internal only." }, 403);
-  const body = await c.req.json().catch(() => null) as DispatchRequest | null;
-  const runtimeKey = typeof body?.runtimeKey === "string" ? body.runtimeKey : "";
+  if (!isInternalDispatchRequest(c.req.raw))
+    return c.json(
+      { status: "denied", error: "Runtime dispatch is internal only." },
+      403,
+    );
+  const body = (await c.req.json().catch(() => null)) as DispatchRequest | null;
+  const runtimeKey =
+    typeof body?.runtimeKey === "string" ? body.runtimeKey : "";
   const pluginId = typeof body?.pluginId === "string" ? body.pluginId : "";
-  const workspaceId = typeof body?.workspaceId === "string" ? body.workspaceId : "";
-  const operationId = typeof body?.operationId === "string" ? body.operationId : "";
-  const kind = body?.kind === "tool" || body?.kind === "action" || body?.kind === "data" || body?.kind === "operation" ? body.kind : "";
+  const workspaceId =
+    typeof body?.workspaceId === "string" ? body.workspaceId : "";
+  const operationId =
+    typeof body?.operationId === "string" ? body.operationId : "";
+  const kind =
+    body?.kind === "tool" ||
+    body?.kind === "action" ||
+    body?.kind === "data" ||
+    body?.kind === "operation"
+      ? body.kind
+      : "";
   if (!runtimeKey || !pluginId || !workspaceId || !operationId || !kind) {
-    return c.json({ status: "denied", error: "A valid plugin runtime dispatch request is required." }, 400);
+    return c.json(
+      {
+        status: "denied",
+        error: "A valid plugin runtime dispatch request is required.",
+      },
+      400,
+    );
   }
   const dispatch = body ?? {};
 
@@ -67,27 +101,38 @@ app.post("/dispatch", async (c) => {
   let response: Response | null = null;
   if (runtime) {
     try {
-      response = await runtime.fetch("https://plugin-runtime.internal/runtime/execute", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        workspaceId,
-        kind,
-        operationId,
-        contributionId: dispatch.contributionId,
-        input: dispatch.input,
-        routeParams: dispatch.routeParams,
-        queryParams: dispatch.queryParams,
-      }),
-      });
+      response = await runtime.fetch(
+        "https://plugin-runtime.internal/runtime/execute",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            workspaceId,
+            kind,
+            operationId,
+            contributionId: dispatch.contributionId,
+            input: dispatch.input,
+            routeParams: dispatch.routeParams,
+            queryParams: dispatch.queryParams,
+          }),
+        },
+      );
     } catch {
       response = null;
     }
   }
-  response ??= await dispatchToLocalRuntime(c.env, { ...dispatch, workspaceId, kind, operationId });
+  response ??= await dispatchToLocalRuntime(c.env, {
+    ...dispatch,
+    workspaceId,
+    kind,
+    operationId,
+  });
 
   if (!response) return c.json(runtimeUnavailable(), 501);
-  return new Response(response.body, { status: response.status, headers: response.headers });
+  return new Response(response.body, {
+    status: response.status,
+    headers: response.headers,
+  });
 });
 
 export default app;

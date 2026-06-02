@@ -32,13 +32,23 @@ This note tracks the measured local results for the Core/Auth/Web foundation bat
 - Better Auth duplicate signup body observed during audit:
 
 ```json
-{"message":"User already exists. Use another email.","code":"USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL"}
+{
+  "message": "User already exists. Use another email.",
+  "code": "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL"
+}
 ```
 
 Mapped platform error:
 
 ```json
-{"error":{"code":"owner_account_already_exists","message":"Owner account already exists. Sign in with the authorized owner email to activate this workspace.","details":{"email":"owner@example.local"},"retryable":false}}
+{
+  "error": {
+    "code": "owner_account_already_exists",
+    "message": "Owner account already exists. Sign in with the authorized owner email to activate this workspace.",
+    "details": { "email": "owner@example.local" },
+    "retryable": false
+  }
+}
 ```
 
 Owner setup now maps token/account failures to platform codes including `owner_setup_invalid_token`, `owner_setup_expired`, `owner_setup_email_mismatch`, `owner_setup_token_consumed`, `owner_account_already_exists`, `owner_password_invalid`, `owner_signup_failed` and `owner_membership_activation_failed`.
@@ -73,30 +83,30 @@ This is not a local-only bypass. Revocation, logout, membership and role changes
 
 `pnpm perf:local`
 
-| Endpoint | min | median | p95 | max |
-| --- | ---: | ---: | ---: | ---: |
-| workspace bootstrap | 1.8ms | 2.1ms | 3.1ms | 3.3ms |
-| security bootstrap | 1.9ms | 2.1ms | 3.0ms | 3.1ms |
-| settings plugin navigation | 1.6ms | 2.0ms | 2.7ms | 2.9ms |
-| general settings | 1.7ms | 1.9ms | 3.1ms | 3.1ms |
+| Endpoint                   |   min | median |   p95 |   max |
+| -------------------------- | ----: | -----: | ----: | ----: |
+| workspace bootstrap        | 1.8ms |  2.1ms | 3.1ms | 3.3ms |
+| security bootstrap         | 1.9ms |  2.1ms | 3.0ms | 3.1ms |
+| settings plugin navigation | 1.6ms |  2.0ms | 2.7ms | 2.9ms |
+| general settings           | 1.7ms |  1.9ms | 3.1ms | 3.1ms |
 
 ## Request Graph After
 
 Measured with Chromium against local dev stack.
 
-| Flow | Before | After |
-| --- | --- | --- |
-| Anonymous boot | Private `/workspaces/current/bootstrap` could run before session and produce `401`. | `GET /session`, `GET /public/auth/login-config`; no private bootstrap, no `401`. |
-| Login | Manual login could return `401` because deterministic local account was not guaranteed. | `POST /api/auth/sign-in/email`, then `GET /session`, then `GET /workspaces/current/bootstrap`. |
-| Dashboard refresh | Multiple duplicated shell reads plus unnecessary `OPTIONS` preflights were observed. | One session probe plus one workspace bootstrap read. |
-| Settings Security | Separate security, sessions and RBAC reads plus runtime tab resolution were observed. | One extra aggregate security bootstrap read after shell bootstrap. |
+| Flow              | Before                                                                                  | After                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Anonymous boot    | Private `/workspaces/current/bootstrap` could run before session and produce `401`.     | `GET /session`, `GET /public/auth/login-config`; no private bootstrap, no `401`.               |
+| Login             | Manual login could return `401` because deterministic local account was not guaranteed. | `POST /api/auth/sign-in/email`, then `GET /session`, then `GET /workspaces/current/bootstrap`. |
+| Dashboard refresh | Multiple duplicated shell reads plus unnecessary `OPTIONS` preflights were observed.    | One session probe plus one workspace bootstrap read.                                           |
+| Settings Security | Separate security, sessions and RBAC reads plus runtime tab resolution were observed.   | One extra aggregate security bootstrap read after shell bootstrap.                             |
 
-| Flow | GET | POST | OPTIONS | 4xx/5xx | Console errors |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Anonymous boot | 2 | 0 | 0 | 0 | 0 |
-| Login | 3 | 1 | 0 | 0 | 0 |
-| Dashboard refresh | 2 | 0 | 0 | 0 | 0 |
-| Settings Security direct navigation | 3 | 0 | 0 | 0 | 0 |
+| Flow                                | GET | POST | OPTIONS | 4xx/5xx | Console errors |
+| ----------------------------------- | --: | ---: | ------: | ------: | -------------: |
+| Anonymous boot                      |   2 |    0 |       0 |       0 |              0 |
+| Login                               |   3 |    1 |       0 |       0 |              0 |
+| Dashboard refresh                   |   2 |    0 |       0 |       0 |              0 |
+| Settings Security direct navigation |   3 |    0 |       0 |       0 |              0 |
 
 Settings Security after shell bootstrap uses one additional data read: `/workspaces/:workspaceId/auth/security-bootstrap`.
 

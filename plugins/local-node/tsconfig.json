@@ -1,1 +1,4 @@
-{ "extends": "../../tsconfig.base.json", "include": ["manifest.ts", "server", "docs"] }
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["manifest.ts", "server", "docs"]
+}

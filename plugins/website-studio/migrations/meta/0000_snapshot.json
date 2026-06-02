@@ -54,10 +54,7 @@
       "indexes": {
         "website_assets_object_key_idx": {
           "name": "website_assets_object_key_idx",
-          "columns": [
-            "workspace_id",
-            "object_key"
-          ],
+          "columns": ["workspace_id", "object_key"],
           "isUnique": true
         }
       },
@@ -133,11 +130,7 @@
       "indexes": {
         "website_context_surface_idx": {
           "name": "website_context_surface_idx",
-          "columns": [
-            "workspace_id",
-            "surface_id",
-            "page_id"
-          ],
+          "columns": ["workspace_id", "surface_id", "page_id"],
           "isUnique": true
         }
       },
@@ -146,12 +139,8 @@
           "name": "website_context_shares_page_id_website_pages_id_fk",
           "tableFrom": "website_context_shares",
           "tableTo": "website_pages",
-          "columnsFrom": [
-            "page_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["page_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -240,18 +229,12 @@
       "indexes": {
         "website_pages_workspace_slug_idx": {
           "name": "website_pages_workspace_slug_idx",
-          "columns": [
-            "workspace_id",
-            "slug"
-          ],
+          "columns": ["workspace_id", "slug"],
           "isUnique": true
         },
         "website_pages_workspace_status_idx": {
           "name": "website_pages_workspace_status_idx",
-          "columns": [
-            "workspace_id",
-            "status"
-          ],
+          "columns": ["workspace_id", "status"],
           "isUnique": false
         }
       },
@@ -328,10 +311,7 @@
       "indexes": {
         "website_sections_page_order_idx": {
           "name": "website_sections_page_order_idx",
-          "columns": [
-            "page_id",
-            "sort_order"
-          ],
+          "columns": ["page_id", "sort_order"],
           "isUnique": false
         }
       },
@@ -340,12 +320,8 @@
           "name": "website_sections_page_id_website_pages_id_fk",
           "tableFrom": "website_sections",
           "tableTo": "website_pages",
-          "columnsFrom": [
-            "page_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["page_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }

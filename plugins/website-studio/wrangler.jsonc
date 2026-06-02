@@ -4,9 +4,13 @@
   "compatibility_date": "2026-05-25",
   "minify": true,
   "d1_databases": [
-    { "binding": "WEBSITE_DB", "database_name": "v2-website-studio", "database_id": "7ac8b472-a1f4-4a88-b3f0-43fdb6db46ed" }
+    {
+      "binding": "WEBSITE_DB",
+      "database_name": "v2-website-studio",
+      "database_id": "7ac8b472-a1f4-4a88-b3f0-43fdb6db46ed",
+    },
   ],
   "kv_namespaces": [
-    { "binding": "WEBSITE_KV", "id": "7737d924-4f96-41b9-87a2-fa4fd6ea1b95" }
-  ]
+    { "binding": "WEBSITE_KV", "id": "7737d924-4f96-41b9-87a2-fa4fd6ea1b95" },
+  ],
 }

@@ -220,8 +220,7 @@ authApiRoutes = authApiRoutes.get("/public/auth/profile", async (c) => {
     parsed.config.db,
     new Set(parsed.config.adminEmails),
   );
-  const users = await repo.listUsers();
-  const profile = users.find((user) => user.id === userId);
+  const profile = await repo.userProfileById(userId);
   if (!profile)
     return c.json(
       errorResponse(

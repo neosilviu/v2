@@ -14,8 +14,13 @@ const defaultDecisionByRisk: Record<Risk, ApprovalDecision> = {
 };
 
 export class RuntimePolicy {
-  decide(tool: ToolContribution, context: ToolExecutionContext): ApprovalDecision {
-    const hasPermissions = tool.permissions.every((permission) => context.permissions.has(permission));
+  decide(
+    tool: ToolContribution,
+    context: ToolExecutionContext,
+  ): ApprovalDecision {
+    const hasPermissions = tool.permissions.every((permission) =>
+      context.permissions.has(permission),
+    );
     if (!hasPermissions) return "deny";
     if (context.approvedToolIds?.has(tool.id)) return "allow";
     return defaultDecisionByRisk[tool.risk];

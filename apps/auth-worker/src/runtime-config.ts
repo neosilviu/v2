@@ -119,11 +119,18 @@ function sessionDeviceLabel(userAgent: string | null) {
   return userAgent.slice(0, 80);
 }
 
+function currentTimestampSeconds() {
+  return Math.floor(Date.now() / 1000);
+}
+
 export type RuntimeAuthProviderState = {
   github: boolean;
 };
 
 export class AuthRuntimeRepository {
+  /** In-memory flag — avoids repeating the INSERT OR IGNORE bootstrap batch on every public request within the same Worker isolate lifetime. */
+  private static bootstrapDone = false;
+
   constructor(
     private readonly db: D1Database,
     private readonly platformAdminEmails: Set<string> = new Set(),
@@ -134,6 +141,7 @@ export class AuthRuntimeRepository {
   }
 
   async ensureBootstrap(providerState: RuntimeAuthProviderState) {
+    if (AuthRuntimeRepository.bootstrapDone) return;
     await this.db.batch([
       this.db.prepare(`INSERT OR IGNORE INTO auth_methods
         (id, workspace_id, type, provider_id, title, status, public_visible, display_order, configuration_ref)
@@ -212,6 +220,7 @@ export class AuthRuntimeRepository {
           }),
         ),
     ]);
+    AuthRuntimeRepository.bootstrapDone = true;
   }
 
   async publicPolicy(workspaceId?: string | null) {
@@ -452,7 +461,7 @@ export class AuthRuntimeRepository {
   async sessionsSummary() {
     const sessionCount = await this.db
       .prepare("SELECT COUNT(*) AS count FROM session WHERE expires_at > ?")
-      .bind(Date.now())
+      .bind(currentTimestampSeconds())
       .first<{ count: number }>()
       .catch(() => ({ count: 0 }));
     const passkeyCount = await this.db
@@ -484,7 +493,8 @@ export class AuthRuntimeRepository {
     }));
   }
 
-  async listUsers() {
+  async listUsers(options: { limit?: number; cursor?: string } = {}) {
+    const limit = Math.min(options.limit ?? 200, 500);
     const rows = await this.db
       .prepare(
         `SELECT users.id, users.name, users.email, users.email_verified, users.two_factor_enabled, users.disabled_at, users.created_at, users.updated_at,
@@ -496,10 +506,12 @@ export class AuthRuntimeRepository {
       FROM user users
       LEFT JOIN passkey passkeys ON passkeys.user_id = users.id
       LEFT JOIN session sessions ON sessions.user_id = users.id AND sessions.expires_at > ?
+      WHERE (? IS NULL OR users.created_at < ?)
       GROUP BY users.id, users.name, users.email, users.email_verified, users.two_factor_enabled, users.disabled_at, users.language, users.location, users.timezone, users.created_at, users.updated_at
-      ORDER BY users.created_at DESC`,
+      ORDER BY users.created_at DESC
+      LIMIT ?`,
       )
-      .bind(Date.now())
+      .bind(currentTimestampSeconds(), options.cursor ?? null, options.cursor ?? null, limit)
       .all<AuthUserAdminRow>();
     return rows.results.map((row) => ({
       id: row.id,
@@ -517,6 +529,41 @@ export class AuthRuntimeRepository {
       updatedAt: row.updated_at,
       isPlatformAdmin: this.platformAdminEmails.has(row.email.toLowerCase()),
     }));
+  }
+
+  async userProfileById(userId: string) {
+    const now = currentTimestampSeconds();
+    const row = await this.db
+      .prepare(
+        `SELECT users.id, users.name, users.email, users.email_verified, users.two_factor_enabled, users.disabled_at, users.created_at, users.updated_at,
+        users.language, users.location, users.timezone,
+        COUNT(DISTINCT passkeys.id) AS passkey_count,
+        COUNT(DISTINCT sessions.id) AS active_session_count
+      FROM user users
+      LEFT JOIN passkey passkeys ON passkeys.user_id = users.id
+      LEFT JOIN session sessions ON sessions.user_id = users.id AND sessions.expires_at > ?
+      WHERE users.id = ?
+      GROUP BY users.id`,
+      )
+      .bind(now, userId)
+      .first<AuthUserAdminRow>();
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      emailVerified: row.email_verified === 1,
+      twoFactorEnabled: row.two_factor_enabled === 1,
+      language: row.language,
+      location: row.location,
+      timezone: row.timezone,
+      disabledAt: row.disabled_at,
+      passkeys: row.passkey_count,
+      sessions: row.active_session_count,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      isPlatformAdmin: this.platformAdminEmails.has(row.email.toLowerCase()),
+    };
   }
 
   async userById(userId: string) {
@@ -625,7 +672,7 @@ export class AuthRuntimeRepository {
       WHERE user_id = ? AND expires_at > ?
       ORDER BY created_at DESC, id DESC`,
       )
-      .bind(userId, Date.now())
+      .bind(userId, currentTimestampSeconds())
       .all<AuthSessionRow>();
     return rows.results.map((row) => ({
       id: row.id,
@@ -649,7 +696,7 @@ export class AuthRuntimeRepository {
         ORDER BY sessions.updated_at DESC, sessions.created_at DESC
         LIMIT 200`,
       )
-      .bind(Date.now())
+      .bind(currentTimestampSeconds())
       .all<AuthAdminSessionRow>();
     return rows.results.map((row) => ({
       id: row.id,

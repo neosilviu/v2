@@ -5,9 +5,14 @@ export const providerConnectionOperationSchema = z.object({
   connectionId: z.string().min(1),
 });
 
-export const providerConnectionTestSchema = providerConnectionOperationSchema.extend({
-  modelId: z.string().min(1).optional(),
-});
+export const providerConnectionTestSchema =
+  providerConnectionOperationSchema.extend({
+    modelId: z.string().min(1).optional(),
+  });
 
-export type ProviderConnectionOperation = z.output<typeof providerConnectionOperationSchema>;
-export type ProviderConnectionTest = z.output<typeof providerConnectionTestSchema>;
+export type ProviderConnectionOperation = z.output<
+  typeof providerConnectionOperationSchema
+>;
+export type ProviderConnectionTest = z.output<
+  typeof providerConnectionTestSchema
+>;

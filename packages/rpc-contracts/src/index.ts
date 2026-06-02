@@ -1,16 +1,77 @@
 import { z } from "zod";
 
 export const workspaceIdSchema = z.string().min(1);
-export const settingScopeSchema = z.union([z.literal("platform"), z.string().regex(/^plugin:[a-zA-Z0-9._-]+$/)]);
-export const pluginActivationRequestSchema = z.object({ workspaceId: workspaceIdSchema, pluginId: z.string().min(1) });
-export const pluginInstallRequestSchema = z.object({ workspaceId: workspaceIdSchema, bundle: z.unknown().optional(), approvalId: z.string().min(1).optional() }).refine((value) => value.bundle !== undefined || value.approvalId, { message: "A plugin bundle or approvalId is required." });
-export const capabilityGrantRequestSchema = z.object({ workspaceId: workspaceIdSchema, pluginId: z.string().min(1), capabilities: z.array(z.string().min(1)) });
-export const toolExecutionRequestSchema = z.object({ workspaceId: workspaceIdSchema, toolId: z.string().min(1), input: z.unknown().optional(), approvalId: z.string().min(1).optional() });
-export const toolApprovalLookupRequestSchema = z.object({ workspaceId: workspaceIdSchema, approvalId: z.string().min(1) });
-export const toolApprovalDecisionRequestSchema = z.object({ workspaceId: workspaceIdSchema, approvalId: z.string().min(1), decision: z.enum(["approved", "denied"]) });
-export const toolApprovalSchema = z.object({ id: z.string().min(1), workspaceId: workspaceIdSchema, pluginId: z.string().min(1), toolId: z.string().min(1), risk: z.string().min(1), status: z.enum(["pending", "approved", "executing", "denied", "consumed", "failed"]), requestedAt: z.string(), decidedAt: z.string().nullable(), consumedAt: z.string().nullable() });
-export const approvalRequestKindSchema = z.enum(["tool_execute", "plugin_install", "plugin_update", "plugin_publish", "public_publish", "auth_config_publish"]);
-export const approvalRequestStatusSchema = z.enum(["pending", "approved", "denied", "expired", "consumed", "revoked"]);
+export const settingScopeSchema = z.union([
+  z.literal("platform"),
+  z.string().regex(/^plugin:[a-zA-Z0-9._-]+$/),
+]);
+export const pluginActivationRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  pluginId: z.string().min(1),
+});
+export const pluginInstallRequestSchema = z
+  .object({
+    workspaceId: workspaceIdSchema,
+    bundle: z.unknown().optional(),
+    approvalId: z.string().min(1).optional(),
+  })
+  .refine((value) => value.bundle !== undefined || value.approvalId, {
+    message: "A plugin bundle or approvalId is required.",
+  });
+export const capabilityGrantRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  pluginId: z.string().min(1),
+  capabilities: z.array(z.string().min(1)),
+});
+export const toolExecutionRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  toolId: z.string().min(1),
+  input: z.unknown().optional(),
+  approvalId: z.string().min(1).optional(),
+});
+export const toolApprovalLookupRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  approvalId: z.string().min(1),
+});
+export const toolApprovalDecisionRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  approvalId: z.string().min(1),
+  decision: z.enum(["approved", "denied"]),
+});
+export const toolApprovalSchema = z.object({
+  id: z.string().min(1),
+  workspaceId: workspaceIdSchema,
+  pluginId: z.string().min(1),
+  toolId: z.string().min(1),
+  risk: z.string().min(1),
+  status: z.enum([
+    "pending",
+    "approved",
+    "executing",
+    "denied",
+    "consumed",
+    "failed",
+  ]),
+  requestedAt: z.string(),
+  decidedAt: z.string().nullable(),
+  consumedAt: z.string().nullable(),
+});
+export const approvalRequestKindSchema = z.enum([
+  "tool_execute",
+  "plugin_install",
+  "plugin_update",
+  "plugin_publish",
+  "public_publish",
+  "auth_config_publish",
+]);
+export const approvalRequestStatusSchema = z.enum([
+  "pending",
+  "approved",
+  "denied",
+  "expired",
+  "consumed",
+  "revoked",
+]);
 export const approvalRequestDecisionSchema = z.enum(["approved", "denied"]);
 export const approvalRequestSchema = z.object({
   id: z.string().min(1),
@@ -29,7 +90,11 @@ export const approvalRequestSchema = z.object({
   consumedAt: z.string().nullable(),
   reason: z.string().nullable(),
 });
-export const approvalRequestDecisionRequestSchema = z.object({ workspaceId: workspaceIdSchema, decision: approvalRequestDecisionSchema, reason: z.string().max(1000).optional() });
+export const approvalRequestDecisionRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  decision: approvalRequestDecisionSchema,
+  reason: z.string().max(1000).optional(),
+});
 export const workspacePublicationSchema = z.object({
   id: z.string().min(1),
   workspaceId: workspaceIdSchema,
@@ -52,7 +117,9 @@ export const workspacePublicationSchema = z.object({
   publishedAt: z.string().nullable().optional(),
   updatedAt: z.string().optional(),
 });
-export const workspacePublicationListSchema = z.object({ publications: z.array(workspacePublicationSchema) });
+export const workspacePublicationListSchema = z.object({
+  publications: z.array(workspacePublicationSchema),
+});
 export const workspacePublicationCreateRequestSchema = z.object({
   workspaceId: workspaceIdSchema,
   pluginId: z.string().min(1),
@@ -71,13 +138,29 @@ export const workspacePublicationUpdateRequestSchema = z.object({
   authenticationMode: z.enum(["anonymous", "customer", "verified"]).optional(),
 });
 export const workspaceMemberSchema = z.object({
-  user: z.object({ id: z.string(), email: z.string().email().optional(), name: z.string().nullable().optional() }),
+  user: z.object({
+    id: z.string(),
+    email: z.string().email().optional(),
+    name: z.string().nullable().optional(),
+  }),
   status: z.enum(["active", "invited", "disabled"]),
-  roles: z.array(z.object({ id: z.string(), name: z.string(), systemKey: z.string().nullable() })),
+  roles: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      systemKey: z.string().nullable(),
+    }),
+  ),
   permissions: z.array(z.string()),
-  overrides: z.array(z.object({ permission: z.string(), effect: z.enum(["allow", "deny"]) })).default([]),
+  overrides: z
+    .array(
+      z.object({ permission: z.string(), effect: z.enum(["allow", "deny"]) }),
+    )
+    .default([]),
 });
-export const workspaceMemberListSchema = z.object({ members: z.array(workspaceMemberSchema) });
+export const workspaceMemberListSchema = z.object({
+  members: z.array(workspaceMemberSchema),
+});
 export const workspaceRoleSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -85,14 +168,18 @@ export const workspaceRoleSchema = z.object({
   description: z.string().nullable(),
   permissions: z.array(z.string()),
 });
-export const workspaceRoleListSchema = z.object({ roles: z.array(workspaceRoleSchema) });
+export const workspaceRoleListSchema = z.object({
+  roles: z.array(workspaceRoleSchema),
+});
 export const workspaceMemberOverrideSchema = z.object({
   workspaceId: z.string(),
   userId: z.string(),
   permission: z.string(),
   effect: z.enum(["allow", "deny"]),
 });
-export const workspaceMemberOverrideListSchema = z.object({ overrides: z.array(workspaceMemberOverrideSchema) });
+export const workspaceMemberOverrideListSchema = z.object({
+  overrides: z.array(workspaceMemberOverrideSchema),
+});
 export const workspacePlanSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -101,7 +188,9 @@ export const workspacePlanSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 });
-export const workspacePlanListSchema = z.object({ plans: z.array(workspacePlanSchema) });
+export const workspacePlanListSchema = z.object({
+  plans: z.array(workspacePlanSchema),
+});
 export const userPlanAssignmentSchema = z.object({
   id: z.string(),
   userId: z.string(),
@@ -112,7 +201,9 @@ export const userPlanAssignmentSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 });
-export const userPlanAssignmentListSchema = z.object({ assignments: z.array(userPlanAssignmentSchema) });
+export const userPlanAssignmentListSchema = z.object({
+  assignments: z.array(userPlanAssignmentSchema),
+});
 export const auditEventSchema = z.object({
   id: z.string().min(1),
   workspaceId: workspaceIdSchema.nullable(),
@@ -121,17 +212,52 @@ export const auditEventSchema = z.object({
   payload: z.record(z.string(), z.unknown()).nullable(),
   createdAt: z.string(),
 });
-export const auditEventListSchema = z.object({ events: z.array(auditEventSchema) });
+export const auditEventListSchema = z.object({
+  events: z.array(auditEventSchema),
+});
 export const toolExecutionResultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("executed"), toolId: z.string(), approvalId: z.string().optional(), result: z.unknown().optional() }),
-  z.object({ status: z.literal("approval-required"), toolId: z.string(), risk: z.string(), approvalId: z.string() }),
-  z.object({ status: z.literal("denied"), toolId: z.string(), reason: z.string() }),
+  z.object({
+    status: z.literal("executed"),
+    toolId: z.string(),
+    approvalId: z.string().optional(),
+    result: z.unknown().optional(),
+  }),
+  z.object({
+    status: z.literal("approval-required"),
+    toolId: z.string(),
+    risk: z.string(),
+    approvalId: z.string(),
+  }),
+  z.object({
+    status: z.literal("denied"),
+    toolId: z.string(),
+    reason: z.string(),
+  }),
 ]);
-export const settingWriteRequestSchema = z.object({ workspaceId: workspaceIdSchema, scope: settingScopeSchema, key: z.string().min(1), value: z.unknown() });
-export const zoneStateSchema = z.object({ id: z.string().min(1), title: z.string(), accepts: z.array(z.string()) });
-export const placementStateSchema = z.object({ surfaceId: z.string(), zoneId: z.string(), order: z.number().int().nonnegative() });
-export const workspaceLayoutSchema = z.object({ zones: z.array(zoneStateSchema), placements: z.array(placementStateSchema) });
-export const layoutWriteRequestSchema = z.object({ workspaceId: workspaceIdSchema, layout: workspaceLayoutSchema });
+export const settingWriteRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  scope: settingScopeSchema,
+  key: z.string().min(1),
+  value: z.unknown(),
+});
+export const zoneStateSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  accepts: z.array(z.string()),
+});
+export const placementStateSchema = z.object({
+  surfaceId: z.string(),
+  zoneId: z.string(),
+  order: z.number().int().nonnegative(),
+});
+export const workspaceLayoutSchema = z.object({
+  zones: z.array(zoneStateSchema),
+  placements: z.array(placementStateSchema),
+});
+export const layoutWriteRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  layout: workspaceLayoutSchema,
+});
 
 export const appErrorCodeSchema = z.enum([
   "validation_failed",
@@ -153,31 +279,72 @@ export const appErrorCodeSchema = z.enum([
   "owner_signup_failed",
   "owner_membership_activation_failed",
 ]);
-export const appErrorSchema = z.object({ code: appErrorCodeSchema, message: z.string().min(1), requestId: z.string().min(1).optional(), fieldErrors: z.record(z.string(), z.array(z.string())).optional(), details: z.record(z.string(), z.unknown()).optional(), retryable: z.boolean().default(false) });
+export const appErrorSchema = z.object({
+  code: appErrorCodeSchema,
+  message: z.string().min(1),
+  requestId: z.string().min(1).optional(),
+  fieldErrors: z.record(z.string(), z.array(z.string())).optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
+  retryable: z.boolean().default(false),
+});
 export const errorResponseSchema = z.object({ error: appErrorSchema });
-export const notificationLevelSchema = z.enum(["info", "success", "warning", "error"]);
-export const notificationSchema = z.object({ id: z.string().min(1), level: notificationLevelSchema, title: z.string().min(1), message: z.string().optional(), source: z.string().min(1).default("platform"), dismissible: z.boolean().default(true), createdAt: z.string(), action: z.object({ label: z.string().min(1), commandId: z.string().min(1) }).optional() });
+export const notificationLevelSchema = z.enum([
+  "info",
+  "success",
+  "warning",
+  "error",
+]);
+export const notificationSchema = z.object({
+  id: z.string().min(1),
+  level: notificationLevelSchema,
+  title: z.string().min(1),
+  message: z.string().optional(),
+  source: z.string().min(1).default("platform"),
+  dismissible: z.boolean().default(true),
+  createdAt: z.string(),
+  action: z
+    .object({ label: z.string().min(1), commandId: z.string().min(1) })
+    .optional(),
+});
 export type ToolExecutionRequest = z.output<typeof toolExecutionRequestSchema>;
-export type ToolApprovalLookupRequest = z.output<typeof toolApprovalLookupRequestSchema>;
-export type ToolApprovalDecisionRequest = z.output<typeof toolApprovalDecisionRequestSchema>;
+export type ToolApprovalLookupRequest = z.output<
+  typeof toolApprovalLookupRequestSchema
+>;
+export type ToolApprovalDecisionRequest = z.output<
+  typeof toolApprovalDecisionRequestSchema
+>;
 export type ToolApproval = z.output<typeof toolApprovalSchema>;
 export type ApprovalRequest = z.output<typeof approvalRequestSchema>;
 export type ApprovalRequestKind = z.output<typeof approvalRequestKindSchema>;
-export type ApprovalRequestDecisionRequest = z.output<typeof approvalRequestDecisionRequestSchema>;
+export type ApprovalRequestDecisionRequest = z.output<
+  typeof approvalRequestDecisionRequestSchema
+>;
 export type WorkspacePublication = z.output<typeof workspacePublicationSchema>;
-export type WorkspacePublicationList = z.output<typeof workspacePublicationListSchema>;
-export type WorkspacePublicationCreateRequest = z.output<typeof workspacePublicationCreateRequestSchema>;
-export type WorkspacePublicationUpdateRequest = z.output<typeof workspacePublicationUpdateRequestSchema>;
+export type WorkspacePublicationList = z.output<
+  typeof workspacePublicationListSchema
+>;
+export type WorkspacePublicationCreateRequest = z.output<
+  typeof workspacePublicationCreateRequestSchema
+>;
+export type WorkspacePublicationUpdateRequest = z.output<
+  typeof workspacePublicationUpdateRequestSchema
+>;
 export type WorkspaceMember = z.output<typeof workspaceMemberSchema>;
 export type WorkspaceMemberList = z.output<typeof workspaceMemberListSchema>;
 export type WorkspaceRole = z.output<typeof workspaceRoleSchema>;
 export type WorkspaceRoleList = z.output<typeof workspaceRoleListSchema>;
-export type WorkspaceMemberOverride = z.output<typeof workspaceMemberOverrideSchema>;
-export type WorkspaceMemberOverrideList = z.output<typeof workspaceMemberOverrideListSchema>;
+export type WorkspaceMemberOverride = z.output<
+  typeof workspaceMemberOverrideSchema
+>;
+export type WorkspaceMemberOverrideList = z.output<
+  typeof workspaceMemberOverrideListSchema
+>;
 export type WorkspacePlan = z.output<typeof workspacePlanSchema>;
 export type WorkspacePlanList = z.output<typeof workspacePlanListSchema>;
 export type UserPlanAssignment = z.output<typeof userPlanAssignmentSchema>;
-export type UserPlanAssignmentList = z.output<typeof userPlanAssignmentListSchema>;
+export type UserPlanAssignmentList = z.output<
+  typeof userPlanAssignmentListSchema
+>;
 export type AuditEvent = z.output<typeof auditEventSchema>;
 export type AuditEventList = z.output<typeof auditEventListSchema>;
 export type ToolExecutionResult = z.output<typeof toolExecutionResultSchema>;

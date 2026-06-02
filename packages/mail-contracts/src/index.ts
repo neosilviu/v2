@@ -1,11 +1,34 @@
 import { z } from "zod";
 
-export const mailProviderKindSchema = z.enum(["smtp", "transactional-http", "mock-development-only"]);
-export const mailProviderStatusSchema = z.enum(["draft", "configured", "active", "disabled", "error"]);
-export const mailTemplateKeySchema = z.enum(["owner_setup", "workspace_invite", "verify_email", "reset_password", "notification_generic"]);
+export const mailProviderKindSchema = z.enum([
+  "smtp",
+  "transactional-http",
+  "mock-development-only",
+]);
+export const mailProviderStatusSchema = z.enum([
+  "draft",
+  "configured",
+  "active",
+  "disabled",
+  "error",
+]);
+export const mailTemplateKeySchema = z.enum([
+  "owner_setup",
+  "workspace_invite",
+  "verify_email",
+  "reset_password",
+  "notification_generic",
+]);
 export const mailTemplateStatusSchema = z.enum(["draft", "active", "disabled"]);
 export const mailDeliveryStatusSchema = z.enum(["queued", "sent", "failed"]);
-export const mailPurposeSchema = z.enum(["owner_setup", "workspace_invite", "verify_email", "reset_password", "notification_generic", "test"]);
+export const mailPurposeSchema = z.enum([
+  "owner_setup",
+  "workspace_invite",
+  "verify_email",
+  "reset_password",
+  "notification_generic",
+  "test",
+]);
 
 export const mailProviderSafeConfigSchema = z.object({
   host: z.string().min(1).optional(),
@@ -26,7 +49,11 @@ export const mailProviderPublicSummarySchema = z.object({
   fromName: z.string().min(1),
   fromEmail: z.string().email(),
   replyToEmail: z.string().email().nullable().default(null),
-  safeConfig: mailProviderSafeConfigSchema.default({ usernameConfigured: false, passwordConfigured: false, secretHint: null }),
+  safeConfig: mailProviderSafeConfigSchema.default({
+    usernameConfigured: false,
+    passwordConfigured: false,
+    secretHint: null,
+  }),
   isDefaultTransactional: z.boolean(),
   lastTestedAt: z.string().nullable().default(null),
   lastTestStatus: z.string().nullable().default(null),
@@ -41,7 +68,11 @@ export const mailProviderConfigureSchema = z.object({
   fromName: z.string().min(1),
   fromEmail: z.string().email(),
   replyToEmail: z.string().email().nullable().optional(),
-  safeConfig: mailProviderSafeConfigSchema.default({ usernameConfigured: false, passwordConfigured: false, secretHint: null }),
+  safeConfig: mailProviderSafeConfigSchema.default({
+    usernameConfigured: false,
+    passwordConfigured: false,
+    secretHint: null,
+  }),
   configurationRef: z.string().min(1).nullable().optional(),
   enabled: z.boolean().default(true),
 });
@@ -100,10 +131,18 @@ export const mailProviderTestResultSchema = z.object({
 });
 
 export type MailProviderKind = z.output<typeof mailProviderKindSchema>;
-export type MailProviderPublicSummary = z.output<typeof mailProviderPublicSummarySchema>;
-export type MailProviderConfigure = z.output<typeof mailProviderConfigureSchema>;
+export type MailProviderPublicSummary = z.output<
+  typeof mailProviderPublicSummarySchema
+>;
+export type MailProviderConfigure = z.output<
+  typeof mailProviderConfigureSchema
+>;
 export type MailTemplate = z.output<typeof mailTemplateSchema>;
 export type MailMessageRequest = z.output<typeof mailMessageRequestSchema>;
 export type MailDeliveryResult = z.output<typeof mailDeliveryResultSchema>;
-export type MailProviderTestRequest = z.output<typeof mailProviderTestRequestSchema>;
-export type MailProviderTestResult = z.output<typeof mailProviderTestResultSchema>;
+export type MailProviderTestRequest = z.output<
+  typeof mailProviderTestRequestSchema
+>;
+export type MailProviderTestResult = z.output<
+  typeof mailProviderTestResultSchema
+>;

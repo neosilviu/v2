@@ -9,9 +9,7 @@ export default defineConfig({
     baseURL: process.env.V2_WEB_URL ?? "http://localhost:5173",
     trace: "retain-on-failure",
   },
-  projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-  ],
+  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: "CI=true pnpm dev",
     url: process.env.V2_WEB_URL ?? "http://localhost:5173",

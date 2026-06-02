@@ -77,17 +77,12 @@
       "indexes": {
         "provider_connections_workspace_idx": {
           "name": "provider_connections_workspace_idx",
-          "columns": [
-            "workspace_id"
-          ],
+          "columns": ["workspace_id"],
           "isUnique": false
         },
         "provider_connections_title_idx": {
           "name": "provider_connections_title_idx",
-          "columns": [
-            "workspace_id",
-            "title"
-          ],
+          "columns": ["workspace_id", "title"],
           "isUnique": true
         }
       },
@@ -147,17 +142,12 @@
       "indexes": {
         "provider_models_connection_idx": {
           "name": "provider_models_connection_idx",
-          "columns": [
-            "connection_id"
-          ],
+          "columns": ["connection_id"],
           "isUnique": false
         },
         "provider_models_model_idx": {
           "name": "provider_models_model_idx",
-          "columns": [
-            "connection_id",
-            "model_id"
-          ],
+          "columns": ["connection_id", "model_id"],
           "isUnique": true
         }
       },
@@ -166,12 +156,8 @@
           "name": "provider_model_snapshots_connection_id_provider_connections_id_fk",
           "tableFrom": "provider_model_snapshots",
           "tableTo": "provider_connections",
-          "columnsFrom": [
-            "connection_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["connection_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }

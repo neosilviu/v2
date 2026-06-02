@@ -1,10 +1,17 @@
 import type { ProfileData, ProfileWorkspace } from "./profile-types";
 
-export const fieldValue = (value: string | null | undefined, fallback = "unset") => value?.trim() || fallback;
-export const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
+export const fieldValue = (
+  value: string | null | undefined,
+  fallback = "unset",
+) => value?.trim() || fallback;
+export const errorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error ? error.message : fallback;
 export const refreshProfile = () => window.location.reload();
 
-export function navigateTo(pathname: string, params: Record<string, string | undefined> = {}) {
+export function navigateTo(
+  pathname: string,
+  params: Record<string, string | undefined> = {},
+) {
   const url = new URL(window.location.href);
   url.pathname = pathname;
   for (const [key, value] of Object.entries(params)) {
@@ -15,7 +22,10 @@ export function navigateTo(pathname: string, params: Record<string, string | und
 }
 
 export function dateTimeLabel(value: number | string) {
-  const date = typeof value === "number" ? new Date(value > 1_000_000_000_000 ? value : value * 1000) : new Date(value);
+  const date =
+    typeof value === "number"
+      ? new Date(value > 1_000_000_000_000 ? value : value * 1000)
+      : new Date(value);
   return Number.isNaN(date.getTime()) ? "unknown" : date.toLocaleString();
 }
 
@@ -30,7 +40,15 @@ export function sessionDeviceLabel(userAgent: string | null, current: boolean) {
   return current ? "Current browser" : "Browser session";
 }
 
-export function workspaceRoleLabel(workspace: ProfileWorkspace | null | undefined, profile?: ProfileData) {
+export function workspaceRoleLabel(
+  workspace: ProfileWorkspace | null | undefined,
+  profile?: ProfileData,
+) {
   if (profile?.isPlatformAdmin) return "Superadmin";
-  return workspace?.roles?.map((role) => role.name).filter(Boolean).join(", ") || "Member";
+  return (
+    workspace?.roles
+      ?.map((role) => role.name)
+      .filter(Boolean)
+      .join(", ") || "Member"
+  );
 }

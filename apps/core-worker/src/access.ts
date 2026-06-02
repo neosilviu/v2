@@ -1,7 +1,14 @@
-import { csv, allowedOrigins as sharedAllowedOrigins, isInternalRequest as sharedIsInternalRequest } from "@v2/feedback-runtime";
+import {
+  csv,
+  allowedOrigins as sharedAllowedOrigins,
+  isInternalRequest as sharedIsInternalRequest,
+} from "@v2/feedback-runtime";
 import type { CoreEnv } from "./env";
 
-type PlatformAdminEnv = Pick<CoreEnv, "PLATFORM_ADMIN_EMAILS" | "RECOVERY_ADMIN_EMAILS" | "RECOVERY_ADMIN_ENABLED">;
+type PlatformAdminEnv = Pick<
+  CoreEnv,
+  "PLATFORM_ADMIN_EMAILS" | "RECOVERY_ADMIN_EMAILS" | "RECOVERY_ADMIN_ENABLED"
+>;
 
 export type CoreSessionUser = {
   id: string;
@@ -19,7 +26,11 @@ export function allowedOrigins(env: CoreEnv): string[] {
 }
 
 export function isInternalRequest(request: Request): boolean {
-  return sharedIsInternalRequest(request.url, "core.internal", request.headers.has("origin"));
+  return sharedIsInternalRequest(
+    request.url,
+    "core.internal",
+    request.headers.has("origin"),
+  );
 }
 
 function credentialKey(headers: Headers) {
@@ -36,7 +47,10 @@ function recoveryAdminEmails(env: PlatformAdminEnv): string[] {
     : [];
 }
 
-export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreSessionUser | null> {
+export async function readSession(
+  env: CoreEnv,
+  headers: Headers,
+): Promise<CoreSessionUser | null> {
   const key = credentialKey(headers);
   const now = Date.now();
   if (key) {
@@ -50,15 +64,28 @@ export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreS
     const authorization = headers.get("authorization");
     if (cookie) sessionHeaders.set("cookie", cookie);
     if (authorization) sessionHeaders.set("authorization", authorization);
-    const response = await env.AUTH.fetch("https://auth.internal/api/auth/get-session", { headers: sessionHeaders });
+    const response = await env.AUTH.fetch(
+      "https://auth.internal/api/auth/get-session",
+      { headers: sessionHeaders },
+    );
     if (!response.ok) return null;
-    const result = await response.json() as { session?: { impersonatedBy?: string | null } | null; user?: CoreSessionUser | null } | null;
-    const user = result?.user?.id && result.user.email
-      ? { ...result.user, impersonatedBy: result.session?.impersonatedBy ?? null }
-      : null;
+    const result = (await response.json()) as {
+      session?: { impersonatedBy?: string | null } | null;
+      user?: CoreSessionUser | null;
+    } | null;
+    const user =
+      result?.user?.id && result.user.email
+        ? {
+            ...result.user,
+            impersonatedBy: result.session?.impersonatedBy ?? null,
+          }
+        : null;
     if (key) {
       if (sessionAssertionCache.size > 256) sessionAssertionCache.clear();
-      sessionAssertionCache.set(key, { user, expiresAt: now + SESSION_ASSERTION_TTL_MS });
+      sessionAssertionCache.set(key, {
+        user,
+        expiresAt: now + SESSION_ASSERTION_TTL_MS,
+      });
     }
     return user;
   } catch {
@@ -66,12 +93,22 @@ export async function readSession(env: CoreEnv, headers: Headers): Promise<CoreS
   }
 }
 
-export function isRecoveryAdmin(env: PlatformAdminEnv, user: CoreSessionUser | null): boolean {
+export function isRecoveryAdmin(
+  env: PlatformAdminEnv,
+  user: CoreSessionUser | null,
+): boolean {
   if (!user) return false;
-  return [...recoveryAdminEmails(env), ...platformAdminEmails(env)].includes(user.email.toLowerCase());
+  return [...recoveryAdminEmails(env), ...platformAdminEmails(env)].includes(
+    user.email.toLowerCase(),
+  );
 }
 
-export function isPlatformAdmin(env: PlatformAdminEnv, user: CoreSessionUser | null): boolean {
+export function isPlatformAdmin(
+  env: PlatformAdminEnv,
+  user: CoreSessionUser | null,
+): boolean {
   if (!user) return false;
-  return [...platformAdminEmails(env), ...recoveryAdminEmails(env)].includes(user.email.toLowerCase());
+  return [...platformAdminEmails(env), ...recoveryAdminEmails(env)].includes(
+    user.email.toLowerCase(),
+  );
 }

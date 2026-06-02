@@ -4,4 +4,6 @@ import { AgentSurface } from "./AgentSurface";
 
 type Props = { surface: SurfaceContribution };
 const AssistantPanel: ComponentType<Props> = () => <AgentSurface />;
-export const trustedSurfaces: Record<string, ComponentType<Props>> = { "agent-ai.assistant-panel": AssistantPanel };
+export const trustedSurfaces: Record<string, ComponentType<Props>> = {
+  "agent-ai.assistant-panel": AssistantPanel,
+};

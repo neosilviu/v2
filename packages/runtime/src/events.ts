@@ -13,6 +13,8 @@ export class EventBus {
 
   async emit(type: string, payload?: unknown): Promise<void> {
     const event = { type, payload, at: new Date().toISOString() };
-    await Promise.all([...(this.#handlers.get(type) ?? [])].map((handler) => handler(event)));
+    await Promise.all(
+      [...(this.#handlers.get(type) ?? [])].map((handler) => handler(event)),
+    );
   }
 }

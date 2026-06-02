@@ -1,6 +1,19 @@
 {
-  "name": "@v2/plugin-installer", "version": "0.0.0", "private": true, "type": "module", "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "@v2/plugin-contracts": "workspace:*", "fflate": "catalog:" },
-  "devDependencies": { "typescript": "catalog:" }
+  "name": "@v2/plugin-installer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@v2/plugin-contracts": "workspace:*",
+    "fflate": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
 }

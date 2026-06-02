@@ -1,5 +1,13 @@
 import { spawn, spawnSync } from "node:child_process";
-import { commandForPid, isRepoDevCommand, pidListForPort, readDevEndpoints, root, sleep, stopPid } from "./dev-utils.mjs";
+import {
+  commandForPid,
+  isRepoDevCommand,
+  pidListForPort,
+  readDevEndpoints,
+  root,
+  sleep,
+  stopPid,
+} from "./dev-utils.mjs";
 
 async function reachable(url, path) {
   try {
@@ -46,7 +54,12 @@ async function stopOccupiedDevPorts() {
 }
 
 function startDetached(command, args, cwd = root) {
-  const child = spawn(command, args, { cwd, detached: true, stdio: "ignore", env: process.env });
+  const child = spawn(command, args, {
+    cwd,
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  });
   child.unref();
 }
 
@@ -57,9 +70,16 @@ export async function ensureLocalDevStack({ authUrl, coreUrl, webUrl }) {
     reachable(authUrl, "/health"),
   ]);
   if (webReady && coreReady && authReady) return;
-  const stop = spawnSync("pnpm", ["dev:stop"], { cwd: root, encoding: "utf8", stdio: "pipe", env: process.env });
+  const stop = spawnSync("pnpm", ["dev:stop"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: "pipe",
+    env: process.env,
+  });
   if (stop.status !== 0 && stop.status !== null) {
-    throw new Error(`Could not stop stale local dev processes before restart:\n${stop.stdout}\n${stop.stderr}`);
+    throw new Error(
+      `Could not stop stale local dev processes before restart:\n${stop.stdout}\n${stop.stderr}`,
+    );
   }
   await stopOccupiedDevPorts();
   await sleep(500);
@@ -75,5 +95,8 @@ export async function ensureLocalDevStack({ authUrl, coreUrl, webUrl }) {
     waitFor(coreUrl, "/health"),
     waitFor(authUrl, "/health"),
   ]);
-  if (ready.some((item) => !item)) throw new Error(`Local dev services did not become ready at web=${webUrl} core=${coreUrl} auth=${authUrl}`);
+  if (ready.some((item) => !item))
+    throw new Error(
+      `Local dev services did not become ready at web=${webUrl} core=${coreUrl} auth=${authUrl}`,
+    );
 }

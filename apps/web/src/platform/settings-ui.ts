@@ -1,6 +1,10 @@
 import type { Notification } from "@v2/rpc-contracts";
 
-export function createSettingsNotification(level: Notification["level"], title: string, message: string): Notification {
+export function createSettingsNotification(
+  level: Notification["level"],
+  title: string,
+  message: string,
+): Notification {
   return {
     id: crypto.randomUUID(),
     level,

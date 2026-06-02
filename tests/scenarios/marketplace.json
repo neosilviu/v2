@@ -2,8 +2,20 @@
   "name": "Marketplace catalog is public only without workspace state",
   "requests": [
     { "method": "GET", "path": "/marketplace/plugins", "anonymous": 200 },
-    { "method": "GET", "path": "/marketplace/plugins?workspaceId=default", "anonymous": 401 },
-    { "method": "POST", "path": "/marketplace/plugins/example/releases", "anonymous": 403 },
-    { "method": "POST", "path": "/marketplace/plugins/example/install?workspaceId=default", "anonymous": 403 }
+    {
+      "method": "GET",
+      "path": "/marketplace/plugins?workspaceId=default",
+      "anonymous": 401
+    },
+    {
+      "method": "POST",
+      "path": "/marketplace/plugins/example/releases",
+      "anonymous": 403
+    },
+    {
+      "method": "POST",
+      "path": "/marketplace/plugins/example/install?workspaceId=default",
+      "anonymous": 403
+    }
   ]
 }

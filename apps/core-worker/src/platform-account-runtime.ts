@@ -24,9 +24,23 @@ export async function platformAccountRuntimeData(
         language: string | null;
         location: string | null;
         timezone: string | null;
-        passkeys: Array<{ id: string; name: string | null; deviceType: string; backedUp: boolean; createdAt: number | string }>;
+        passkeys: Array<{
+          id: string;
+          name: string | null;
+          deviceType: string;
+          backedUp: boolean;
+          createdAt: number | string;
+        }>;
         sessions: number;
-        activeSessions: Array<{ id: string; current: boolean; ipAddress: string | null; userAgent: string | null; createdAt: number | string; expiresAt: number | string; impersonatedBy: string | null }>;
+        activeSessions: Array<{
+          id: string;
+          current: boolean;
+          ipAddress: string | null;
+          userAgent: string | null;
+          createdAt: number | string;
+          expiresAt: number | string;
+          impersonatedBy: string | null;
+        }>;
         createdAt: number | string;
         updatedAt: number | string;
         isPlatformAdmin: boolean;
@@ -34,6 +48,7 @@ export async function platformAccountRuntimeData(
     }>(`/public/auth/profile`),
     repo.accessibleWorkspaces(c.get("user")),
   ]);
-  const currentWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
+  const currentWorkspace =
+    workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   return { profile: profile.profile, workspaces, currentWorkspace };
 }

@@ -70,10 +70,7 @@
       "indexes": {
         "commerce_orders_workspace_status_idx": {
           "name": "commerce_orders_workspace_status_idx",
-          "columns": [
-            "workspace_id",
-            "status"
-          ],
+          "columns": ["workspace_id", "status"],
           "isUnique": false
         }
       },
@@ -148,10 +145,7 @@
       "indexes": {
         "commerce_products_workspace_slug_idx": {
           "name": "commerce_products_workspace_slug_idx",
-          "columns": [
-            "workspace_id",
-            "slug"
-          ],
+          "columns": ["workspace_id", "slug"],
           "isUnique": true
         }
       },
@@ -227,16 +221,12 @@
       "indexes": {
         "commerce_variants_sku_idx": {
           "name": "commerce_variants_sku_idx",
-          "columns": [
-            "sku"
-          ],
+          "columns": ["sku"],
           "isUnique": true
         },
         "commerce_variants_product_idx": {
           "name": "commerce_variants_product_idx",
-          "columns": [
-            "product_id"
-          ],
+          "columns": ["product_id"],
           "isUnique": false
         }
       },
@@ -245,12 +235,8 @@
           "name": "commerce_variants_product_id_commerce_products_id_fk",
           "tableFrom": "commerce_variants",
           "tableTo": "commerce_products",
-          "columnsFrom": [
-            "product_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["product_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }

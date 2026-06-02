@@ -3,11 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./manifest.ts" },
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "exports": {
+    ".": "./manifest.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
   "dependencies": {
     "@v2/local-node-contracts": "workspace:*",
     "@v2/plugin-sdk": "workspace:*"
   },
-  "devDependencies": { "typescript": "catalog:" }
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
 }

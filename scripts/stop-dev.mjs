@@ -1,4 +1,13 @@
-import { commandForPid, isRepoDevCommand, pidListForPort, readDevEndpoints, repoDevPids, root, sleep, stopPid } from "./dev-utils.mjs";
+import {
+  commandForPid,
+  isRepoDevCommand,
+  pidListForPort,
+  readDevEndpoints,
+  repoDevPids,
+  root,
+  sleep,
+  stopPid,
+} from "./dev-utils.mjs";
 
 const stopped = new Set();
 
@@ -7,12 +16,16 @@ for (const endpoint of readDevEndpoints()) {
     if (stopped.has(pid)) continue;
     const command = commandForPid(pid);
     if (!isRepoDevCommand(command)) {
-      console.log(`left pid ${pid} on port ${endpoint.port}; it is not from ${root}`);
+      console.log(
+        `left pid ${pid} on port ${endpoint.port}; it is not from ${root}`,
+      );
       continue;
     }
     if (stopPid(pid)) {
       stopped.add(pid);
-      console.log(`stopped pid ${pid} on ${endpoint.kind} port ${endpoint.port}`);
+      console.log(
+        `stopped pid ${pid} on ${endpoint.kind} port ${endpoint.port}`,
+      );
     }
   }
 }
@@ -36,7 +49,9 @@ for (const endpoint of readDevEndpoints()) {
     try {
       process.kill(pid, "SIGKILL");
       stopped.add(pid);
-      console.log(`force-stopped pid ${pid} on ${endpoint.kind} port ${endpoint.port}`);
+      console.log(
+        `force-stopped pid ${pid} on ${endpoint.kind} port ${endpoint.port}`,
+      );
     } catch {
       // Process already exited.
     }

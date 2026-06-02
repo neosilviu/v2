@@ -13,7 +13,8 @@ const modes = {
     names: new Set(["node_modules", "tmp", ".tmp"]),
   },
   "clean:dev": {
-    description: "local install, build cache, dev database/runtime state and generated reports",
+    description:
+      "local install, build cache, dev database/runtime state and generated reports",
     names: new Set([
       "node_modules",
       ".pnpm-store",
@@ -44,7 +45,15 @@ async function collectTargets(directory, names, output = []) {
   const entries = await readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    if (entry.name === ".git" || entry.name === "node_modules" || entry.name === ".pnpm-store" || entry.name === ".wrangler" || entry.name === ".turbo" || entry.name === "dist") continue;
+    if (
+      entry.name === ".git" ||
+      entry.name === "node_modules" ||
+      entry.name === ".pnpm-store" ||
+      entry.name === ".wrangler" ||
+      entry.name === ".turbo" ||
+      entry.name === "dist"
+    )
+      continue;
 
     const fullPath = path.join(directory, entry.name);
     if (names.has(entry.name)) {
@@ -81,7 +90,11 @@ for (const target of targets) {
 }
 
 if (dryRun) {
-  console.log(`Dry run complete. ${targets.length} director${targets.length === 1 ? "y" : "ies"} would be removed.`);
+  console.log(
+    `Dry run complete. ${targets.length} director${targets.length === 1 ? "y" : "ies"} would be removed.`,
+  );
 } else {
-  console.log(`Clean complete. Removed ${targets.length} director${targets.length === 1 ? "y" : "ies"}.`);
+  console.log(
+    `Clean complete. Removed ${targets.length} director${targets.length === 1 ? "y" : "ies"}.`,
+  );
 }

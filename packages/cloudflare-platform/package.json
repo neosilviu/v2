@@ -16,6 +16,11 @@
     "./domains": "./src/domains.ts",
     "./static-assets": "./src/static-assets.ts"
   },
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "build": "tsc --noEmit -p tsconfig.json" },
-  "devDependencies": { "typescript": "catalog:" }
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
 }
