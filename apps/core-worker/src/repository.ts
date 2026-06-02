@@ -294,6 +294,21 @@ export type WorkspaceDomain = {
   verifiedAt: string | null;
   updatedAt: string;
 };
+
+function domainVerificationInstructions(
+  hostname: string,
+  verificationMethod: WorkspaceDomain["verificationMethod"],
+) {
+  const token = crypto.randomUUID().replaceAll("-", "");
+  if (verificationMethod === "dns-cname")
+    return {
+      cnameRecord: `_v2-verify.${hostname}`,
+      target: `${token}.verify.v2.invalid`,
+    };
+  if (verificationMethod === "dns-txt")
+    return { txtRecord: `_v2-verify.${hostname}`, token };
+  return { recoveryOnly: true };
+}
 export type WorkspaceCloudflareConnection = {
   id: string;
   workspaceId: string;
@@ -667,7 +682,7 @@ function matchRoutePattern(
 }
 
 const WORKSPACE_RBAC_SEED_VERSION = "workspace-rbac:v2";
-const PLATFORM_SETTINGS_SEED_VERSION = "platform-settings:v6";
+const PLATFORM_SETTINGS_SEED_VERSION = "platform-settings:v7";
 const PLATFORM_SHELL_SEED_VERSION = "platform-shell:v1";
 const protectedPlatformPages = new Set([
   "platform.home",
@@ -2732,16 +2747,10 @@ export class CoreRepository {
   ) {
     const id = crypto.randomUUID();
     const hostname = input.hostname.trim().toLowerCase();
-    const token = crypto.randomUUID().replaceAll("-", "");
-    const instructions =
-      input.verificationMethod === "dns-cname"
-        ? {
-            cnameRecord: `_v2-verify.${hostname}`,
-            target: `${token}.verify.v2.invalid`,
-          }
-        : input.verificationMethod === "dns-txt"
-          ? { txtRecord: `_v2-verify.${hostname}`, token }
-          : { recoveryOnly: true };
+    const instructions = domainVerificationInstructions(
+      hostname,
+      input.verificationMethod,
+    );
     await this.db
       .prepare(
         `INSERT INTO workspace_domains (id, workspace_id, hostname, kind, status, verification_method, verification_instructions_json, is_primary, updated_at)
@@ -2761,6 +2770,56 @@ export class CoreRepository {
       workspaceId,
       "domain.create",
       { domainId: id, hostname, kind: input.kind },
+      actorId,
+    );
+    return this.domainById(workspaceId, id);
+  }
+
+  async updateDomain(
+    workspaceId: string,
+    id: string,
+    input: {
+      hostname: string;
+      kind: WorkspaceDomain["kind"];
+      verificationMethod: WorkspaceDomain["verificationMethod"];
+      isPrimary?: boolean;
+    },
+    actorId?: string,
+  ) {
+    const current = await this.domainById(workspaceId, id);
+    if (!current) return null;
+    const hostname = input.hostname.trim().toLowerCase();
+    const verificationChanged =
+      hostname !== current.hostname ||
+      input.verificationMethod !== current.verificationMethod;
+    const instructions = verificationChanged
+      ? domainVerificationInstructions(hostname, input.verificationMethod)
+      : current.verificationInstructions;
+    await this.db
+      .prepare(
+        `UPDATE workspace_domains
+        SET hostname = ?, kind = ?, verification_method = ?, verification_instructions_json = ?, is_primary = ?,
+          status = CASE WHEN ? THEN 'draft' ELSE status END,
+          verified_at = CASE WHEN ? THEN NULL ELSE verified_at END,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE workspace_id = ? AND id = ?`,
+      )
+      .bind(
+        hostname,
+        input.kind,
+        input.verificationMethod,
+        JSON.stringify(instructions),
+        input.isPrimary ? 1 : 0,
+        verificationChanged ? 1 : 0,
+        verificationChanged ? 1 : 0,
+        workspaceId,
+        id,
+      )
+      .run();
+    await this.audit(
+      workspaceId,
+      "domain.update",
+      { domainId: id, hostname, kind: input.kind, verificationChanged },
       actorId,
     );
     return this.domainById(workspaceId, id);
@@ -2799,11 +2858,23 @@ export class CoreRepository {
   }
 
   async activateDomain(workspaceId: string, id: string, actorId?: string) {
+    const domain = await this.domainById(workspaceId, id);
+    if (!domain || (domain.status !== "verified" && domain.status !== "active"))
+      return null;
     return this.updateDomainStatus(workspaceId, id, "active", actorId);
   }
 
   async disableDomain(workspaceId: string, id: string, actorId?: string) {
     return this.updateDomainStatus(workspaceId, id, "disabled", actorId);
+  }
+
+  async deleteDomain(workspaceId: string, id: string, actorId?: string) {
+    await this.db
+      .prepare("DELETE FROM workspace_domains WHERE workspace_id = ? AND id = ?")
+      .bind(workspaceId, id)
+      .run();
+    await this.audit(workspaceId, "domain.delete", { domainId: id }, actorId);
+    return true;
   }
 
   async mailSummary(workspaceId: string) {
@@ -2926,14 +2997,15 @@ export class CoreRepository {
 
   async saveMailProvider(
     workspaceId: string,
-    input: MailProviderConfigure,
+    input: MailProviderConfigure & { id?: string | null },
     actorId?: string,
   ) {
-    const id = crypto.randomUUID();
+    const id = input.id?.trim() || crypto.randomUUID();
     await this.db
       .prepare(
         `INSERT INTO workspace_mail_providers (id, workspace_id, kind, label, status, enabled, from_name, from_email, reply_to_email, configuration_ref, safe_config_json, updated_at)
-      VALUES (?, ?, ?, ?, 'configured', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      VALUES (?, ?, ?, ?, 'configured', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, label = excluded.label, enabled = excluded.enabled, from_name = excluded.from_name, from_email = excluded.from_email, reply_to_email = excluded.reply_to_email, configuration_ref = excluded.configuration_ref, safe_config_json = excluded.safe_config_json, updated_at = CURRENT_TIMESTAMP`,
       )
       .bind(
         id,
@@ -2955,6 +3027,22 @@ export class CoreRepository {
       actorId,
     );
     return this.mailProviderById(workspaceId, id);
+  }
+
+  async deleteMailProvider(workspaceId: string, id: string, actorId?: string) {
+    await this.db
+      .prepare(
+        "DELETE FROM workspace_mail_providers WHERE workspace_id = ? AND id = ?",
+      )
+      .bind(workspaceId, id)
+      .run();
+    await this.audit(
+      workspaceId,
+      "mail.provider.delete",
+      { providerId: id },
+      actorId,
+    );
+    return true;
   }
 
   async activateMailProvider(
@@ -3062,6 +3150,97 @@ export class CoreRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
+  }
+
+  async mailTemplateById(
+    workspaceId: string,
+    id: string,
+  ): Promise<MailTemplate | undefined> {
+    const row = await this.db
+      .prepare(
+        "SELECT id, workspace_id, template_key, subject_template, body_text_template, body_html_template, status, locale, created_at, updated_at FROM workspace_mail_templates WHERE workspace_id = ? AND id = ? LIMIT 1",
+      )
+      .bind(workspaceId, id)
+      .first<{
+        id: string;
+        workspace_id: string;
+        template_key: MailTemplate["templateKey"];
+        subject_template: string;
+        body_text_template: string;
+        body_html_template: string | null;
+        status: MailTemplate["status"];
+        locale: string;
+        created_at: string;
+        updated_at: string;
+      }>();
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      templateKey: row.template_key,
+      subjectTemplate: row.subject_template,
+      bodyTextTemplate: row.body_text_template,
+      bodyHtmlTemplate: row.body_html_template,
+      status: row.status,
+      locale: row.locale,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async saveMailTemplate(
+    workspaceId: string,
+    input: MailTemplate & { id?: string | null },
+    actorId?: string,
+  ) {
+    const requestedId = input.id?.trim() || crypto.randomUUID();
+    const existing = await this.db
+      .prepare(
+        "SELECT id FROM workspace_mail_templates WHERE workspace_id = ? AND (id = ? OR (template_key = ? AND locale = ?)) LIMIT 1",
+      )
+      .bind(workspaceId, requestedId, input.templateKey, input.locale)
+      .first<{ id: string }>();
+    const id = existing?.id ?? requestedId;
+    await this.db
+      .prepare(
+        `INSERT INTO workspace_mail_templates (id, workspace_id, template_key, subject_template, body_text_template, body_html_template, status, locale, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET template_key = excluded.template_key, subject_template = excluded.subject_template, body_text_template = excluded.body_text_template, body_html_template = excluded.body_html_template, status = excluded.status, locale = excluded.locale, updated_at = CURRENT_TIMESTAMP`,
+      )
+      .bind(
+        id,
+        workspaceId,
+        input.templateKey,
+        input.subjectTemplate,
+        input.bodyTextTemplate,
+        input.bodyHtmlTemplate ?? null,
+        input.status,
+        input.locale,
+      )
+      .run();
+    await this.audit(
+      workspaceId,
+      "mail.template.save",
+      { templateId: id, templateKey: input.templateKey },
+      actorId,
+    );
+    return this.mailTemplateById(workspaceId, id);
+  }
+
+  async deleteMailTemplate(workspaceId: string, id: string, actorId?: string) {
+    await this.db
+      .prepare(
+        "DELETE FROM workspace_mail_templates WHERE workspace_id = ? AND id = ?",
+      )
+      .bind(workspaceId, id)
+      .run();
+    await this.audit(
+      workspaceId,
+      "mail.template.delete",
+      { templateId: id },
+      actorId,
+    );
+    return true;
   }
 
   async listMailEvents(workspaceId: string) {
@@ -4251,6 +4430,7 @@ export class CoreRepository {
           page.contributionId === "platform.account" ? "declarative" : "native",
           page.contributionId === "platform.account" ? null : page.componentId,
           JSON.stringify(page.configurable),
+          "admin.dashboard",
           JSON.stringify(this.platformShellPageSchema(page)),
           page.requiredPermission,
         ),
@@ -5165,7 +5345,10 @@ export class CoreRepository {
     return contributions
       .filter(
         (item) =>
-          item.contributionType === "page" || item.contributionType === "menu",
+          (item.contributionType === "page" ||
+            item.contributionType === "menu") &&
+          Boolean(item.defaultPath) &&
+          Boolean(item.navigationSection),
       )
       .map((item) => ({
         id: item.contributionId,

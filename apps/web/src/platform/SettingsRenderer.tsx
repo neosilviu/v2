@@ -679,6 +679,7 @@ export function SettingsRenderer({
                       columns={section.columns}
                       fields={section.fields}
                       crud={section.crud}
+                      rowActions={section.rowActions}
                       onRefresh={refresh}
                       onCreate={(values: Record<string, unknown>) =>
                         runAction(

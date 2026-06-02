@@ -3,12 +3,14 @@ import type { MailProviderConfigure } from "@v2/mail-contracts";
 import { isPlatformAdmin, type CoreSessionUser } from "./access";
 import type {
   CoreRepository,
+  WorkspaceDomain,
   WorkspacePermission,
   WorkspaceRecord,
 } from "./repository";
 import type { CoreEnv } from "./env";
 import type { ActionDefinition } from "@v2/ui-schema";
 import { ApprovalRequestRepository } from "./approval-requests";
+import { verifyDnsDomain } from "./domain-verification";
 
 type PlatformSettingsRuntimeContext = Context<{
   Bindings: CoreEnv;
@@ -291,8 +293,8 @@ export async function platformSettingsRuntimeAction(
   const actorId = actor?.id ?? null;
   const isSuperadmin = isPlatformAdmin(c.env, actor);
   const payload = platformActionInput(input);
-  const denied = (status: 400 | 403 | 404 | 409, message: string) =>
-    c.json(operationEnvelope("denied", null, message), status);
+  const denied = (_status: 400 | 403 | 404 | 409, message: string) =>
+    c.json(operationEnvelope("denied", null, message));
   try {
     switch (action.commandId) {
       case "platform.settings.general.save": {
@@ -355,6 +357,98 @@ export async function platformSettingsRuntimeAction(
         if (!result.ok)
           return denied(409, result.error ?? "Cloudflare zones sync failed.");
         return c.json(operationEnvelope("ok", result));
+      }
+      case "platform.settings.domains.create": {
+        const hostname = firstString(payload, "hostname");
+        if (!hostname) return denied(400, "hostname is required.");
+        const kind = firstString(payload, "kind");
+        if (
+          kind !== "admin" &&
+          kind !== "auth" &&
+          kind !== "website" &&
+          kind !== "storefront" &&
+          kind !== "public-chat" &&
+          kind !== "mail"
+        )
+          return denied(400, "A valid domain kind is required.");
+        const domainKind = kind as WorkspaceDomain["kind"];
+        const verificationMethod =
+          firstString(payload, "verificationMethod") ?? "dns-txt";
+        if (
+          verificationMethod !== "dns-txt" &&
+          verificationMethod !== "dns-cname" &&
+          verificationMethod !== "manual"
+        )
+          return denied(400, "A valid verification method is required.");
+        const domainVerificationMethod =
+          verificationMethod as WorkspaceDomain["verificationMethod"];
+        const domainId = firstString(payload, "id", "domainId");
+        const input = {
+          hostname,
+          kind: domainKind,
+          verificationMethod: domainVerificationMethod,
+          isPrimary: firstBoolean(payload, "isPrimary") ?? false,
+        };
+        const domain = domainId
+          ? await repo.updateDomain(
+              workspaceId,
+              domainId,
+              input,
+              actorId ?? undefined,
+            )
+          : await repo.createDomain(workspaceId, input, actorId ?? undefined);
+        if (!domain) return denied(404, "Domain was not found.");
+        return c.json(operationEnvelope("ok", domain));
+      }
+      case "platform.settings.domains.delete": {
+        const domainId = firstString(payload, "id", "domainId");
+        if (!domainId) return denied(400, "domainId is required.");
+        const deleted = await repo.deleteDomain(
+          workspaceId,
+          domainId,
+          actorId ?? undefined,
+        );
+        return c.json(operationEnvelope("ok", { domainId, deleted }));
+      }
+      case "platform.settings.domains.verify":
+      case "platform.settings.domains.activate":
+      case "platform.settings.domains.disable": {
+        const domainId = firstString(payload, "id", "domainId");
+        if (!domainId) return denied(400, "domainId is required.");
+        if (action.commandId.endsWith("verify")) {
+          const existing = await repo.domainById(workspaceId, domainId);
+          if (!existing) return denied(404, "Domain was not found.");
+          const checked = await verifyDnsDomain(existing);
+          if (!checked.ok) return denied(409, checked.error);
+          const domain = await repo.verifyDomain(
+            workspaceId,
+            domainId,
+            actorId ?? undefined,
+          );
+          return c.json(operationEnvelope("ok", domain));
+        }
+        if (action.commandId.endsWith("activate")) {
+          const existing = await repo.domainById(workspaceId, domainId);
+          if (!existing) return denied(404, "Domain was not found.");
+          if (existing.status !== "verified" && existing.status !== "active")
+            return denied(
+              409,
+              "Domain must be verified before activation.",
+            );
+        }
+        const domain = action.commandId.endsWith("activate")
+          ? await repo.activateDomain(
+              workspaceId,
+              domainId,
+              actorId ?? undefined,
+            )
+          : await repo.disableDomain(
+              workspaceId,
+              domainId,
+              actorId ?? undefined,
+            );
+        if (!domain) return denied(404, "Domain was not found.");
+        return c.json(operationEnvelope("ok", domain));
       }
       case "platform.settings.security.policy.save": {
         const body = {
@@ -944,6 +1038,7 @@ export async function platformSettingsRuntimeAction(
         const provider = await repo.saveMailProvider(
           workspaceId,
           {
+            id: firstString(payload, "id", "providerId"),
             kind: (payload.kind === "transactional-http" ||
             payload.kind === "smtp" ||
             payload.kind === "mock-development-only"
@@ -958,18 +1053,25 @@ export async function platformSettingsRuntimeAction(
             replyToEmail: firstString(payload, "replyToEmail") ?? null,
             configurationRef: firstString(payload, "configurationRef") ?? null,
             enabled: firstBoolean(payload, "enabled") ?? true,
-            safeConfig:
-              typeof payload.safeConfig === "object" && payload.safeConfig
-                ? (payload.safeConfig as Record<string, unknown>)
-                : {
-                    usernameConfigured: false,
-                    passwordConfigured: false,
-                    secretHint: null,
-                  },
-          } as MailProviderConfigure,
+            safeConfig: {
+              usernameConfigured: false,
+              passwordConfigured: false,
+              secretHint: null,
+            },
+          } satisfies MailProviderConfigure & { id?: string | null },
           actorId ?? undefined,
         );
         return c.json(operationEnvelope("ok", provider));
+      }
+      case "platform.settings.mail.provider.delete": {
+        const providerId = firstString(payload, "id", "providerId");
+        if (!providerId) return denied(400, "providerId is required.");
+        const deleted = await repo.deleteMailProvider(
+          workspaceId,
+          providerId,
+          actorId ?? undefined,
+        );
+        return c.json(operationEnvelope("ok", { providerId, deleted }));
       }
       case "platform.settings.mail.provider.activate": {
         const providerId = firstString(payload, "id", "providerId");
@@ -1003,6 +1105,49 @@ export async function platformSettingsRuntimeAction(
           actorId ?? undefined,
         );
         return c.json(operationEnvelope("ok", result));
+      }
+      case "platform.settings.mail.template.save": {
+        const templateKey = firstString(payload, "templateKey");
+        if (
+          templateKey !== "owner_setup" &&
+          templateKey !== "workspace_invite" &&
+          templateKey !== "verify_email" &&
+          templateKey !== "reset_password" &&
+          templateKey !== "notification_generic"
+        )
+          return denied(400, "A valid template key is required.");
+        const subjectTemplate = firstString(payload, "subjectTemplate");
+        const bodyTextTemplate = firstString(payload, "bodyTextTemplate");
+        if (!subjectTemplate || !bodyTextTemplate)
+          return denied(400, "Subject and text body are required.");
+        const status = firstString(payload, "status") ?? "draft";
+        if (status !== "draft" && status !== "active" && status !== "disabled")
+          return denied(400, "A valid template status is required.");
+        const template = await repo.saveMailTemplate(
+          workspaceId,
+          {
+            id: firstString(payload, "id", "templateId") ?? "",
+            workspaceId,
+            templateKey,
+            subjectTemplate,
+            bodyTextTemplate,
+            bodyHtmlTemplate: firstString(payload, "bodyHtmlTemplate") ?? null,
+            status,
+            locale: firstString(payload, "locale") ?? "ro-RO",
+          },
+          actorId ?? undefined,
+        );
+        return c.json(operationEnvelope("ok", template));
+      }
+      case "platform.settings.mail.template.delete": {
+        const templateId = firstString(payload, "id", "templateId");
+        if (!templateId) return denied(400, "templateId is required.");
+        const deleted = await repo.deleteMailTemplate(
+          workspaceId,
+          templateId,
+          actorId ?? undefined,
+        );
+        return c.json(operationEnvelope("ok", { templateId, deleted }));
       }
       case "platform.settings.interface.nav.edit":
       case "platform.settings.interface.nav.hide": {

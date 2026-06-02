@@ -605,12 +605,18 @@ const cloudflareConnections = ui.crud({
   ],
 });
 
-const domains = ui.table({
+const domains = ui.crud({
   id: "domains.list",
   title: "Domains",
   description:
     "Verified hostnames for admin, auth, website, storefront, chat and mail.",
   dataSourceId: "platform.settings.domains.list",
+  entity: { singular: "Domain", plural: "Domains", titleField: "hostname" },
+  operations: {
+    create: "platform.settings.domains.create",
+    update: "platform.settings.domains.create",
+    delete: "platform.settings.domains.delete",
+  },
   columns: [
     column({ id: "hostname", label: "Hostname", field: "hostname" }),
     column({ id: "kind", label: "Kind", field: "kind" }),
@@ -620,6 +626,52 @@ const domains = ui.table({
       label: "Primary",
       field: "isPrimary",
       type: "badge",
+    }),
+  ],
+  fields: [
+    field({ id: "hostname", label: "Hostname", type: "text", required: true }),
+    field({
+      id: "kind",
+      label: "Kind",
+      type: "select",
+      required: true,
+      options: [
+        { value: "admin", label: "Admin" },
+        { value: "auth", label: "Auth" },
+        { value: "website", label: "Website" },
+        { value: "storefront", label: "Storefront" },
+        { value: "public-chat", label: "Public chat" },
+        { value: "mail", label: "Mail" },
+      ],
+    }),
+    field({
+      id: "verificationMethod",
+      label: "Verification",
+      type: "select",
+      required: true,
+      options: [
+        { value: "dns-txt", label: "DNS TXT" },
+        { value: "dns-cname", label: "DNS CNAME" },
+        { value: "manual", label: "Manual" },
+      ],
+    }),
+    field({ id: "isPrimary", label: "Primary", type: "boolean" }),
+  ],
+  rowActions: [
+    ui.rowAction("platform.settings.domains.verify", "Verify", {
+      variant: "primary",
+      access: "permission-gated",
+      requiredPermission: "domains.verify",
+    }),
+    ui.rowAction("platform.settings.domains.activate", "Activate", {
+      variant: "primary",
+      access: "permission-gated",
+      requiredPermission: "domains.write",
+    }),
+    ui.rowAction("platform.settings.domains.disable", "Disable", {
+      variant: "danger",
+      access: "permission-gated",
+      requiredPermission: "domains.write",
     }),
   ],
 });
@@ -670,15 +722,59 @@ const mailSections: SettingsSection[] = [
       ),
     ],
   }),
-  ui.table({
+  ui.crud({
     id: "mail.providers",
     title: "Mail providers",
     dataSourceId: "platform.settings.mail.providers",
+    entity: {
+      singular: "Mail provider",
+      plural: "Mail providers",
+      titleField: "label",
+    },
+    operations: {
+      create: "platform.settings.mail.provider.save",
+      update: "platform.settings.mail.provider.save",
+      delete: "platform.settings.mail.provider.delete",
+    },
     columns: [
       column({ id: "label", label: "Label", field: "label" }),
       column({ id: "kind", label: "Kind", field: "kind" }),
       column({ id: "status", label: "Status", field: "status", type: "badge" }),
       column({ id: "fromEmail", label: "From email", field: "fromEmail" }),
+    ],
+    fields: [
+      field({ id: "id", label: "ID", type: "text" }),
+      field({
+        id: "kind",
+        label: "Provider kind",
+        type: "select",
+        required: true,
+        options: [
+          { value: "transactional-http", label: "Transactional HTTP" },
+          { value: "smtp", label: "SMTP" },
+          { value: "mock-development-only", label: "Mock development only" },
+        ],
+      }),
+      field({ id: "label", label: "Label", type: "text", required: true }),
+      field({
+        id: "fromName",
+        label: "From name",
+        type: "text",
+        required: true,
+      }),
+      field({
+        id: "fromEmail",
+        label: "From email",
+        type: "email",
+        required: true,
+      }),
+      field({ id: "replyToEmail", label: "Reply-to email", type: "email" }),
+      field({
+        id: "configurationRef",
+        label: "Secret reference",
+        type: "text",
+      }),
+      field({ id: "enabled", label: "Enabled", type: "boolean" }),
     ],
     rowActions: [
       ui.rowAction("platform.settings.mail.provider.activate", "Activate", {
@@ -708,10 +804,20 @@ const mailSections: SettingsSection[] = [
       }),
     ],
   }),
-  ui.table({
+  ui.crud({
     id: "mail.templates",
     title: "Templates",
     dataSourceId: "platform.settings.mail.templates",
+    entity: {
+      singular: "Template",
+      plural: "Templates",
+      titleField: "templateKey",
+    },
+    operations: {
+      create: "platform.settings.mail.template.save",
+      update: "platform.settings.mail.template.save",
+      delete: "platform.settings.mail.template.delete",
+    },
     columns: [
       column({ id: "key", label: "Template", field: "templateKey" }),
       column({ id: "subject", label: "Subject", field: "subjectTemplate" }),
@@ -722,6 +828,42 @@ const mailSections: SettingsSection[] = [
         field: "updatedAt",
         type: "date",
       }),
+    ],
+    fields: [
+      field({ id: "id", label: "ID", type: "text" }),
+      field({
+        id: "templateKey",
+        label: "Template",
+        type: "select",
+        required: true,
+        options: [
+          { value: "owner_setup", label: "Owner setup" },
+          { value: "workspace_invite", label: "Workspace invite" },
+          { value: "verify_email", label: "Verify email" },
+          { value: "reset_password", label: "Reset password" },
+          { value: "notification_generic", label: "Generic notification" },
+        ],
+      }),
+      field({ id: "subjectTemplate", label: "Subject", type: "text", required: true }),
+      field({
+        id: "bodyTextTemplate",
+        label: "Text body",
+        type: "textarea",
+        required: true,
+      }),
+      field({ id: "bodyHtmlTemplate", label: "HTML body", type: "textarea" }),
+      field({
+        id: "status",
+        label: "Status",
+        type: "select",
+        required: true,
+        options: [
+          { value: "draft", label: "Draft" },
+          { value: "active", label: "Active" },
+          { value: "disabled", label: "Disabled" },
+        ],
+      }),
+      field({ id: "locale", label: "Locale", type: "text", required: true }),
     ],
   }),
   ui.table({

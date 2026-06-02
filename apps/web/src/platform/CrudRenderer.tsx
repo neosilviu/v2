@@ -19,6 +19,7 @@ type CrudRendererProps = {
   columns: ColumnDefinition[];
   fields: FieldDefinition[];
   crud: CrudDefinition;
+  rowActions?: ActionDefinition[];
   onRefresh?: () => void;
   onCreate: (values: Record<string, unknown>) => Promise<boolean>;
   onUpdate: (row: CrudRow, values: Record<string, unknown>) => Promise<boolean>;
@@ -119,6 +120,7 @@ export function CrudRenderer({
   columns,
   fields,
   crud,
+  rowActions = [],
   onRefresh,
   onCreate,
   onUpdate,
@@ -128,6 +130,7 @@ export function CrudRenderer({
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const actions = rowActions.length ? rowActions : crud.rowActions;
 
   const dialogTitle = useMemo(() => {
     if (!dialog) return "";
@@ -294,7 +297,7 @@ export function CrudRenderer({
                         ×
                       </Button>
                       {onRowAction
-                        ? crud.rowActions.map((action) => (
+                        ? actions.map((action) => (
                             <Button
                               key={action.id}
                               aria-label={action.title}

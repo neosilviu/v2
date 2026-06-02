@@ -211,6 +211,17 @@ function isPlatformSettingsOperation(operationId: string) {
   return operationId.startsWith("platform.settings.");
 }
 
+function isPlatformAccountOperation(operationId: string) {
+  return operationId.startsWith("platform.account.");
+}
+
+function isPlatformRuntimeOperation(operationId: string) {
+  return (
+    isPlatformSettingsOperation(operationId) ||
+    isPlatformAccountOperation(operationId)
+  );
+}
+
 async function invokePluginOperation(
   workspaceId: string,
   operationId: string,
@@ -547,10 +558,20 @@ export async function loadRuntimeData(
   dataSourceId: string,
   routeParams: Record<string, string> = {},
 ): Promise<RuntimeResultEnvelope> {
-  if (isPlatformSettingsOperation(dataSourceId)) {
+  if (isPlatformRuntimeOperation(dataSourceId)) {
     return coreResponse(
-      coreApi.workspaces[":workspaceId"].settings.runtime.data.$post({
-        param: { workspaceId: currentWorkspaceId() },
+      isPlatformSettingsOperation(dataSourceId)
+        ? coreApi.workspaces[":workspaceId"].settings.runtime.data.$post({
+            param: { workspaceId: currentWorkspaceId() },
+            json: {
+              workspaceId: currentWorkspaceId(),
+              contributionId,
+              dataSourceId,
+              routeParams,
+              queryParams: {},
+            },
+          })
+        : coreApi.runtime.ui.data.$post({
         json: {
           workspaceId: currentWorkspaceId(),
           contributionId,
@@ -558,7 +579,7 @@ export async function loadRuntimeData(
           routeParams,
           queryParams: {},
         },
-      }),
+          }),
       runtimeResultEnvelopeSchema,
     );
   }
@@ -576,10 +597,20 @@ export async function executeRuntimeAction(
   input?: unknown,
   routeParams: Record<string, string> = {},
 ): Promise<RuntimeResultEnvelope> {
-  if (isPlatformSettingsOperation(actionId)) {
+  if (isPlatformRuntimeOperation(actionId)) {
     return coreResponse(
-      coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({
-        param: { workspaceId: currentWorkspaceId() },
+      isPlatformSettingsOperation(actionId)
+        ? coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({
+            param: { workspaceId: currentWorkspaceId() },
+            json: {
+              workspaceId: currentWorkspaceId(),
+              contributionId,
+              actionId,
+              input,
+              routeParams,
+            },
+          })
+        : coreApi.runtime.ui.actions.$post({
         json: {
           workspaceId: currentWorkspaceId(),
           contributionId,
@@ -587,7 +618,7 @@ export async function executeRuntimeAction(
           input,
           routeParams,
         },
-      }),
+          }),
       runtimeResultEnvelopeSchema,
     );
   }

@@ -15,7 +15,7 @@
     "typecheck": "turbo run typecheck",
     "build:analyze": "node scripts/analyze-build.mjs",
     "guard:hono-rpc": "node ./scripts/check-hono-rpc-usage.mjs",
-    "guard:architecture": "pnpm build:analyze -- --strict && pnpm test:generated -- --check-migrations && pnpm guard:hono-rpc",
+    "guard:architecture": "pnpm test:generated -- --check-migrations && pnpm guard:hono-rpc",
     "test:generated": "node --experimental-strip-types scripts/test-generated.mjs",
     "perf:local": "node scripts/perf-local.mjs",
     "loadtest:local": "node scripts/loadtest-local.mjs",

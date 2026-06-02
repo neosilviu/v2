@@ -35,7 +35,7 @@ export function AccountProfile({ page, data, callbacks }: ProfilePageProps) {
   const signOutAction = page.actions.find(
     (item) => item.commandId === "platform.account.sign-out",
   );
-  const sessionCount = activeSessions.length || profile.sessions || 0;
+  const sessionCount = activeSessions.length;
   const stats = useMemo(
     () => [
       { label: "Name", value: fieldValue(profile.name, "unknown") },

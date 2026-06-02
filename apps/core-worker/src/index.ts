@@ -50,6 +50,8 @@ import {
   platformSettingsRuntimeAction,
   platformSettingsRuntimeData,
 } from "./platform-settings-runtime";
+// Domain verification uses cloudflare-dns.com/dns-query through verifyDnsDomain.
+import { verifyDnsDomain } from "./domain-verification";
 import { ToolApprovalRepository } from "./tool-approvals";
 export type { CoreApi } from "./core-api-contract";
 
@@ -370,51 +372,6 @@ function domainInput(input: unknown): DomainInput | null {
     verificationMethod: method,
     ...(value.isPrimary === true ? { isPrimary: true } : {}),
   };
-}
-async function verifyDnsDomain(domain: {
-  hostname: string;
-  verificationMethod: "manual" | "dns-txt" | "dns-cname";
-  verificationInstructions: Record<string, unknown> | null;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (domain.verificationMethod === "manual")
-    return {
-      ok: false,
-      error: "Manual verification requires an explicit audited recovery path.",
-    };
-  const record =
-    domain.verificationMethod === "dns-cname"
-      ? typeof domain.verificationInstructions?.cnameRecord === "string"
-        ? domain.verificationInstructions.cnameRecord
-        : `_v2-verify.${domain.hostname}`
-      : typeof domain.verificationInstructions?.txtRecord === "string"
-        ? domain.verificationInstructions.txtRecord
-        : `_v2-verify.${domain.hostname}`;
-  const expected =
-    domain.verificationMethod === "dns-cname"
-      ? typeof domain.verificationInstructions?.target === "string"
-        ? domain.verificationInstructions.target.toLowerCase()
-        : ""
-      : typeof domain.verificationInstructions?.token === "string"
-        ? domain.verificationInstructions.token.toLowerCase()
-        : "";
-  if (!expected)
-    return { ok: false, error: "Domain verification target is missing." };
-  const type = domain.verificationMethod === "dns-cname" ? "CNAME" : "TXT";
-  const response = await fetch(
-    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(record)}&type=${type}`,
-    { headers: { accept: "application/dns-json" } },
-  );
-  if (!response.ok)
-    return { ok: false, error: "DNS verification lookup failed." };
-  const body = (await response.json()) as { Answer?: Array<{ data?: string }> };
-  const answers = (body.Answer ?? []).map((answer) =>
-    String(answer.data ?? "")
-      .replaceAll('"', "")
-      .toLowerCase(),
-  );
-  return answers.some((answer) => answer.includes(expected))
-    ? { ok: true }
-    : { ok: false, error: "Expected DNS verification record was not found." };
 }
 async function sha256Hex(value: string) {
   const digest = await crypto.subtle.digest(
@@ -2314,6 +2271,67 @@ app.post("/runtime/ui/actions", async (c) => {
     await c.req.json().catch(() => null),
   );
   const repo = new CoreRepository(c.env.CORE_DB, c.env);
+  const workspaceReadDenied = await requirePermission(c, request.workspaceId, "workspace.read");
+  if (workspaceReadDenied) return workspaceReadDenied;
+  if (request.contributionId === "platform.account") {
+    if (request.actionId === "platform.account.profile.save") {
+      const payload =
+        request.input && typeof request.input === "object"
+          ? (request.input as { name?: unknown })
+          : {};
+      const response = await authForwardResponse(c, "/api/auth/update-user", {
+        method: "POST",
+        body: JSON.stringify({
+          name: typeof payload.name === "string" ? payload.name : null,
+          language:
+            typeof (payload as { language?: unknown }).language === "string"
+              ? (payload as { language?: string }).language
+              : null,
+          location:
+            typeof (payload as { location?: unknown }).location === "string"
+              ? (payload as { location?: string }).location
+              : null,
+          timezone:
+            typeof (payload as { timezone?: unknown }).timezone === "string"
+              ? (payload as { timezone?: string }).timezone
+              : null,
+        }),
+      });
+      if (!response.ok)
+        return c.json(
+          pluginOperationEnvelope("denied", null, "Profile update failed."),
+          response.status === 404 ? 404 : 403,
+        );
+      return c.json(
+        pluginOperationEnvelope(
+          "ok",
+          await platformAccountRuntimeData(
+            c,
+            repo,
+            request.workspaceId,
+            (path) => authInternalJson(c, path),
+          ),
+        ),
+      );
+    }
+    if (request.actionId === "platform.account.sign-out") {
+      const response = await authForwardResponse(c, "/api/auth/sign-out", {
+        method: "POST",
+      });
+      const setCookie = response.headers.get("set-cookie");
+      if (setCookie) c.header("Set-Cookie", setCookie);
+      if (!response.ok)
+        return c.json(
+          pluginOperationEnvelope("denied", null, "Sign out failed."),
+          403,
+        );
+      return c.json(pluginOperationEnvelope("ok", null));
+    }
+    return c.json(
+      pluginOperationEnvelope("denied", null, "Account action is not declared."),
+      403,
+    );
+  }
   const resolved = await repo.privateRuntimeContribution(
     request.workspaceId,
     request.contributionId,
@@ -2642,16 +2660,69 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
 });
 app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
   const workspaceId = c.req.param("workspaceId");
-  const denied = await requirePermission(
-    c,
-    workspaceId,
-    "workspace.settings.write",
-  );
+  const denied = requireRead(c);
   if (denied) return denied;
   const request = runtimeActionRequestSchema.parse(
     await c.req.json().catch(() => null),
   );
   const repo = new CoreRepository(c.env.CORE_DB, c.env);
+  const platformSettingsPermissionFor = (commandId: string) => {
+    if (commandId.startsWith("platform.settings.domains."))
+      return commandId.endsWith(".verify") ? "domains.verify" : "domains.write";
+    if (commandId.startsWith("platform.settings.mail.provider."))
+      return commandId.endsWith(".test") ? "mail.test" : "mail.configure";
+    if (commandId.startsWith("platform.settings.mail.template."))
+      return "mail.template.write";
+    if (commandId.startsWith("platform.settings.cloudflare."))
+      return "workspace.settings.write";
+    if (commandId.startsWith("platform.settings.rbac."))
+      return "workspace.members.manage";
+    if (commandId.startsWith("platform.settings.workspaces."))
+      return "workspace.admin";
+    if (commandId.startsWith("platform.settings.plans."))
+      return "plan.write";
+    if (commandId.startsWith("platform.settings.invites."))
+      return "workspace.members.manage";
+    if (commandId.startsWith("platform.settings.marketplace."))
+      return "marketplace.publish";
+    if (commandId.startsWith("platform.settings.interface."))
+      return "interface.write";
+    if (commandId.startsWith("platform.settings.security."))
+      return "auth.admin";
+    return "workspace.settings.write";
+  };
+  if (request.contributionId.startsWith("platform.settings.")) {
+    const permissionDenied = await requirePermission(
+      c,
+      request.workspaceId,
+      platformSettingsPermissionFor(request.actionId),
+    );
+    if (permissionDenied) return permissionDenied;
+    const result = await platformSettingsRuntimeAction(
+      c,
+      repo,
+      request.workspaceId,
+      {
+        id: request.actionId,
+        title: request.actionId,
+        commandId: request.actionId,
+        intent: "execute",
+        variant: request.actionId.endsWith(".delete") ? "danger" : "primary",
+        placement: "form",
+        access: "permission-gated",
+        requiredPermission: platformSettingsPermissionFor(request.actionId),
+        risk: request.actionId.endsWith(".delete") ? "dangerous" : "safe",
+        effects: [{ type: "refresh" }],
+      },
+      request.input,
+      {
+        authAdminJson: (path, init) => authAdminJson(c, path, init),
+        authForwardResponse: (path, init) => authForwardResponse(c, path, init),
+        authInternalJson: (path) => authInternalJson(c, path),
+      },
+    );
+    if (result) return result;
+  }
   const resolved = await repo.privateRuntimeContribution(
     request.workspaceId,
     request.contributionId,
@@ -2665,12 +2736,50 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
       ),
       403,
     );
-  const action = resolved.panel.sections
-    .flatMap((section) => [
-      ...section.actions,
-      ...section.rowActions,
-      ...section.bulkActions,
-    ])
+  const declaredActions = resolved.panel.sections.flatMap((section) => [
+    ...section.actions,
+    ...section.rowActions,
+    ...section.bulkActions,
+  ]);
+  const crudPermissionFor = (commandId: string) => {
+    if (commandId.startsWith("platform.settings.domains."))
+      return commandId.endsWith(".verify") ? "domains.verify" : "domains.write";
+    if (commandId.startsWith("platform.settings.mail.provider."))
+      return "mail.configure";
+    if (commandId.startsWith("platform.settings.mail.template."))
+      return "mail.template.write";
+    if (commandId.startsWith("platform.settings.cloudflare."))
+      return "workspace.settings.write";
+    if (commandId.startsWith("platform.settings.rbac."))
+      return "workspace.members.manage";
+    if (commandId.startsWith("platform.settings.workspaces."))
+      return "workspace.admin";
+    if (commandId.startsWith("platform.settings.plans."))
+      return "plan.write";
+    if (commandId.startsWith("platform.settings.invites."))
+      return "workspace.members.manage";
+    return "workspace.settings.write";
+  };
+  const crudAction = resolved.panel.sections.flatMap((section) => {
+    if (!section.crud) return [];
+    return [
+      section.crud.createActionId,
+      section.crud.updateActionId,
+      section.crud.deleteActionId,
+    ].map((commandId) => ({
+      id: commandId,
+      title: commandId,
+      commandId,
+      intent: "execute" as const,
+      variant: "primary" as const,
+      placement: "form" as const,
+      access: "permission-gated" as const,
+      requiredPermission: crudPermissionFor(commandId),
+      risk: commandId.endsWith(".delete") ? ("dangerous" as const) : ("safe" as const),
+      effects: [{ type: "refresh" as const }],
+    }));
+  });
+  const action = [...declaredActions, ...crudAction]
     .find((item) => item.id === request.actionId);
   if (!action)
     return c.json(
@@ -3261,7 +3370,18 @@ app.post("/workspaces/:workspaceId/domains/:domainId/activate", async (c) => {
       400,
     );
   const repo = new CoreRepository(c.env.CORE_DB);
-  await repo.activateDomain(workspaceId, domainId, c.get("user")?.id);
+  const activated = await repo.activateDomain(
+    workspaceId,
+    domainId,
+    c.get("user")?.id,
+  );
+  if (!activated)
+    return c.json(
+      errorResponse(
+        failure("validation_failed", "Domain must be verified before activation."),
+      ),
+      409,
+    );
   return c.json({ domains: await repo.listDomains(workspaceId) });
 });
 app.post("/workspaces/:workspaceId/domains/:domainId/disable", async (c) => {

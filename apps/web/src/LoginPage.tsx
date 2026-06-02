@@ -507,6 +507,7 @@ export function LoginPage({
   const [error, setError] = useState<string | null>(null);
   const twoFactorPage = isTwoFactorPage();
   const title = twoFactorPage ? "Verify two-factor code" : "Sign in";
+  const panelTitle = twoFactorPage ? "Verification" : "Access";
   const description = twoFactorPage
     ? "Use your authenticator app or a backup code to finish signing in."
     : "Use the published authentication methods for this workspace.";
@@ -564,7 +565,7 @@ export function LoginPage({
           <div className="surface-header">
             <div>
               <small>{twoFactorPage ? "Verification" : "Access"}</small>
-              <h2>{title}</h2>
+              <h2>{panelTitle}</h2>
             </div>
             <Badge>
               {twoFactorPage
