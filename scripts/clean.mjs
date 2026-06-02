@@ -12,7 +12,7 @@ const modes = {
     description: "node_modules and temporary folders",
     names: new Set(["node_modules", "tmp", ".tmp"]),
   },
-  initialclean: {
+  "clean:dev": {
     description: "local install, build cache, dev database/runtime state and generated reports",
     names: new Set([
       "node_modules",
@@ -31,7 +31,7 @@ const modes = {
 };
 
 if (!modes[mode]) {
-  console.error("Usage: pnpm clean [--dry-run] | pnpm initialclean [--dry-run]");
+  console.error("Usage: pnpm clean [--dry-run] | pnpm clean:dev [--dry-run]");
   process.exit(1);
 }
 
@@ -44,7 +44,7 @@ async function collectTargets(directory, names, output = []) {
   const entries = await readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    if (entry.name === ".git") continue;
+    if (entry.name === ".git" || entry.name === "node_modules" || entry.name === ".pnpm-store" || entry.name === ".wrangler" || entry.name === ".turbo" || entry.name === "dist") continue;
 
     const fullPath = path.join(directory, entry.name);
     if (names.has(entry.name)) {

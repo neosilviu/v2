@@ -16,7 +16,7 @@ This note tracks the measured local results for the Core/Auth/Web foundation bat
 ## Audit Of Commits Between `30f4b79` And `bfae162`
 
 - RootEntry anonymous boot changes were kept only after adding explicit cache invalidation on auth changes and verifying anonymous boot does not call private bootstrap.
-- `pnpm dev:setup` changes were replaced with deterministic local onboarding that provisions workspace `default`, creates or claims `owner@example.local` through the platform owner setup flow, and validates login.
+- `pnpm bootstrap:workspace:dev` changes were replaced with deterministic local onboarding that provisions workspace `default`, creates or claims `owner@example.local` through the platform owner setup flow, and validates login.
 - Owner setup forwarding of raw Better Auth failures was replaced with stable platform error mapping.
 - E2E and perf script additions were kept and tightened with real CI gates.
 - The non-production-only session optimization was not kept as proof of performance; Core now uses bounded in-isolate session assertion caching with documented invalidation limits.
@@ -24,7 +24,7 @@ This note tracks the measured local results for the Core/Auth/Web foundation bat
 
 ## Auth And Owner Setup
 
-- `pnpm dev:setup` is local-only and provisions workspace `default`.
+- `pnpm bootstrap:workspace:dev` is local-only and provisions workspace `default`.
 - Local owner credentials are deterministic:
   - Email: `owner@example.local`
   - Password: `LocalDevPassword123!`
@@ -118,9 +118,9 @@ The local perf run sends `x-v2-server-timing: 1` and records Server-Timing heade
 - `pnpm test:generated -- --check-migrations`: passed
 - `pnpm guard:architecture`: passed
 - `pnpm dev`: passed for local stack startup
-- `pnpm dev:setup`: passed and validated manual login with the deterministic local owner
+- `pnpm bootstrap:workspace:dev`: passed and validated manual login with the deterministic local owner
 - `pnpm smoke:local -- --prepare-auth-db`: passed
 - `pnpm test:e2e`: passed
 - `pnpm perf:local`: passed with all measured p95 values below 30ms
 
-CI now runs Playwright Chromium installation, `dev:setup`, `smoke:local`, `test:e2e` and `perf:local` as required gates.
+CI now runs Playwright Chromium installation, `bootstrap:workspace:dev`, `smoke:local`, `test:e2e` and `perf:local` as required gates.

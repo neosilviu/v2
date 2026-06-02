@@ -300,7 +300,7 @@ function testSeedAndDemoContracts(manifests) {
   if (!bootstrapSource.includes("--skip-marketplace-sync") || !bootstrapSource.includes("V2_DEV_SKIP_MARKETPLACE_SYNC")) fail("dev setup Marketplace sync cannot be intentionally skipped for focused setup");
   if (!coreSchema.includes("pluginCatalog") || !coreSchema.includes("demoAvailable")) fail("Generated Core schema is missing plugin catalog demo metadata");
   if (!repoSource.includes("ensurePlatformShellContributions") || !repoSource.includes("ensurePlatformSettingsContributions")) fail("Core repository is missing platform seed/materialization entry points");
-  if (/["']migrations["']/.test(cleanSource)) fail("clean/initialclean must not remove migration history");
+  if (/["']migrations["']/.test(cleanSource)) fail("clean scripts must not remove migration history");
   pass("Seed/demo contracts are discoverable, schema-backed and plugin-owned");
 }
 

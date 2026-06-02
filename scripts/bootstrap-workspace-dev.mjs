@@ -117,7 +117,7 @@ async function waitFor(name, base, path) {
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`${name} is not reachable at ${base}${path}. Start pnpm dev before pnpm dev:setup.`);
+  throw new Error(`${name} is not reachable at ${base}${path}. Start pnpm dev before pnpm bootstrap:workspace:dev.`);
 }
 
 function provisionWorkspace() {

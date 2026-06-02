@@ -72,8 +72,11 @@ export const commandForPid = (pid) => {
   }
 };
 
-export const isRepoDevCommand = (command) =>
-  command.includes(root) && command.includes("node_modules") && /\b(wrangler|workerd|vite|turbo)\b/.test(command);
+export const isRepoDevCommand = (command) => {
+  const isWorkspaceRelated = command.includes(root) || command.includes("wrangler-dev.mjs") || command.includes("scripts/");
+  const isDevTool = /\b(wrangler|workerd|vite|turbo)\b/.test(command);
+  return isWorkspaceRelated && isDevTool;
+};
 
 export const stopPid = (pid) => {
   try {
