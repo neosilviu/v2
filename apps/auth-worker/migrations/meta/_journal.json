@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1779973765828,
+      "tag": "0000_messy_whizzer",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780300000000,
+      "tag": "0001_two_factor",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780300001000,
+      "tag": "0002_profile_locale_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780300002000,
+      "tag": "0003_user_disabled_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1780338621401,
+      "tag": "0004_rare_cable",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1780386562123,
+      "tag": "0006_bizarre_joshua_kane",
+      "breakpoints": true
+    }
+  ]
+}

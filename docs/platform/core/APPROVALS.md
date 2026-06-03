@@ -1,0 +1,21 @@
+# Persistent approvals
+
+Sensitive runtime tools no longer rely on a browser-supplied boolean. When policy requires approval, Core creates a one-time `tool_approvals` record storing the tool identity, owning plugin, workspace and submitted input.
+
+Plugin install/update approvals use the generic `approval_requests` table. Core stores the exact workspace, kind, subject, plugin/release/package identity, SHA and sensitive capability list. The admin decision moves the request from `pending` to `approved` or `denied`; installation then atomically claims `approved -> consumed` and uses the persisted payload. A replayed, mismatched or already-consumed approval is denied and audited.
+
+## Flow
+
+1. A user requests tool execution through `/tools/execute`.
+2. If approval is required, Core returns `approvalId` and stores a pending record.
+3. A platform administrator records `approved` or `denied` through `/tool-approvals/decision`.
+4. Execution supplies the approved `approvalId`; Core atomically claims it (`approved` to `consumed`) and uses the persisted input rather than any replacement client payload.
+5. The claimed approval cannot be executed twice, including under concurrent requests. If dispatch later fails, a new approval is required; the failed attempt remains auditable.
+
+This supports UI approvals now and is the policy foundation for Agent AI tool calls later. `apps/core-worker/src/db/schema.ts` remains the structural source of truth; `0002_tool_approvals.sql` is the incremental reviewed migration for the current database history.
+
+## Agent AI integration
+
+Agent AI stores tool-call intent in its own D1 database, then submits execution to Core through `/tools/execute`. If Core returns `approval-required`, Agent AI stores the returned `approvalId` and shows the call as pending. It does not call `/tool-approvals/decision` and does not send a browser-controlled approval flag.
+
+After an administrator approves or denies the request through Core, Agent AI can refresh the stored call. It first reads the approval status through the generic Core lookup endpoint, then retries `/tools/execute` only when the approval is already `approved`. Core consumes that approval atomically and audits the execution. Reusing the same `approvalId` is refused by Core because the row has moved to `consumed`.

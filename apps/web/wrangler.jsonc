@@ -1,0 +1,10 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "v2-web",
+  "compatibility_date": "2026-05-25",
+  // Cloudflare Pages build command: pnpm --filter @v2/web build
+  // Cloudflare Pages output directory from the repository root: apps/web/dist
+  // Preview/production VITE_* values are build-time variables and must be
+  // configured in the Cloudflare Pages Build Environment for each deployment.
+  "pages_build_output_dir": "./dist",
+}

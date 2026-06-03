@@ -1,0 +1,22 @@
+{
+  "name": "@v2/plugin-theme-studio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./manifest.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@v2/plugin-contracts": "workspace:*",
+    "@v2/plugin-sdk": "workspace:*",
+    "@v2/ui-kit": "workspace:*",
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "typescript": "catalog:"
+  }
+}

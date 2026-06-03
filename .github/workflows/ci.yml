@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  typecheck-and-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - name: Run pnpm typecheck
+        run: pnpm typecheck 2>&1 | tee /tmp/v2-typecheck.log
+        shell: bash
+      - name: Upload typecheck output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-output
+          path: /tmp/v2-typecheck.log
+          if-no-files-found: error
+      - run: pnpm --filter @v2/web build
+      - run: pnpm build:analyze
+      - name: Run generated and migration validation
+        run: pnpm test:generated -- --check-migrations 2>&1 | tee /tmp/v2-generated.log
+        shell: bash
+      - name: Upload generated validation output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-validation-output
+          path: /tmp/v2-generated.log
+          if-no-files-found: error
+      - run: pnpm guard:architecture
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Production-like local smoke, browser and performance gates
+        run: |
+          pnpm dev > /tmp/v2-dev.log 2>&1 &
+          echo $! > /tmp/v2-dev.pid
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8787/health >/dev/null && curl -fsS http://localhost:8788/health >/dev/null && curl -fsS http://localhost:5173/login >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "${ready:-0}" != "1" ]; then
+            cat /tmp/v2-dev.log
+            exit 1
+          fi
+          pnpm dev:setup 2>&1 | tee /tmp/v2-dev-setup.log
+          pnpm smoke:local -- --prepare-auth-db 2>&1 | tee /tmp/v2-smoke.log
+          pnpm test:e2e 2>&1 | tee /tmp/v2-e2e.log
+          pnpm perf:local 2>&1 | tee /tmp/v2-perf.log
+          curl -sS -D /tmp/v2-auth-cors.headers -o /tmp/v2-auth-cors.body \
+            -X POST http://localhost:8788/api/auth/sign-in/email \
+            -H 'Origin: http://localhost:5173' \
+            -H 'Content-Type: application/json' \
+            --data '{"email":"browser-cors-check@example.local","password":"NotARealPassword123!"}'
+          grep -qi '^access-control-allow-origin: http://localhost:5173' /tmp/v2-auth-cors.headers
+          grep -Fq 'dataSource.access !== "public-candidate"' apps/web/src/platform/TemplateRenderer.tsx
+          grep -Fq "c.contribution_type = 'surface'" apps/core-worker/src/surface-routes.ts
+        shell: bash
+      - name: Upload local browser/smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-browser-smoke-diagnostics
+          path: |
+            /tmp/v2-dev-setup.log
+            /tmp/v2-smoke.log
+            /tmp/v2-e2e.log
+            /tmp/v2-perf.log
+            /tmp/v2-dev.log
+            /tmp/v2-auth-cors.headers
+            /tmp/v2-auth-cors.body
+          if-no-files-found: warn
+      - name: Stop local smoke services
+        if: always()
+        run: pnpm dev:stop || true
+      - name: Upload build analysis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-analysis-report
+          path: reports/
+          if-no-files-found: warn

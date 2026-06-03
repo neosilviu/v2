@@ -1,0 +1,1 @@
+ALTER TABLE `plugin_runtime_deployments` ADD `updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL;

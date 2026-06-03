@@ -1,0 +1,40 @@
+{
+  "name": "@v2/root",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.12.1",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "node scripts/dev.mjs",
+    "dev:stop": "node scripts/stop-dev.mjs",
+    "clean": "node scripts/clean.mjs clean",
+    "clean:dev": "node scripts/clean.mjs clean:dev",
+    "typecheck": "turbo run typecheck",
+    "build:analyze": "node scripts/analyze-build.mjs",
+    "update": "pnpm up -r --latest",
+    "guard:hono-rpc": "node ./scripts/check-hono-rpc-usage.mjs",
+    "guard:architecture": "pnpm test:generated -- --check-migrations && pnpm guard:hono-rpc",
+    "test:generated": "node --experimental-strip-types scripts/test-generated.mjs",
+    "perf:local": "node scripts/perf-local.mjs",
+    "loadtest:local": "node scripts/loadtest-local.mjs",
+    "test:e2e": "playwright test",
+    "smoke:local": "node scripts/smoke-local-e2e.mjs",
+    "bootstrap:workspace:dev": "node scripts/bootstrap-workspace-dev.mjs",
+    "provision:workspace:prod": "node scripts/provision-workspace.mjs",
+    "marketplace:sync": "node --experimental-strip-types scripts/sync-plugin-catalog.mjs",
+    "check": "pnpm typecheck && pnpm build",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^25.9.1",
+    "fflate": "catalog:",
+    "prettier": "^3.8.3",
+    "turbo": "^2.9.14",
+    "typescript": "^6.0.3",
+    "zod": "catalog:"
+  }
+}

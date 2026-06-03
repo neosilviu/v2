@@ -1,0 +1,14 @@
+node_modules
+.pnpm-store
+dist
+.turbo
+.wrangler
+.dev.vars
+.env
+.env.*
+!.env.example
+.DS_Store
+coverage
+reports/*.json
+reports/*.md
+reports/worker-dry-runs/

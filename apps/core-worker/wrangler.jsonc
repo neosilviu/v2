@@ -1,0 +1,21 @@
+{
+  "name": "v2-core-worker",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-05-25",
+  "minify": true,
+  "d1_databases": [
+    {
+      "binding": "CORE_DB",
+      "database_name": "v2-core",
+      "database_id": "ebf88733-8e41-4b2e-9956-c5a51b644d49",
+    },
+  ],
+  "r2_buckets": [
+    { "binding": "PLUGIN_PACKAGES", "bucket_name": "v2-plugin-packages" },
+  ],
+  "services": [
+    { "binding": "AUTH", "service": "v2-auth-worker" },
+    { "binding": "PLUGIN_RUNTIME", "service": "v2-runtime-bridge" },
+    { "binding": "PLATFORM_PROVISIONER", "service": "v2-platform-provisioner" },
+  ],
+}

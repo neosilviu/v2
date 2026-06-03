@@ -1,0 +1,19 @@
+{
+  "name": "@v2/runtime-bridge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "node ../../scripts/wrangler-dev.mjs --port 8790 --inspector-port 9290",
+    "build": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "hono": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
+  }
+}
