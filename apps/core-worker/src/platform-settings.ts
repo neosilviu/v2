@@ -996,49 +996,6 @@ const marketplaceImport: SettingsSection = {
   bulkActions: [],
 };
 
-const marketplaceInstalled = ui.table({
-  id: "marketplace.installed",
-  title: "Installed plugins",
-  description: "Runtime plugins currently installed for this workspace.",
-  dataSourceId: "platform.settings.plugins.list",
-  columns: [
-    column({ id: "name", label: "Plugin", field: "name" }),
-    column({ id: "version", label: "Version", field: "version" }),
-    column({ id: "active", label: "Status", field: "active", type: "badge" }),
-    column({
-      id: "workerIsolation",
-      label: "Isolation",
-      field: "workerIsolation",
-      type: "badge",
-    }),
-  ],
-  rowActions: [
-    ui.rowAction("platform.settings.marketplace.plugin.activate", "Enable", {
-      variant: "primary",
-      access: "permission-gated",
-      requiredPermission: "plugin.activate",
-    }),
-    ui.rowAction("platform.settings.marketplace.plugin.deactivate", "Disable", {
-      access: "permission-gated",
-      requiredPermission: "plugin.activate",
-    }),
-    ui.rowAction(
-      "platform.settings.marketplace.plugin.uninstall",
-      "Uninstall",
-      {
-        variant: "danger",
-        access: "permission-gated",
-        requiredPermission: "plugin.uninstall",
-        confirmation: {
-          title: "Uninstall plugin",
-          message:
-            "This removes the plugin from the current workspace and disables its runtime state.",
-        },
-      },
-    ),
-  ],
-});
-
 const marketplaceApprovals = ui.table({
   id: "marketplace.approvals",
   title: "Approvals",
@@ -1157,12 +1114,7 @@ export function platformSettingsTabs() {
       icon: "plug",
       order: 40,
       permission: "marketplace.read",
-      sections: [
-        marketplaceImport,
-        marketplaceCatalog,
-        marketplaceInstalled,
-        marketplaceApprovals,
-      ],
+      sections: [marketplaceImport, marketplaceCatalog, marketplaceApprovals],
     }),
     ui.panel({
       id: "platform.settings.interface",

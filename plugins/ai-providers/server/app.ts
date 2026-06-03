@@ -269,6 +269,18 @@ app = app.post("/runtime/execute", async (c) => {
   }
   const connectionId =
     typeof input.connectionId === "string" ? input.connectionId : "";
+  if (!connectionId && operationId === "providers.detectModels") {
+    return c.json({
+      rows: aiProvidersPlugin.contributes.providers.map((provider) => ({
+        provider: provider.title,
+        adapter: provider.adapter,
+        status:
+          provider.adapter === "cloudflare-workers-ai"
+            ? "enabled"
+            : "server-configured",
+      })),
+    });
+  }
   if (!connectionId)
     return c.json(
       errorResponse(failure("validation_failed", "connectionId is required.")),

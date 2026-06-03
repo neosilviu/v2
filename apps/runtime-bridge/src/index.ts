@@ -30,6 +30,25 @@ function isInternalDispatchRequest(request: Request) {
   );
 }
 
+function localOriginForPlugin(env: BridgeEnv, pluginId: unknown) {
+  if (typeof pluginId !== "string" || !pluginId) {
+    return env.PLUGIN_RUNTIME_LOCAL_ORIGIN;
+  }
+  if (!env.PLUGIN_RUNTIME_LOCAL_ORIGINS_JSON) {
+    return env.PLUGIN_RUNTIME_LOCAL_ORIGIN;
+  }
+  try {
+    const origins = JSON.parse(env.PLUGIN_RUNTIME_LOCAL_ORIGINS_JSON) as unknown;
+    if (!origins || typeof origins !== "object") {
+      return env.PLUGIN_RUNTIME_LOCAL_ORIGIN;
+    }
+    const origin = (origins as Record<string, unknown>)[pluginId];
+    return typeof origin === "string" && origin.trim() ? origin : undefined;
+  } catch {
+    return env.PLUGIN_RUNTIME_LOCAL_ORIGIN;
+  }
+}
+
 async function dispatchToLocalRuntime(
   env: BridgeEnv,
   body: Required<
@@ -37,8 +56,9 @@ async function dispatchToLocalRuntime(
   > &
     DispatchRequest,
 ) {
-  if (!env.PLUGIN_RUNTIME_LOCAL_ORIGIN) return null;
-  const upstream = new URL(env.PLUGIN_RUNTIME_LOCAL_ORIGIN);
+  const origin = localOriginForPlugin(env, body.pluginId);
+  if (!origin) return null;
+  const upstream = new URL(origin);
   const request = new Request(`${upstream.origin}/runtime/execute`, {
     method: "POST",
     headers: {

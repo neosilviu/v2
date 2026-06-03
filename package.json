@@ -14,6 +14,7 @@
     "clean:dev": "node scripts/clean.mjs clean:dev",
     "typecheck": "turbo run typecheck",
     "build:analyze": "node scripts/analyze-build.mjs",
+    "update": "pnpm up -r --latest",
     "guard:hono-rpc": "node ./scripts/check-hono-rpc-usage.mjs",
     "guard:architecture": "pnpm test:generated -- --check-migrations && pnpm guard:hono-rpc",
     "test:generated": "node --experimental-strip-types scripts/test-generated.mjs",

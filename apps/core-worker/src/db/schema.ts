@@ -650,6 +650,7 @@ export const pluginRuntimeDeployments = sqliteTable(
     activatedAt: text("activated_at"),
     disabledAt: text("disabled_at"),
     lastError: text("last_error"),
+    updatedAt: text("updated_at").notNull().default(now),
   },
   (table) => [
     primaryKey({ columns: [table.workspaceId, table.pluginId] }),

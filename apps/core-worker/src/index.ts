@@ -643,57 +643,71 @@ async function installMarketplacePluginFromSettings(
   let consumedApprovalId: string | undefined;
   if (assessment.requiresApproval) {
     if (!approvalId) {
-      await repo.ensureWorkspace(workspaceId);
-      const approval = await approvals.create({
+      const approved = await approvals.claimLatestApproved({
         workspaceId,
         kind: "plugin_install",
         subjectId: release.id,
         pluginId: assessment.bundle.manifest.id,
-        risk: pluginInstallRisk(assessment),
-        payload: pluginInstallApprovalPayload("marketplace", assessment, {
-          releaseId: release.id,
-          provisioningTarget: provisioningTarget ?? null,
-        }),
-        requestedBy: c.get("user")?.id,
       });
-      await repo.audit(
-        workspaceId,
-        "plugin.install.approval.requested",
-        {
-          approvalId: approval.id,
+      if (approved) {
+        assessment = assessPluginBundle(
+          (approved.payload as { bundle?: unknown }).bundle,
+        );
+        consumedApprovalId = approved.id;
+      } else {
+        await repo.ensureWorkspace(workspaceId);
+        const approval = await approvals.create({
+          workspaceId,
+          kind: "plugin_install",
+          subjectId: release.id,
           pluginId: assessment.bundle.manifest.id,
-          releaseId: release.id,
-          sha256: release.sha256,
-          sensitiveCapabilities: assessment.sensitiveCapabilities,
-          provisioningTarget: provisioningTarget ?? null,
-        },
-        c.get("user")?.id,
+          risk: pluginInstallRisk(assessment),
+          payload: pluginInstallApprovalPayload("marketplace", assessment, {
+            releaseId: release.id,
+            provisioningTarget: provisioningTarget ?? null,
+          }),
+          requestedBy: c.get("user")?.id,
+        });
+        await repo.audit(
+          workspaceId,
+          "plugin.install.approval.requested",
+          {
+            approvalId: approval.id,
+            pluginId: assessment.bundle.manifest.id,
+            releaseId: release.id,
+            sha256: release.sha256,
+            sensitiveCapabilities: assessment.sensitiveCapabilities,
+            provisioningTarget: provisioningTarget ?? null,
+          },
+          c.get("user")?.id,
+        );
+        return c.json(
+          pluginOperationEnvelope("approval-required", null, null, approval.id),
+          202,
+        );
+      }
+    } else {
+      const approved = await approvals.claimApproved({
+        workspaceId,
+        approvalId,
+        kind: "plugin_install",
+        subjectId: release.id,
+        pluginId: assessment.bundle.manifest.id,
+      });
+      if (!approved)
+        return c.json(
+          pluginOperationEnvelope(
+            "denied",
+            null,
+            "A matching approved installation request is required.",
+          ),
+          403,
+        );
+      assessment = assessPluginBundle(
+        (approved.payload as { bundle?: unknown }).bundle,
       );
-      return c.json(
-        pluginOperationEnvelope("approval-required", null, null, approval.id),
-        202,
-      );
+      consumedApprovalId = approved.id;
     }
-    const approved = await approvals.claimApproved({
-      workspaceId,
-      approvalId,
-      kind: "plugin_install",
-      subjectId: release.id,
-      pluginId: assessment.bundle.manifest.id,
-    });
-    if (!approved)
-      return c.json(
-        pluginOperationEnvelope(
-          "denied",
-          null,
-          "A matching approved installation request is required.",
-        ),
-        403,
-      );
-    assessment = assessPluginBundle(
-      (approved.payload as { bundle?: unknown }).bundle,
-    );
-    consumedApprovalId = approved.id;
   }
   await repo.installManifest(assessment.bundle.manifest, assessment.bundle);
   await repo.audit(
@@ -1145,7 +1159,9 @@ app.get("/bootstrap", async (c) => {
   const workspaceId = c.req.query("workspaceId")?.trim();
   const bootstrapResponse = await workspaceBootstrap(
     c,
-    workspaceId === "current" ? undefined : workspaceId,
+    workspaceId === "current" || workspaceId === "default"
+      ? undefined
+      : workspaceId,
   );
   if (!bootstrapResponse.ok) return bootstrapResponse;
   return c.json({
@@ -1175,7 +1191,8 @@ app.delete("/workspaces/:workspaceId", async (c) => {
 app.get("/runtime/ui/bootstrap", async (c) =>
   runtimeUiBootstrapPayload(
     c,
-    c.req.query("workspaceId") === "current"
+    c.req.query("workspaceId") === "current" ||
+      c.req.query("workspaceId") === "default"
       ? undefined
       : (c.req.query("workspaceId") ?? undefined),
   ),
@@ -2169,11 +2186,11 @@ app.post("/runtime/ui/data", async (c) => {
   );
   if (!resolved)
     return c.json(
-      pluginOperationEnvelope(
-        "denied",
-        null,
-        "Contribution is not active in this workspace.",
-      ),
+        pluginOperationEnvelope(
+          "denied",
+          null,
+          `Contribution ${request.contributionId} is not active in this workspace.`,
+        ),
       403,
     );
   const dataSource = resolved.page.dataSources.find(
@@ -2338,11 +2355,11 @@ app.post("/runtime/ui/actions", async (c) => {
   );
   if (!resolved)
     return c.json(
-      pluginOperationEnvelope(
-        "denied",
-        null,
-        "Contribution is not active in this workspace.",
-      ),
+        pluginOperationEnvelope(
+          "denied",
+          null,
+          `Contribution ${request.contributionId} is not active in this workspace.`,
+        ),
       403,
     );
   const action = resolved.page.actions.find(
@@ -2415,11 +2432,16 @@ app.post("/runtime/ui/actions", async (c) => {
     }
   }
   const runtime = await runtimeFor(repo);
-  const toolOwner = runtime.plugins
-    .all()
-    .find((plugin) =>
-      plugin.contributes.tools.some((tool) => tool.id === action.commandId),
-    );
+  const usesPlatformSettingsPermission = action.commandId.startsWith(
+    "platform.settings.",
+  );
+  const toolOwner = usesPlatformSettingsPermission
+    ? undefined
+    : runtime.plugins
+        .all()
+        .find((plugin) =>
+          plugin.contributes.tools.some((tool) => tool.id === action.commandId),
+        );
   const tool = toolOwner?.contributes.tools.find(
     (item) => item.id === action.commandId,
   );
@@ -2550,19 +2572,24 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
   );
   if (!resolved)
     return c.json(
-      pluginOperationEnvelope(
-        "denied",
-        null,
-        "Contribution is not active in this workspace.",
-      ),
+        pluginOperationEnvelope(
+          "denied",
+          null,
+          `Contribution ${request.contributionId} is not active in this workspace.`,
+        ),
       403,
     );
+  const dataSource = resolved.panel.dataSources.find(
+    (item) =>
+      item.id === request.dataSourceId ||
+      item.resource === request.dataSourceId,
+  );
   const section =
     resolved.panel.sections.find(
       (item) => item.dataSourceId === request.dataSourceId,
     ) ??
     resolved.panel.sections.find((item) => item.id === request.dataSourceId);
-  if (!section)
+  if (!section && !dataSource)
     return c.json(
       pluginOperationEnvelope(
         "denied",
@@ -2577,12 +2604,39 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
     resolved.requiredPermission ?? "workspace.settings.read",
   );
   if (permissionDenied) return permissionDenied;
+  const operationId =
+    dataSource?.resource ??
+    section?.dataSourceId ??
+    section?.id ??
+    request.dataSourceId;
+  if (operationId.startsWith("platform.settings.")) {
+    const platformData = await platformSettingsRuntimeData(
+      c,
+      repo,
+      request.workspaceId,
+      operationId,
+      {
+        authAdminJson: (path, init) => authAdminJson(c, path, init),
+        authForwardResponse: (path, init) => authForwardResponse(c, path, init),
+        authInternalJson: (path) => authInternalJson(c, path),
+      },
+    );
+    if (platformData !== null)
+      return c.json({
+        status: "ok",
+        data: platformData,
+        error: null,
+        approvalId: null,
+        auditEventId: null,
+      });
+  }
   if (
-    section.kind === "summary" ||
-    section.kind === "table" ||
-    section.kind === "form" ||
-    section.kind === "crud" ||
-    section.kind === "actions"
+    dataSource?.kind === "static" ||
+    section?.kind === "summary" ||
+    section?.kind === "table" ||
+    section?.kind === "form" ||
+    section?.kind === "crud" ||
+    section?.kind === "actions"
   )
     return c.json({
       status: "ok",
@@ -2590,7 +2644,7 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
         (resolved.panel.schema as { data?: Record<string, unknown> }).data ??
           {},
         request.dataSourceId,
-        section.dataSourceId,
+        dataSource?.resource ?? section?.dataSourceId,
       ),
       error: null,
       approvalId: null,
@@ -2610,7 +2664,7 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
     pluginId: resolved.pluginId,
     runtimeKey: deployment.runtimeKey,
     kind: "data",
-    operationId: section.dataSourceId ?? section.id,
+    operationId,
     contributionId: request.contributionId,
     ...(request.routeParams ? { routeParams: request.routeParams } : {}),
     ...(request.queryParams ? { queryParams: request.queryParams } : {}),
@@ -2633,7 +2687,7 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
       {
         pluginId: resolved.pluginId,
         contributionId: request.contributionId,
-        dataSourceId: section.dataSourceId ?? section.id,
+        dataSourceId: operationId,
         dispatched: "plugin-runtime",
       },
       c.get("user")?.id,
@@ -2652,7 +2706,7 @@ app.post("/workspaces/:workspaceId/settings/runtime/data", async (c) => {
     {
       pluginId: resolved.pluginId,
       contributionId: request.contributionId,
-      dataSourceId: section.dataSourceId ?? section.id,
+      dataSourceId: operationId,
     },
     c.get("user")?.id,
   );
@@ -2683,8 +2737,25 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
       return "plan.write";
     if (commandId.startsWith("platform.settings.invites."))
       return "workspace.members.manage";
+    if (commandId === "platform.settings.marketplace.plugin.install")
+      return "plugin.install";
+    if (commandId === "platform.settings.marketplace.plugin.update")
+      return "plugin.update";
+    if (commandId === "platform.settings.marketplace.plugin.activate")
+      return "plugin.activate";
+    if (commandId === "platform.settings.marketplace.plugin.deactivate")
+      return "plugin.activate";
+    if (
+      commandId === "platform.settings.marketplace.plugin.uninstall" ||
+      commandId === "platform.settings.marketplace.demo.remove"
+    )
+      return "plugin.uninstall";
+    if (commandId === "platform.settings.marketplace.demo.install")
+      return "plugin.install";
+    if (commandId.startsWith("platform.settings.approvals."))
+      return "tool.approve";
     if (commandId.startsWith("platform.settings.marketplace."))
-      return "marketplace.publish";
+      return "plugin.install";
     if (commandId.startsWith("platform.settings.interface."))
       return "interface.write";
     if (commandId.startsWith("platform.settings.security."))
@@ -2698,6 +2769,44 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
       platformSettingsPermissionFor(request.actionId),
     );
     if (permissionDenied) return permissionDenied;
+    if (
+      request.actionId === "platform.settings.marketplace.plugin.install" ||
+      request.actionId === "platform.settings.marketplace.plugin.update"
+    ) {
+      const input =
+        request.input && typeof request.input === "object"
+          ? (request.input as Record<string, unknown>)
+          : {};
+      const pluginId =
+        typeof input.pluginId === "string" && input.pluginId.trim()
+          ? input.pluginId.trim()
+          : typeof input.id === "string" && input.id.trim()
+            ? input.id.trim()
+            : "";
+      const approvalId =
+        typeof input.approvalId === "string" && input.approvalId.trim()
+          ? input.approvalId.trim()
+          : undefined;
+      const provisioningTarget =
+        typeof input.provisioningTarget === "string" &&
+        input.provisioningTarget.trim()
+          ? input.provisioningTarget.trim()
+          : undefined;
+      if (!pluginId)
+        return c.json(
+          pluginOperationEnvelope("denied", null, "pluginId is required."),
+          400,
+        );
+      return installMarketplacePluginFromSettings(
+        c,
+        repo,
+        request.workspaceId,
+        pluginId,
+        undefined,
+        approvalId,
+        provisioningTarget,
+      );
+    }
     const result = await platformSettingsRuntimeAction(
       c,
       repo,
@@ -2736,11 +2845,14 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
       ),
       403,
     );
-  const declaredActions = resolved.panel.sections.flatMap((section) => [
-    ...section.actions,
-    ...section.rowActions,
-    ...section.bulkActions,
-  ]);
+  const declaredActions = [
+    ...resolved.panel.actions,
+    ...resolved.panel.sections.flatMap((section) => [
+      ...section.actions,
+      ...section.rowActions,
+      ...section.bulkActions,
+    ]),
+  ];
   const crudPermissionFor = (commandId: string) => {
     if (commandId.startsWith("platform.settings.domains."))
       return commandId.endsWith(".verify") ? "domains.verify" : "domains.write";
@@ -2779,8 +2891,10 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
       effects: [{ type: "refresh" as const }],
     }));
   });
-  const action = [...declaredActions, ...crudAction]
-    .find((item) => item.id === request.actionId);
+  const action = [...declaredActions, ...crudAction].find(
+    (item) =>
+      item.id === request.actionId || item.commandId === request.actionId,
+  );
   if (!action)
     return c.json(
       pluginOperationEnvelope(
@@ -2790,25 +2904,32 @@ app.post("/workspaces/:workspaceId/settings/runtime/actions", async (c) => {
       ),
       403,
     );
+  const usesPlatformSettingsPermission = action.commandId.startsWith(
+    "platform.settings.",
+  );
   const runtime = await runtimeFor(repo);
-  const toolOwner = runtime.plugins
-    .all()
-    .find((plugin) =>
-      plugin.contributes.tools.some((tool) => tool.id === action.commandId),
-    );
+  const toolOwner = usesPlatformSettingsPermission
+    ? undefined
+    : runtime.plugins
+        .all()
+        .find((plugin) =>
+          plugin.contributes.tools.some((tool) => tool.id === action.commandId),
+        );
   const tool = toolOwner?.contributes.tools.find(
     (item) => item.id === action.commandId,
   );
   const permissionDenied = await requireAllPermissions(
     c,
     request.workspaceId,
-    tool?.permissions.length
-      ? (tool.permissions as WorkspacePermission[])
-      : [
-          action.requiredPermission ??
-            resolved.requiredPermission ??
-            "workspace.settings.write",
-        ],
+      !usesPlatformSettingsPermission && tool?.permissions.length
+        ? (tool.permissions as WorkspacePermission[])
+        : [
+            usesPlatformSettingsPermission
+              ? platformSettingsPermissionFor(action.commandId)
+              : (action.requiredPermission ??
+                resolved.requiredPermission ??
+                "workspace.settings.write"),
+          ],
   );
   if (permissionDenied) return permissionDenied;
   if (

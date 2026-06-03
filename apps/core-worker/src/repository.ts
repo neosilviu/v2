@@ -759,6 +759,39 @@ function safeJson<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
+function parseStoredSettingsTab(schemaJson: string): SettingsTabContribution {
+  const parsed = JSON.parse(schemaJson) as unknown;
+  const direct = settingsTabContributionSchema.safeParse(parsed);
+  if (direct.success) return direct.data;
+
+  const page = declarativePageContributionSchema.parse(parsed);
+  return settingsTabContributionSchema.parse(page.data.settingsTab);
+}
+
+function parseStoredSettingsPanel(
+  schemaJson: string,
+  fallback: { pluginId: string; tabId: string; contributionId?: string },
+): SettingsPanelContribution {
+  const parsed = JSON.parse(schemaJson) as unknown;
+  const direct = settingsPanelContributionSchema.safeParse(parsed);
+  if (direct.success)
+    return settingsPanelContributionSchema.parse({
+      ...direct.data,
+      id: fallback.contributionId ?? direct.data.id,
+    });
+
+  const page = declarativePageContributionSchema.parse(parsed);
+  return settingsPanelContributionSchema.parse({
+    id: fallback.contributionId ?? page.id,
+    pluginId: fallback.pluginId,
+    tabId: fallback.tabId,
+    templateId: page.templateId,
+    schema: page,
+    dataSources: page.dataSources,
+    actions: page.actions,
+  });
+}
+
 function normalizeShellPath(path: string) {
   const trimmed = path.trim();
   const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
@@ -3769,7 +3802,7 @@ export class CoreRepository {
         .bind(workspaceId, pluginId, now, now),
       this.db
         .prepare(
-          `UPDATE plugin_runtime_deployments SET runtime_status = 'active', activated_at = COALESCE(activated_at, ?), updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ? AND runtime_status IN ('pending', 'provisioning', 'deployed', 'active')`,
+          `UPDATE plugin_runtime_deployments SET runtime_status = 'active', activated_at = COALESCE(activated_at, ?), updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ? AND plugin_id = ? AND runtime_status IN ('pending', 'provisioning', 'deployed', 'active', 'disabled')`,
         )
         .bind(now, workspaceId, pluginId),
     ]);
@@ -4953,9 +4986,7 @@ export class CoreRepository {
         !permissions.has("workspace.admin")
       )
         return [];
-      const tab = settingsTabContributionSchema.parse(
-        JSON.parse(row.schema_json),
-      );
+      const tab = parseStoredSettingsTab(row.schema_json);
       return [
         {
           ...tab,
@@ -4992,9 +5023,11 @@ export class CoreRepository {
         !permissions.has("workspace.admin"))
     )
       return null;
-    const panel = settingsPanelContributionSchema.parse(
-      JSON.parse(row.schema_json),
-    );
+    const panel = parseStoredSettingsPanel(row.schema_json, {
+      pluginId: tab.pluginId,
+      tabId: tab.id,
+      contributionId: tab.panelContributionId,
+    });
     return { tab, panel };
   }
 
@@ -5041,9 +5074,7 @@ export class CoreRepository {
       const schema =
         row.contribution_type === "menu"
           ? (() => {
-              const tab = settingsTabContributionSchema.parse(
-                JSON.parse(row.schema_json),
-              );
+              const tab = parseStoredSettingsTab(row.schema_json);
               return declarativePageContributionSchema.parse({
                 id: tab.id,
                 title: tab.label,
@@ -5056,8 +5087,11 @@ export class CoreRepository {
             })()
           : row.contribution_type === "page" &&
               row.zone_id?.startsWith("settings.panel.")
-            ? settingsPanelContributionSchema.parse(JSON.parse(row.schema_json))
-                .schema
+              ? parseStoredSettingsPanel(row.schema_json, {
+                  pluginId: row.plugin_id,
+                  tabId: row.zone_id.replace(/^settings\.panel\./, ""),
+                  contributionId: row.contribution_id,
+                }).schema
             : declarativePageContributionSchema.parse(
                 JSON.parse(row.schema_json),
               );
@@ -5180,28 +5214,64 @@ export class CoreRepository {
       this.uiContributions(workspaceId, new Set(workspacePermissions)),
       this.interfaceContributions(workspaceId),
     ]);
-    const resolved = contributions.find(
+    let runtimeContributionId = contributionId;
+    let resolved = contributions.find(
       (item) => item.contributionId === contributionId,
     );
-    const contribution = interfaces.find((item) => item.id === contributionId);
+    if (!resolved) {
+      const alias = contributions.find(
+        (item) =>
+          item.contributionType === "page" &&
+          (item.contributionId === `${contributionId}.settings-panel` ||
+            item.schema.id === contributionId),
+      );
+      if (alias) {
+        runtimeContributionId = alias.contributionId;
+        resolved = alias;
+      }
+    }
+    const contribution =
+      interfaces.find((item) => item.id === runtimeContributionId) ??
+      interfaces.find((item) => item.id === contributionId) ??
+      (resolved
+        ? ({
+            id: runtimeContributionId,
+            pluginId: resolved.pluginId,
+            label: resolved.label,
+            icon: resolved.icon,
+            section: "administration",
+            path: resolved.defaultPath ?? "",
+            orderIndex: resolved.displayOrder,
+            displayOrder: resolved.displayOrder,
+            visibleInNavigation: false,
+            rendererMode: resolved.rendererMode,
+            source: resolved.source,
+            kind: "page",
+            active: true,
+            status: "active",
+            configurable: null,
+          } as unknown as (typeof interfaces)[number])
+        : null);
     if (!resolved || !contribution) return null;
     const row = await this.db
       .prepare(
         `SELECT schema_json, required_permission
       FROM plugin_ui_contributions
       WHERE plugin_id = ? AND contribution_id = ? AND contribution_type = 'page'
-      LIMIT 1`,
-      )
-      .bind(resolved.pluginId, contributionId)
-      .first<{ schema_json: string; required_permission: string | null }>();
-    if (!row) return null;
-    const panel = settingsPanelContributionSchema.parse(
-      JSON.parse(row.schema_json),
-    );
-    return {
-      workspaceId,
-      pluginId: resolved.pluginId,
-      contributionId,
+        LIMIT 1`,
+        )
+        .bind(resolved.pluginId, runtimeContributionId)
+        .first<{ schema_json: string; required_permission: string | null }>();
+      if (!row) return null;
+      const panel = parseStoredSettingsPanel(row.schema_json, {
+        pluginId: resolved.pluginId,
+        tabId: contribution.id,
+        contributionId: runtimeContributionId,
+      });
+      return {
+        workspaceId,
+        pluginId: resolved.pluginId,
+        contributionId: runtimeContributionId,
       contribution: {
         ...contribution,
         ...(resolved.requiredPermission

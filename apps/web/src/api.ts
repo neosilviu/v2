@@ -77,11 +77,11 @@ let runtimeUiBootstrap: Promise<RuntimeUiBootstrap> | null = null;
 
 function workspaceFromLocation() {
   const params = new URLSearchParams(window.location.search);
-  return (
-    params.get("workspace") ||
-    window.localStorage.getItem("v2.workspaceId") ||
-    null
-  );
+  const workspaceId =
+    params.get("workspace") || window.localStorage.getItem("v2.workspaceId");
+  if (!workspaceId || workspaceId === "current" || workspaceId === "default")
+    return null;
+  return workspaceId;
 }
 
 export function currentWorkspaceId() {
@@ -166,6 +166,8 @@ async function parseCoreError(response: ResponseLike) {
     const message =
       typeof fallback.message === "string"
         ? fallback.message
+        : typeof fallback.error === "string"
+          ? fallback.error
         : typeof nested?.message === "string"
           ? nested.message
           : `Core request failed: ${response.status}`;
@@ -627,6 +629,27 @@ export async function executeRuntimeAction(
     actionId,
     input,
     routeParams,
+  );
+}
+
+export async function executeSettingsRuntimeAction(
+  contributionId: string,
+  actionId: string,
+  input?: unknown,
+  routeParams: Record<string, string> = {},
+): Promise<RuntimeResultEnvelope> {
+  return coreResponse(
+    coreApi.workspaces[":workspaceId"].settings.runtime.actions.$post({
+      param: { workspaceId: currentWorkspaceId() },
+      json: {
+        workspaceId: currentWorkspaceId(),
+        contributionId,
+        actionId,
+        input,
+        routeParams,
+      },
+    }),
+    runtimeResultEnvelopeSchema,
   );
 }
 

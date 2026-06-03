@@ -2,6 +2,7 @@
   "name": "v2-platform-provisioner",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-25",
+  "minify": true,
   "vars": {
     "DISPATCH_NAMESPACE": "v2-plugin-runtime",
   },

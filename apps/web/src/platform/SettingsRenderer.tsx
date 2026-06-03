@@ -8,7 +8,11 @@ import type {
   SettingsSection,
 } from "@v2/ui-schema";
 import { Badge, Button, SurfaceCard } from "@v2/ui-kit";
-import { executeRuntimeAction, loadRuntimeData, uploadPlugin } from "../api";
+import {
+  executeSettingsRuntimeAction,
+  loadRuntimeData,
+  uploadPlugin,
+} from "../api";
 import { createSettingsNotification } from "./settings-ui";
 import { CrudRenderer } from "./CrudRenderer";
 import { TemplateRenderer } from "./TemplateRenderer";
@@ -20,7 +24,10 @@ type SectionPayload =
   | { rows?: unknown[] }
   | unknown[]
   | null;
-type LoadedSection = { data: SectionPayload; error: string | null };
+type LoadedSection = {
+  data: SectionPayload;
+  error: string | null;
+};
 type PendingAction = {
   section: SettingsSection;
   action: ActionDefinition;
@@ -48,6 +55,12 @@ function rowsFromData(data: SectionPayload): Record<string, unknown>[] {
     );
   }
   return [];
+}
+
+function settingsRuntimeContributionId(panel: SettingsPanelContribution) {
+  if (panel.tabId.endsWith(".settings-tab"))
+    return `${panel.tabId.slice(0, -".settings-tab".length)}.settings-panel`;
+  return panel.id;
 }
 
 function valueAt(
@@ -373,7 +386,7 @@ export function SettingsRenderer({
     "success" | "error" | "info"
   >("info");
   const [marketplaceScope, setMarketplaceScope] = useState<
-    "all" | "global" | "workspace"
+    "all" | "installed" | "global" | "workspace"
   >("all");
   const [marketplaceSearch, setMarketplaceSearch] = useState("");
   const [tableSearchBySection, setTableSearchBySection] = useState<Record<string, string>>({});
@@ -391,6 +404,7 @@ export function SettingsRenderer({
     [panel.sections],
   );
   const fallbackPage = panel.schema;
+  const runtimeContributionId = settingsRuntimeContributionId(panel);
 
   useEffect(() => {
     let alive = true;
@@ -406,7 +420,10 @@ export function SettingsRenderer({
         if (!section.dataSourceId)
           return [section.id, { data: null, error: null }] as const;
         try {
-          const result = await loadRuntimeData(panel.id, section.dataSourceId);
+            const result = await loadRuntimeData(
+              runtimeContributionId,
+              section.dataSourceId,
+            );
           if (result.status !== "ok")
             return [
               section.id,
@@ -446,7 +463,7 @@ export function SettingsRenderer({
     return () => {
       alive = false;
     };
-  }, [panel.id, refreshNonce, sectionIds.join("|")]);
+  }, [runtimeContributionId, refreshNonce, sectionIds.join("|")]);
 
   const refresh = () => setRefreshNonce((value) => value + 1);
   const showFeedback = (level: "success" | "error" | "info", text: string) => {
@@ -471,11 +488,11 @@ export function SettingsRenderer({
     setMessage(null);
     try {
       const payload = { ...(row ?? {}), ...(values ?? {}) };
-      const result = await executeRuntimeAction(
-        panel.id,
-        action.commandId,
-        payload,
-      );
+        const result = await executeSettingsRuntimeAction(
+          runtimeContributionId,
+          action.commandId,
+          payload,
+        );
       if (result.status !== "ok") {
         if (result.status === "approval-required") {
           const approvalMessage = result.approvalId
@@ -585,9 +602,9 @@ export function SettingsRenderer({
   if (!panel.sections.length)
     return (
       <TemplateRenderer
-        page={fallbackPage}
-        runtime={{ contributionId: panel.id }}
-      />
+          page={fallbackPage}
+          runtime={{ contributionId: runtimeContributionId }}
+        />
     );
 
   return (
@@ -891,6 +908,8 @@ export function SettingsRenderer({
                           const scope = valueAt(row, "scope") || "workspace";
                           const scopeMatch =
                             marketplaceScope === "all" ||
+                            (marketplaceScope === "installed" &&
+                              booleanValue(row, "installedFlag")) ||
                             scope === marketplaceScope;
                           const haystack = [
                             valueAt(row, "name"),
@@ -1276,8 +1295,14 @@ export function SettingsRenderer({
                           <>
                             <section className="marketplace-toolbar">
                               <div className="marketplace-scope-tabs">
-                                {(["all", "global", "workspace"] as const).map(
-                                  (scope) => (
+                                {(
+                                  [
+                                    "all",
+                                    "installed",
+                                    "global",
+                                    "workspace",
+                                  ] as const
+                                ).map((scope) => (
                                     <button
                                       key={scope}
                                       className={
@@ -1290,12 +1315,13 @@ export function SettingsRenderer({
                                     >
                                       {scope === "all"
                                         ? "All"
+                                        : scope === "installed"
+                                          ? "Installed"
                                         : scope === "global"
                                           ? "Global"
                                           : "Workspace"}
                                     </button>
-                                  ),
-                                )}
+                                  ))}
                               </div>
                               <div className="marketplace-stats">
                                 <Badge>{visibleRows.length} visible</Badge>

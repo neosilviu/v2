@@ -155,6 +155,41 @@ export class ApprovalRequestRepository {
     return row ? this.mapped(row) : undefined;
   }
 
+  async claimLatestApproved(input: {
+    workspaceId: string;
+    kind: ApprovalRequestKind;
+    subjectId?: string;
+    pluginId?: string;
+  }): Promise<ApprovalRequest | undefined> {
+    const row = await this.db
+      .prepare(
+        `UPDATE approval_requests
+      SET status = 'consumed', consumed_at = CURRENT_TIMESTAMP
+      WHERE id = (
+        SELECT id FROM approval_requests
+        WHERE workspace_id = ?
+          AND kind = ?
+          AND status = 'approved'
+          AND (? IS NULL OR subject_id = ?)
+          AND (? IS NULL OR plugin_id = ?)
+          AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+        ORDER BY decided_at DESC, requested_at DESC
+        LIMIT 1
+      )
+      RETURNING id, workspace_id, kind, subject_id, plugin_id, risk, payload_json, status, requested_by, decided_by, requested_at, decided_at, expires_at, consumed_at, reason`,
+      )
+      .bind(
+        input.workspaceId,
+        input.kind,
+        input.subjectId ?? null,
+        input.subjectId ?? null,
+        input.pluginId ?? null,
+        input.pluginId ?? null,
+      )
+      .first<ApprovalRequestRow>();
+    return row ? this.mapped(row) : undefined;
+  }
+
   async get(
     workspaceId: string,
     approvalId: string,

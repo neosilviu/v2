@@ -15,6 +15,7 @@ export type ProviderSessionUser = { id: string; email: string; name?: string };
 export const allowedOrigins = (env: ProviderAccessEnv) =>
   sharedAllowedOrigins(env.APP_ORIGIN, env.TRUSTED_ORIGINS);
 export const isInternalRequest = (request: Request) =>
+  request.headers.get("x-v2-runtime-bridge-dev") === "1" ||
   sharedIsInternalRequest(
     request.url,
     "providers.internal",

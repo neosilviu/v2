@@ -411,7 +411,7 @@ export function TemplateRenderer(props: TemplateRendererProps) {
           (dataSource) => dataSource.access !== "public-candidate",
         );
   const dataSourceKey = dataSources
-    .map((dataSource) => dataSource.id)
+    .map((dataSource) => `${dataSource.id}:${dataSource.resource ?? ""}`)
     .join("|");
   const isCrudPage = Boolean(props.page.crud);
 
@@ -427,14 +427,15 @@ export function TemplateRenderer(props: TemplateRendererProps) {
     setStatus("Loading data...");
     void Promise.all(
       dataSources.map(async (dataSource) => {
+        const dataSourceId = dataSource.resource ?? dataSource.id;
         const result = props.runtime?.public
           ? await loadPublicRuntimeData(
               contributionId,
-              dataSource.id,
+              dataSourceId,
               routeParams,
               props.runtime.workspaceId,
             )
-          : await loadRuntimeData(contributionId, dataSource.id, routeParams);
+          : await loadRuntimeData(contributionId, dataSourceId, routeParams);
         return { id: dataSource.id, result };
       }),
     )
@@ -478,23 +479,29 @@ export function TemplateRenderer(props: TemplateRendererProps) {
     action: ActionDefinition,
     input?: unknown,
   ): Promise<boolean> => {
-    if (props.callbacks?.onAction && input === undefined) {
+    if (
+      props.callbacks?.onAction &&
+      input === undefined &&
+      !action.commandId.startsWith("platform.") &&
+      action.commandId === action.id
+    ) {
       await props.callbacks.onAction(action);
       return true;
     }
     setStatus("Saving changes...");
     try {
+      const operationId = action.commandId || action.id;
       const result = props.runtime?.public
         ? await executePublicRuntimeAction(
             contributionId,
-            action.id,
+            operationId,
             input,
             routeParams,
             props.runtime.workspaceId,
           )
         : await executeRuntimeAction(
             contributionId,
-            action.id,
+            operationId,
             input,
             routeParams,
           );
@@ -597,7 +604,11 @@ export function TemplateRenderer(props: TemplateRendererProps) {
         callbacks={{
           ...props.callbacks,
           onAction: (action) => {
-            void dispatchAction(action);
+            const form = document.activeElement?.closest("form");
+            const values = form
+              ? Object.fromEntries(new FormData(form))
+              : undefined;
+            void dispatchAction(action, values);
           },
           onSubmit: (page, values) => {
             if (props.callbacks?.onSubmit)
